@@ -55,8 +55,6 @@ app.post('/api/login', (req, res) => {
   res.status(401).json({ error: '用户名或密码错误' });
 });
 
-// API 鉴权中间件
-app.use('/api', authMiddleware);
 
 // 初始化服务
 const wsService = new WebSocketService(WS_PORT);
