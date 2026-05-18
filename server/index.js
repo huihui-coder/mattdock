@@ -27,8 +27,10 @@ function signToken() {
 }
 
 function authMiddleware(req, res, next) {
-  // 不需要鉴权的路径
-  if (req.path === '/api/login' || !IS_PROD) return next();
+  // 开发模式、GET请求、登录接口 均不验证
+  if (!IS_PROD) return next();
+  if (req.method === 'GET') return next();
+  if (req.path === '/login') return next();
   const token = req.headers['x-auth-token'] || req.query.token;
   const expire = sessions.get(token);
   if (!token || !expire || Date.now() > expire) {
