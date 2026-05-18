@@ -27,10 +27,9 @@ function signToken() {
 }
 
 function authMiddleware(req, res, next) {
-  // 开发模式、GET请求、登录接口 均不验证
+  // 只有生产模式下 POST /api/alert-config（保存配置）才需要验证
   if (!IS_PROD) return next();
-  if (req.method === 'GET') return next();
-  if (req.path === '/login') return next();
+  if (!(req.method === 'POST' && req.path === '/alert-config')) return next();
   const token = req.headers['x-auth-token'] || req.query.token;
   const expire = sessions.get(token);
   if (!token || !expire || Date.now() > expire) {
