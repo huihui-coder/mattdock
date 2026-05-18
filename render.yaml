@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: mqtt-airport-monitor
+    env: node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: WS_PORT
+        value: 3002
+      - key: MQTT_BROKER_URL
+        sync: false
+      - key: MQTT_USERNAME
+        sync: false
+      - key: MQTT_PASSWORD
+        sync: false
+      - key: MQTT_CLIENT_ID
+        value: airport_monitor_
+      - key: MQTT_TOPICS
+        value: thing/product/+/osd,thing/product/+/events
+      - key: WIND_SPEED_NORMAL
+        value: 0,6.6
+      - key: WIND_SPEED_WARNING
+        value: 6.6,12
+      - key: WIND_SPEED_CRITICAL
+        value: 12,999

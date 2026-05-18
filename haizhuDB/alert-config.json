@@ -1,0 +1,94 @@
+{
+  "globalWebhookUrl": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=91ecb1b1-9c75-4b5a-a0d4-a35e1a6739fd",
+  "deviceConfigs": {
+    "7CTDM1200B453R": {
+      "enabled": true,
+      "lastOutTime": 1779098648020,
+      "offlineAlertEnabled": true
+    },
+    "NEST44202602U002": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "AHRXNAH00A01CE": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "AHRXNAH00A01C6": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "NEST44202512U014": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "NEST15202602U001-2": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "AHRXNAH00A019D": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true,
+      "offlineRepeatMinutes": 0
+    },
+    "AHRXNAH00A01DM": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "NEST20202412U002": {
+      "enabled": false,
+      "lastOutTime": 1779098649341,
+      "thresholdMinutes": 30,
+      "lastAlertTime": 1779099350063,
+      "offlineAlertEnabled": true
+    },
+    "8UUXP3B00A10VD": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "NEST15202602U001-1": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "AHRXNAH00A019F": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "AHRXNAH00A01DF": {
+      "enabled": false,
+      "offlineAlertEnabled": true
+    },
+    "AHRXNAH00A018Z": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    },
+    "AHRXNAH00A0192": {
+      "enabled": true,
+      "lastOutTime": null,
+      "lastAlertTime": null,
+      "offlineAlertEnabled": true
+    }
+  }
+}
