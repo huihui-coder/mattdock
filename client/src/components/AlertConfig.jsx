@@ -41,7 +41,7 @@ const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded,
               value={cfg.thresholdMinutes || 30}
               onChange={e => onUpdate(deviceId, 'thresholdMinutes', parseInt(e.target.value) || 30)}
             />
-            <span className="text-xs text-gray-500">分钟后推送（不在舱且无人机离线）</span>
+            <span className="text-xs text-gray-500">分钟后推送（无人机离巢超过阈值时）</span>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -288,7 +288,7 @@ export default function AlertConfig({ devices }) {
         <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
           <p className="text-xs text-gray-500">
             {activeTab === 'lost'
-              ? '不在舱且无人机离线超过阈值时推送'
+              ? '无人机离巢超过设定时间未返回时推送告警'
               : '机场超过 2 分钟无数据时判定离线并推送'}
           </p>
           <div className="flex gap-2">
