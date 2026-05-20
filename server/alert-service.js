@@ -249,6 +249,8 @@ class AlertService {
       content = `🔴 **机场持续离线提醒**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 机场已离线 **${elapsedMin} 分钟**，请尽快处理\n> 时间：${time}`;
     } else if (type === 'online') {
       content = `✅ **机场恢复在线**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 机场已恢复正常连接\n> 时间：${time}`;
+    } else if (type === 'test') {
+      content = `🔔 **告警测试**\n> Webhook 连接正常\n> 时间：${time}`;
     } else {
       content = `⚠️ **无人机离巢告警**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 无人机已离开机巢 **${elapsedMin} 分钟**，飞机疑似飞丢请检查飞行状态\n> 时间：${time}`;
     }
@@ -279,6 +281,28 @@ class AlertService {
     req.on('error', e => console.error('[AlertService] 企业微信推送失败:', e.message));
     req.write(body);
     req.end();
+  }
+
+  _sendStreamSnapshot(webhookUrl, deviceId, suffix = '_out') {
+    const streamUrl = `https://www.hzdkjw.com:1443/live/${deviceId}${suffix}.live.flv`;
+    const tmpFile = path.join(os.tmpdir(), `snapshot_${crypto.randomBytes(6).toString('hex')}.jpg`);
+    const args = ['-y', '-i', streamUrl, '-frames:v', '1', '-q:v', '2', '-t', '10', tmpFile];
+    execFile('ffmpeg', args, { timeout: 15000 }, (err) => {
+      if (err || !fs.existsSync(tmpFile)) {
+        console.warn(`[AlertService] 截图失败 ${deviceId}${suffix}:`, err?.message);
+        return;
+      }
+      try {
+        const imgBuf = fs.readFileSync(tmpFile);
+        const base64 = imgBuf.toString('base64');
+        const md5 = crypto.createHash('md5').update(imgBuf).digest('hex');
+        fs.unlinkSync(tmpFile);
+        this._postWebhook(webhookUrl, JSON.stringify({ msgtype: 'image', image: { base64, md5 } }));
+        console.log(`[AlertService] 截图已发送 ${deviceId}${suffix}`);
+      } catch (e) {
+        console.warn(`[AlertService] 截图发送失败:`, e.message);
+      }
+    });
   }
 
   _sendFlightSnapshot(webhookUrl, deviceId, deviceName) {

@@ -124,9 +124,14 @@ app.post('/api/alert-config', (req, res) => {
 
 // 测试推送
 app.post('/api/alert-config/test', (req, res) => {
-  const { webhookUrl } = req.body;
+  const { webhookUrl, snapshotDeviceId, snapshotStream } = req.body;
   if (!webhookUrl) return res.status(400).json({ error: '缺少 webhookUrl' });
-  alertService._sendWecomWebhook(webhookUrl, '测试设备', 'TEST_DEVICE', 99);
+  alertService._sendWecomWebhook(webhookUrl, '测试设备', 'TEST_DEVICE', 99, 'test');
+  // 发送指定设备的截图（可选）
+  if (snapshotDeviceId) {
+    const suffix = snapshotStream === 'in' ? '_in' : snapshotStream === 'flight' ? '_flight' : '_out';
+    alertService._sendStreamSnapshot(webhookUrl, snapshotDeviceId, suffix);
+  }
   res.json({ message: '测试消息已发送' });
 });
 

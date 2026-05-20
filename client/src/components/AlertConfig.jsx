@@ -173,7 +173,7 @@ export default function AlertConfig({ devices }) {
       await fetch(`${API}/api/alert-config/test`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookUrl: globalWebhookUrl })
+        body: JSON.stringify({ webhookUrl: globalWebhookUrl, snapshotDeviceId: 'NEST20202412U002', snapshotStream: 'out' })
       })
       showMsg('测试消息已发送，请查看企业微信群')
     } catch {
