@@ -161,6 +161,10 @@ class MQTTService {
           const droneInDock = processedData.metrics.droneInDock?.value;
           const subDeviceOnline = processedData.metrics.subDeviceOnline?.value;
           this.alertService.onDeviceUpdate(processedData.deviceId, processedData.deviceName, droneInDock, subDeviceOnline);
+          // 缓存无人机位置（无人机设备有 location 且 gateway 指向机场）
+          if (processedData.deviceType === 'drone' && processedData.location && processedData.gateway) {
+            this.alertService.updateDroneLocation(processedData.gateway, processedData.location);
+          }
         }
       }
 

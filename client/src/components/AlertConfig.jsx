@@ -43,6 +43,15 @@ const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded,
             />
             <span className="text-xs text-gray-500">分钟后推送（不在舱且无人机离线）</span>
           </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => onUpdate(deviceId, 'sendSnapshot', !(cfg.sendSnapshot !== false))}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${cfg.sendSnapshot !== false ? 'bg-blue-500' : 'bg-gray-300'}`}
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${cfg.sendSnapshot !== false ? 'translate-x-5' : 'translate-x-1'}`} />
+            </button>
+            <span className="text-xs text-gray-500">告警时发送监控截图（外部/内部/无人机画面）</span>
+          </div>
           <div>
             <label className="text-xs font-medium text-gray-600">设备专属 Webhook（选填）</label>
             <input

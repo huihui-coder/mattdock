@@ -20,6 +20,8 @@ class AlertService {
     this.airportOnlineState = {};
     // 全局 Webhook（可被设备级覆盖）
     this.globalWebhookUrl = '';
+    // deviceId(机场) -> { latitude, longitude, height }
+    this._droneLocationCache = {};
 
     this._loadConfig();
   }
@@ -167,6 +169,10 @@ class AlertService {
     });
   }
 
+  updateDroneLocation(airportId, location) {
+    this._droneLocationCache[airportId] = location;
+  }
+
   _getDeviceName(deviceId) {
     // 从缓存中查找设备名（由外部调用时传入并缓存）
     return this._deviceNameCache?.[deviceId] || deviceId;
@@ -252,14 +258,24 @@ class AlertService {
     } else if (type === 'test') {
       content = `🔔 **告警测试**\n> Webhook 连接正常\n> 时间：${time}`;
     } else {
-      content = `⚠️ **无人机离巢告警**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 无人机已离开机巢 **${elapsedMin} 分钟**，飞机疑似飞丢请检查飞行状态\n> 时间：${time}`;
+      const loc = this._droneLocationCache[deviceId];
+      const locStr = loc ? `\n> 最后位置：${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}（高度 ${loc.height || 0}m）` : '';
+      const cfg = this.deviceConfigs[deviceId] || {};
+      const subOnline = this.droneInDockState[deviceId] === false ? '（无人机离线）' : '（无人机在线）';
+      content = `⚠️ **无人机离巢告警**\n> 设备：${deviceName} ${subOnline}\n> SN：${deviceId}\n> 无人机已离开机巢 **${elapsedMin} 分钟**，飞机疑似飞丢请检查飞行状态${locStr}\n> 时间：${time}`;
     }
     const body = JSON.stringify({ msgtype: 'markdown', markdown: { content } });
     this._postWebhook(webhookUrl, body);
 
-    // 飞丢告警同步发送无人机画面截图
+    // 飞丢告警同步发送截图（3路）
     if (type === 'lost') {
-      this._sendFlightSnapshot(webhookUrl, deviceId, deviceName);
+      const cfg = this.deviceConfigs[deviceId] || {};
+      const sendSnapshot = cfg.sendSnapshot !== false; // 默认发送
+      if (sendSnapshot) {
+        this._sendStreamSnapshot(webhookUrl, deviceId, '_out');
+        this._sendStreamSnapshot(webhookUrl, deviceId, '_in');
+        this._sendStreamSnapshot(webhookUrl, deviceId, '_flight');
+      }
     }
   }
 
