@@ -18,7 +18,7 @@ export default function LiveStreamPlayer({ deviceId, deviceType }) {
   ]
 
   const getStreamUrl = (streamType) => {
-    return `https://whgadkjw.weihai.cn/live/${deviceId}${streams.find(s => s.id === streamType)?.suffix || ''}`
+    return `https://www.hzdkjw.com:1443/live/${deviceId}${streams.find(s => s.id === streamType)?.suffix || ''}`
   }
 
   useEffect(() => {
