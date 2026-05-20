@@ -206,12 +206,26 @@ class AlertService {
 
     // 回到机巢，重置所有计时
     if (inDock) {
-      if (this.droneInDockState[deviceId] === false) {
-        console.log(`[AlertService] ${deviceName} 无人机返回机巢`);
-      }
+      const wasOut = this.droneInDockState[deviceId] === false;
+      const hadAlert = !!cfg.lastAlertTime;
       this.droneInDockState[deviceId] = true;
       this.deviceConfigs[deviceId].lastOutTime = null;
       this.deviceConfigs[deviceId].lastAlertTime = null;
+      if (wasOut && hadAlert) {
+        // 曾经触发过飞丢告警，回仓时发通知
+        console.log(`[AlertService] ${deviceName} 无人机已回仓（曾告警）`);
+        const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
+        if (webhookUrl) {
+          const time = new Date().toLocaleString('zh-CN');
+          const content = `✅ **无人机已回仓**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 无人机已安全返回机巢\n> 时间：${time}`;
+          this._postWebhook(webhookUrl, JSON.stringify({ msgtype: 'markdown', markdown: { content } }));
+          const sendSnapshot = cfg.sendSnapshot !== false;
+          if (sendSnapshot) {
+            this._sendStreamSnapshot(webhookUrl, deviceId, '_out');
+            this._sendStreamSnapshot(webhookUrl, deviceId, '_in');
+          }
+        }
+      }
       return;
     }
 
