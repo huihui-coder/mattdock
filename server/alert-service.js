@@ -242,6 +242,12 @@ class AlertService {
       if (webhookUrl) {
         this._sendWecomWebhook(webhookUrl, deviceName, deviceId, elapsedMin, 'lost');
         this.deviceConfigs[deviceId].lastAlertTime = Date.now();
+        const sendSnapshot = cfg.sendSnapshot !== false;
+        if (sendSnapshot) {
+          this._sendStreamSnapshot(webhookUrl, deviceId, '_out');
+          this._sendStreamSnapshot(webhookUrl, deviceId, '_in');
+          this._sendStreamSnapshot(webhookUrl, deviceId, '_flight');
+        }
       }
     }
   }
@@ -266,17 +272,6 @@ class AlertService {
     }
     const body = JSON.stringify({ msgtype: 'markdown', markdown: { content } });
     this._postWebhook(webhookUrl, body);
-
-    // 飞丢告警同步发送截图（3路）
-    if (type === 'lost') {
-      const cfg = this.deviceConfigs[deviceId] || {};
-      const sendSnapshot = cfg.sendSnapshot !== false; // 默认发送
-      if (sendSnapshot) {
-        this._sendStreamSnapshot(webhookUrl, deviceId, '_out');
-        this._sendStreamSnapshot(webhookUrl, deviceId, '_in');
-        this._sendStreamSnapshot(webhookUrl, deviceId, '_flight');
-      }
-    }
   }
 
   _postWebhook(webhookUrl, body) {
