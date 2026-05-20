@@ -2,6 +2,9 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
+const crypto = require('crypto');
+const os = require('os');
 
 const CONFIG_FILE = path.join(__dirname, '../haizhuDB/alert-config.json');
 
@@ -249,11 +252,16 @@ class AlertService {
     } else {
       content = `⚠️ **无人机离巢告警**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 无人机已离开机巢 **${elapsedMin} 分钟**，飞机疑似飞丢请检查飞行状态\n> 时间：${time}`;
     }
-    const body = JSON.stringify({
-      msgtype: 'markdown',
-      markdown: { content }
-    });
+    const body = JSON.stringify({ msgtype: 'markdown', markdown: { content } });
+    this._postWebhook(webhookUrl, body);
 
+    // 飞丢告警同步发送无人机画面截图
+    if (type === 'lost') {
+      this._sendFlightSnapshot(webhookUrl, deviceId, deviceName);
+    }
+  }
+
+  _postWebhook(webhookUrl, body) {
     const url = new URL(webhookUrl);
     const isHttps = url.protocol === 'https:';
     const options = {
@@ -261,22 +269,40 @@ class AlertService {
       port: url.port || (isHttps ? 443 : 80),
       path: url.pathname + url.search,
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body)
-      }
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
     };
-
     const req = (isHttps ? https : http).request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        console.log(`[AlertService] 企业微信推送结果 [${deviceName}]:`, data);
-      });
+      res.on('end', () => console.log(`[AlertService] 企业微信推送结果:`, data));
     });
     req.on('error', e => console.error('[AlertService] 企业微信推送失败:', e.message));
     req.write(body);
     req.end();
+  }
+
+  _sendFlightSnapshot(webhookUrl, deviceId, deviceName) {
+    const streamUrl = `https://www.hzdkjw.com:1443/live/${deviceId}_flight.live.flv`;
+    const tmpFile = path.join(os.tmpdir(), `snapshot_${crypto.randomBytes(6).toString('hex')}.jpg`);
+    const args = ['-y', '-i', streamUrl, '-frames:v', '1', '-q:v', '2', '-t', '10', tmpFile];
+
+    execFile('ffmpeg', args, { timeout: 15000 }, (err) => {
+      if (err || !fs.existsSync(tmpFile)) {
+        console.warn(`[AlertService] ${deviceName} 无人机截图失败:`, err?.message);
+        return;
+      }
+      try {
+        const imgBuf = fs.readFileSync(tmpFile);
+        const base64 = imgBuf.toString('base64');
+        const md5 = crypto.createHash('md5').update(imgBuf).digest('hex');
+        fs.unlinkSync(tmpFile);
+        const body = JSON.stringify({ msgtype: 'image', image: { base64, md5 } });
+        this._postWebhook(webhookUrl, body);
+        console.log(`[AlertService] ${deviceName} 无人机截图已发送`);
+      } catch (e) {
+        console.warn(`[AlertService] ${deviceName} 截图发送失败:`, e.message);
+      }
+    });
   }
 }
 
