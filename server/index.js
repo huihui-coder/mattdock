@@ -126,12 +126,11 @@ app.post('/api/alert-config', (req, res) => {
 app.post('/api/alert-config/test', (req, res) => {
   const { webhookUrl, snapshotDeviceId, snapshotStream } = req.body;
   if (!webhookUrl) return res.status(400).json({ error: '缺少 webhookUrl' });
-  alertService._sendWecomWebhook(webhookUrl, '测试设备', 'TEST_DEVICE', 99, 'test');
-  // 发送指定设备的截图（可选）
-  if (snapshotDeviceId) {
-    const suffix = snapshotStream === 'in' ? '_in' : snapshotStream === 'flight' ? '_flight' : '_out';
-    alertService._sendStreamSnapshot(webhookUrl, snapshotDeviceId, suffix);
-  }
+  const testDeviceId = snapshotDeviceId || 'NEST44202512U014';
+  alertService._sendWecomWebhook(webhookUrl, '测试设备', testDeviceId, 99, 'lost');
+  alertService._sendStreamSnapshot(webhookUrl, testDeviceId, '_out');
+  alertService._sendStreamSnapshot(webhookUrl, testDeviceId, '_in');
+  alertService._sendStreamSnapshot(webhookUrl, testDeviceId, '_flight');
   res.json({ message: '测试消息已发送' });
 });
 
