@@ -75,8 +75,8 @@ export default function DeviceDetail({ device, onClose }) {
   // 无人机权限信息
   const droneAuthority = rawData.drone_authority_info
 
-  // 判断设备类型
-  const deviceType = device.deviceId.startsWith('NEST') ? 'airport' : 'drone'
+  // 判断设备类型（直接用后端字段）
+  const deviceType = device.deviceType || (device.deviceId.startsWith('NEST') ? 'airport' : 'drone')
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
