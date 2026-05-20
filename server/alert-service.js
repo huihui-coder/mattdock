@@ -189,6 +189,11 @@ class AlertService {
     // 缓存设备名
     if (!this._deviceNameCache) this._deviceNameCache = {};
     this._deviceNameCache[deviceId] = deviceName;
+    // 缓存无人机在线状态
+    if (subDeviceOnline !== undefined) {
+      if (!this.deviceConfigs[deviceId]) this.deviceConfigs[deviceId] = {};
+      this.deviceConfigs[deviceId]._subDeviceOnline = subDeviceOnline;
+    }
     // 记录机场在线
     this.onAirportOnline(deviceId, deviceName);
     if (droneInDock === undefined) return;
@@ -267,7 +272,8 @@ class AlertService {
       const loc = this._droneLocationCache[deviceId];
       const locStr = loc ? `\n> 最后位置：${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}（高度 ${loc.height || 0}m）` : '';
       const cfg = this.deviceConfigs[deviceId] || {};
-      const subOnline = this.droneInDockState[deviceId] === false ? '（无人机离线）' : '（无人机在线）';
+      const subOnlineVal = cfg._subDeviceOnline;
+      const subOnline = subOnlineVal === 1 ? '（无人机在线）' : '（无人机离线）';
       content = `⚠️ **无人机离巢告警**\n> 设备：${deviceName} ${subOnline}\n> SN：${deviceId}\n> 无人机已离开机巢 **${elapsedMin} 分钟**，飞机疑似飞丢请检查飞行状态${locStr}\n> 时间：${time}`;
     }
     const body = JSON.stringify({ msgtype: 'markdown', markdown: { content } });
