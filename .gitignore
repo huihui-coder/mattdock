@@ -4,4 +4,5 @@ dist/
 build/
 *.log
 videos/
+client/public/videos/
 .DS_Store
