@@ -4,7 +4,7 @@ import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, M
 
 const STREAM_BASE = 'https://www.hzdkjw.com:1443/live/'
 const CESIUM_TK = '9eb56d3fe1e23a9bf19af660b3a9e37c'
-const TEST_VIDEO_URL = '/videos/test-ai-video.mp4'
+const TEST_VIDEO_URL = 'https://videotourl.com/videos/1779380971189-9604078b-43c4-4d71-b28d-e7fe149dbf05.mp4'
 
 function CesiumMap({ lat, lng, label, alertMode = false }) {
   const containerRef = useRef(null)
@@ -187,6 +187,7 @@ function FlvPlayer({ url, className = '', isMainStream = false }) {
         <video
           className="w-full h-full object-contain"
           src={TEST_VIDEO_URL}
+          crossOrigin="anonymous"
           muted
           autoPlay
           loop
@@ -196,6 +197,7 @@ function FlvPlayer({ url, className = '', isMainStream = false }) {
       ) : (
         <video
           ref={videoRef}
+          crossOrigin="anonymous"
           data-main-stream={isMainStream ? "true" : undefined}
           className="w-full h-full object-contain"
           muted
