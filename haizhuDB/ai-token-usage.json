@@ -24,9 +24,9 @@
   },
   "qwen3-vl-flash-2025-10-15": {
     "total": 1000000,
-    "used": 21019,
-    "remaining": 978981,
-    "calls": 10,
+    "used": 26575,
+    "remaining": 973425,
+    "calls": 13,
     "lastUsage": {
       "image_tokens": 2042,
       "input_tokens": 2228,
@@ -34,13 +34,13 @@
         "image_tokens": 2042,
         "text_tokens": 186
       },
-      "output_tokens": 604,
+      "output_tokens": 2,
       "output_tokens_details": {
-        "text_tokens": 604
+        "text_tokens": 2
       },
       "prompt_tokens_details": {},
-      "total_tokens": 2832
+      "total_tokens": 2230
     },
-    "updatedAt": "2026-05-21T15:59:20.412Z"
+    "updatedAt": "2026-05-21T18:05:27.332Z"
   }
 }

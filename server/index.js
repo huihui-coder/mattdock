@@ -103,10 +103,13 @@ app.get('/api/proxy-video', (req, res) => {
   const range = req.headers.range;
   const options = { headers: range ? { Range: range } : {} };
   client.get(videoUrl, options, (proxyRes) => {
-    res.writeHead(proxyRes.statusCode, {
-      ...proxyRes.headers,
-      'Access-Control-Allow-Origin': '*',
-    });
+    const headers = { ...proxyRes.headers };
+    delete headers['access-control-allow-origin'];
+    delete headers['access-control-allow-credentials'];
+    delete headers['x-frame-options'];
+    headers['Access-Control-Allow-Origin'] = '*';
+    headers['Cross-Origin-Resource-Policy'] = 'cross-origin';
+    res.writeHead(proxyRes.statusCode, headers);
     proxyRes.pipe(res);
   }).on('error', (err) => {
     res.status(500).send('代理视频失败');

@@ -220,6 +220,8 @@ export default function VirtualCockpit({ device, onClose }) {
   const [showVirtualKeyboard, setShowVirtualKeyboard] = useState(true)
   const [showAiAlertPanel, setShowAiAlertPanel] = useState(false)
   const [showAiSearch, setShowAiSearch] = useState(false)
+  const [customStreamUrl, setCustomStreamUrl] = useState('')
+  const [customStreamInput, setCustomStreamInput] = useState('')
   // AI搜索标签（多模态提示词）
   const [aiSearchTags, setAiSearchTags] = useState(['大型', '机械结构', '用于工程作业'])
   const [tagInput, setTagInput] = useState('')
@@ -311,13 +313,13 @@ export default function VirtualCockpit({ device, onClose }) {
   }
 
   const renderView = (view, className = 'w-full h-full', isMainStream = false) => {
+    if (isMainStream && customStreamUrl) {
+      return <FlvPlayer url={customStreamUrl} className={className} isMainStream={true} />
+    }
     if (view === 'map') {
-      return device.location ? (
-        <CesiumMap lat={device.location.latitude} lng={device.location.longitude} label={device.deviceName || device.deviceId} />
-      ) : (
-        <div className={`${className} flex flex-col items-center justify-center gap-2 text-gray-600`}>
-          <MapPin size={32} className="opacity-30" />
-          <span className="text-xs">暂无位置信息</span>
+      return (
+        <div className={`${className} relative bg-black flex items-center justify-center overflow-hidden`}>
+          <img src="/images/image.png" alt="机场位置地图" className="w-full h-full object-cover" />
         </div>
       )
     }
@@ -1136,7 +1138,30 @@ export default function VirtualCockpit({ device, onClose }) {
           </div>
 
           {/* 主画面 */}
-          <div className="flex-1 relative">
+          <div className="flex-1 relative flex flex-col">
+            {/* 自定义推流地址输入框 */}
+            <div className="flex items-center gap-2 px-2 py-1 bg-[#0a1929] border-b border-gray-700">
+              <span className="text-xs text-gray-400 whitespace-nowrap">推流地址</span>
+              <input
+                type="text"
+                value={customStreamInput}
+                onChange={e => setCustomStreamInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { const u = customStreamInput.trim(); console.log(`[自定义推流] 🔗 应用地址: ${u || '(清空，恢复推流)'}`); setCustomStreamUrl(u) } }}
+                placeholder="输入视频URL后按回车，留空则使用无人机推流"
+                className="flex-1 bg-[#0d2137] border border-gray-600 rounded px-2 py-0.5 text-xs text-white placeholder-gray-500 outline-none focus:border-blue-500"
+              />
+              <button
+                onClick={() => { const u = customStreamInput.trim(); console.log(`[自定义推流] 🔗 应用地址: ${u || '(清空，恢复推流)'}`); setCustomStreamUrl(u) }}
+                className="text-xs px-2 py-0.5 bg-blue-600 hover:bg-blue-500 rounded text-white"
+              >应用</button>
+              {customStreamUrl && (
+                <button
+                  onClick={() => { setCustomStreamUrl(''); setCustomStreamInput('') }}
+                  className="text-xs px-2 py-0.5 bg-gray-600 hover:bg-gray-500 rounded text-white"
+                >清除</button>
+              )}
+            </div>
+            <div className="flex-1 relative">
             {renderView(mainView, 'w-full h-full', true)}
             {mainView === 'flight' && (
               <>
@@ -1177,6 +1202,7 @@ export default function VirtualCockpit({ device, onClose }) {
                 />
               </>
             )}
+            </div>
           </div>
         </div>
       </div>
