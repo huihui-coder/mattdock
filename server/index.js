@@ -2,6 +2,7 @@ require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') }
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
@@ -43,6 +44,55 @@ function authMiddleware(req, res, next) {
 // 中间件
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
+
+const TOKEN_USAGE_FILE = path.join(__dirname, '../haizhuDB/ai-token-usage.json');
+const DEFAULT_MODEL_TOTAL = 1000000;
+
+function readTokenUsage() {
+  try {
+    if (!fs.existsSync(TOKEN_USAGE_FILE)) return {};
+    return JSON.parse(fs.readFileSync(TOKEN_USAGE_FILE, 'utf8'));
+  } catch (error) {
+    console.error('[AI额度] 读取额度文件失败:', error.message);
+    return {};
+  }
+}
+
+function writeTokenUsage(usageData) {
+  try {
+    fs.mkdirSync(path.dirname(TOKEN_USAGE_FILE), { recursive: true });
+    fs.writeFileSync(TOKEN_USAGE_FILE, JSON.stringify(usageData, null, 2), 'utf8');
+  } catch (error) {
+    console.error('[AI额度] 写入额度文件失败:', error.message);
+  }
+}
+
+function updateTokenUsage(model, usage) {
+  const usedTokens = usage?.total_tokens || 0;
+  const usageData = readTokenUsage();
+  const current = usageData[model] || {
+    total: DEFAULT_MODEL_TOTAL,
+    used: 0,
+    remaining: DEFAULT_MODEL_TOTAL,
+    calls: 0
+  };
+
+  const nextUsed = current.used + usedTokens;
+  const nextRemaining = Math.max(0, current.total - nextUsed);
+
+  usageData[model] = {
+    total: current.total,
+    used: nextUsed,
+    remaining: nextRemaining,
+    calls: (current.calls || 0) + 1,
+    lastUsage: usage || null,
+    updatedAt: new Date().toISOString()
+  };
+
+  writeTokenUsage(usageData);
+  console.log(`[AI额度] ${model} 本次:${usedTokens}, 累计:${nextUsed}, 剩余:${nextRemaining}`);
+  return usageData[model];
+}
 
 // 静态文件服务（生产环境）
 app.use(express.static(path.join(__dirname, '../client/dist')));
@@ -224,6 +274,53 @@ app.post('/api/draw-boxes', (req, res) => {
     console.error('[draw-boxes] 启动 Python 失败:', err.message);
     res.status(500).json({ error: '无法启动 Python，请确保已安装 Python 和 Pillow: ' + err.message });
   });
+});
+
+// DashScope API 代理 - 用于获取真实额度信息
+app.get('/api/ai/token-usage', (req, res) => {
+  res.json(readTokenUsage());
+});
+
+app.post('/api/ai/analyze', async (req, res) => {
+  const { model, messages } = req.body;
+  const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY || 'sk-3adf46c180c44ed99d69adb0b3a46234';
+  
+  try {
+    console.log(`[AI代理] 转发请求 - 模型: ${model}`);
+    const response = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${DASHSCOPE_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ model, input: { messages } })
+    });
+    
+    // 获取额度信息
+    const quotaRemaining = response.headers.get('X-DashScope-Quota-Remaining');
+    const quotaTotal = response.headers.get('X-DashScope-Quota-Total');
+    
+    if (quotaRemaining) {
+      console.log(`[AI代理] 获取到额度 - 模型: ${model}, 剩余: ${quotaRemaining}`);
+    }
+    
+    const data = await response.json();
+    const usageSummary = updateTokenUsage(model, data.usage);
+    
+    // 返回数据和额度信息
+    res.json({
+      ...data,
+      _quota: {
+        remaining: quotaRemaining ? parseInt(quotaRemaining, 10) : null,
+        total: quotaTotal ? parseInt(quotaTotal, 10) : null,
+        model: model
+      },
+      _usageSummary: usageSummary
+    });
+  } catch (error) {
+    console.error('[AI代理] 请求失败:', error.message);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // SPA回退路由

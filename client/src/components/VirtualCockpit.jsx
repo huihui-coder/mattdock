@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import flvjs from 'flv.js'
-import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, Maximize2, Boxes, Siren, Bell, PanelLeft, Keyboard, Filter, Search, Sparkles, Settings, Camera, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, Maximize2, Boxes, Siren, Bell, PanelLeft, Keyboard, Filter, Search, Sparkles, Settings, Camera, Loader2, ChevronLeft, ChevronRight, Brain } from 'lucide-react'
 
 const STREAM_BASE = 'https://www.hzdkjw.com:1443/live/'
 const CESIUM_TK = '9eb56d3fe1e23a9bf19af660b3a9e37c'
@@ -221,6 +221,47 @@ export default function VirtualCockpit({ device, onClose }) {
   const [aiSearchTags, setAiSearchTags] = useState(['大型', '机械结构', '用于工程作业'])
   const [tagInput, setTagInput] = useState('')
   const [captureInterval, setCaptureInterval] = useState(3)
+  const [lastTokenUsage, setLastTokenUsage] = useState(null)
+  const [totalTokenUsage, setTotalTokenUsage] = useState(0)
+  // AI多模态模型选择
+  const [aiModel, setAiModel] = useState('qwen3-vl-flash')
+  const [aiModels, setAiModels] = useState([
+    { value: 'qwen3-vl-flash', label: 'Qwen3-VL-Flash (轻量快速)', description: '剩150,950/共1,000,000', remaining: 150950, total: 1000000 },
+    { value: 'qwen3-vl-flash-2026-01-22', label: 'Qwen3-VL-Flash 2026-01-22', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-flash-2025-10-15', label: 'Qwen3-VL-Flash 2025-10-15', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-plus', label: 'Qwen3-VL-Plus (更强能力)', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-plus-2025-09-23', label: 'Qwen3-VL-Plus 2025-09-23', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-plus-2025-12-19', label: 'Qwen3-VL-Plus 2025-12-19', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-235b-a22b-instruct', label: 'Qwen3-VL-235B (最大)', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-235b-a22b-thinking', label: 'Qwen3-VL-235B-Thinking (推理)', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-32b-instruct', label: 'Qwen3-VL-32B', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-32b-thinking', label: 'Qwen3-VL-32B-Thinking', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-30b-a3b-instruct', label: 'Qwen3-VL-30B-A3B', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-8b-a3b-instruct', label: 'Qwen3-VL-8B-A3B', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-7b-a2b-instruct', label: 'Qwen3-VL-7B-A2B', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 },
+    { value: 'qwen3-vl-4b-a2b-thinking', label: 'Qwen3-VL-4B-Thinking', description: '剩1,000,000/共1,000,000', remaining: 1000000, total: 1000000 }
+  ])
+
+  // 页面加载时读取所有模型的额度记录
+  useEffect(() => {
+    fetch('/api/ai/token-usage')
+      .then(res => res.json())
+      .then(data => {
+        setAiModels(prev => prev.map(m => {
+          const saved = data[m.value]
+          if (!saved) return m
+          return {
+            ...m,
+            total: saved.total || m.total,
+            remaining: saved.remaining ?? m.remaining,
+            description: `剩${(saved.remaining ?? m.remaining).toLocaleString()}/共${(saved.total || m.total).toLocaleString()}`
+          }
+        }))
+        console.log('[AI额度] 已加载所有模型额度:', Object.keys(data).join(', '))
+      })
+      .catch(err => console.error('[AI额度] 加载额度记录失败:', err))
+  }, [])
+
   const [aiAlerts, setAiAlerts] = useState([])
   const [activeAlert, setActiveAlert] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -279,6 +320,24 @@ export default function VirtualCockpit({ device, onClose }) {
     }
     return <FlvPlayer url={streams[view]} className={className} isMainStream={isMainStream} />
   }
+
+  useEffect(() => {
+    fetch('/api/ai/token-usage')
+      .then(res => res.json())
+      .then(data => {
+        const current = data[aiModel]
+        if (!current) return
+        setTotalTokenUsage(current.used || 0)
+        setLastTokenUsage(current.lastUsage || null)
+        setAiModels(prev => prev.map(m => (
+          m.value === aiModel
+            ? { ...m, total: current.total || m.total, remaining: current.remaining ?? m.remaining, description: `剩${(current.remaining ?? m.remaining).toLocaleString()}/共${(current.total || m.total).toLocaleString()}` }
+            : m
+        )))
+        console.log(`[AI检索] 已加载服务端Token记录 - 模型:${aiModel}, 累计:${current.used || 0}, 剩余:${current.remaining}`)
+      })
+      .catch(err => console.error('[AI检索] 获取Token记录失败:', err))
+  }, [aiModel])
 
   // 定时截帧分析
   useEffect(() => {
@@ -562,29 +621,28 @@ export default function VirtualCockpit({ device, onClose }) {
 
   // 调用 Qwen API
   const analyzeFrame = async (base64Image, frameWidth = 640, frameHeight = 360) => {
+    console.log('[AI检索] 🚀 analyzeFrame 函数被调用')
     const prompt = aiSearchTags.length > 0 
       ? `检测图中具有以下特征的目标：${aiSearchTags.join('、')}` 
       : '检测图中异常目标和事件'
-    console.log(`[AI检索] 开始分析 - 提示词: "${prompt}" - 图片大小: ${Math.round(base64Image.length / 1024)}KB`)
+    console.log(`[AI检索] 开始分析 - 模型: ${aiModel} - 提示词: "${prompt}" - 图片大小: ${Math.round(base64Image.length / 1024)}KB`)
     try {
       const startTime = Date.now()
-      const res = await fetch('https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation', {
+      // 使用服务端代理获取真实额度
+      const res = await fetch('/api/ai/analyze', {
         method: 'POST',
         headers: {
-          'Authorization': 'Bearer sk-3adf46c180c44ed99d69adb0b3a46234',
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'qwen3-vl-flash',
-          input: {
-            messages: [{
+          model: aiModel,
+          messages: [{
               role: 'user',
               content: [
                 { image: `data:image/jpeg;base64,${base64Image}` },
                 { text: `请在图中检索并框选用户指定目标：「${prompt}」。只检测当前画面中真实、清晰、实体存在且与该描述明确匹配的目标；忽略视频转场造成的半透明重影、倒影、屏幕叠加画面、UI文字和模糊残影。例如用户输入“白色车辆”时只返回白色车辆，不要返回其他颜色车辆；用户输入“车辆”时返回画面中清晰可见的车辆。请返回目标最紧贴外轮廓的边界框，坐标范围固定为0-1000，格式：[{"label":"目标描述","bbox_2d":[x1,y1,x2,y2]}]。如果没有匹配目标，返回空数组[]。不要解释，不要输出Markdown，只返回JSON数组。最多返回20个最明显目标。` }
               ]
             }]
-          }
         })
       })
       if (!res.ok) {
@@ -592,7 +650,33 @@ export default function VirtualCockpit({ device, onClose }) {
         console.error(`[AI检索] API错误 ${res.status}:`, errorText)
         return
       }
+      // 从服务端代理返回的数据获取真实额度
       const data = await res.json()
+      console.log('[AI检索] 📊 检查额度信息...')
+      
+      const usage = data.usage
+      if (usage && typeof usage.total_tokens === 'number') {
+        const usedTokens = usage.total_tokens
+        const usageSummary = data._usageSummary
+        setLastTokenUsage(usage)
+        setTotalTokenUsage(usageSummary?.used ?? 0)
+        console.log(`[AI检索] ✅ 获取到本次Token消耗 - 输入:${usage.input_tokens || 0}, 输出:${usage.output_tokens || 0}, 总计:${usedTokens}`)
+        setAiModels(prev => {
+          const oldModel = prev.find(m => m.value === aiModel)
+          if (!oldModel) return prev
+          const remaining = usageSummary?.remaining ?? Math.max(0, oldModel.remaining - usedTokens)
+          const total = usageSummary?.total ?? oldModel.total
+          console.log(`[AI检索] 服务端累计额度 - 累计:${(usageSummary?.used ?? 0).toLocaleString()}, 剩余:${remaining.toLocaleString()}`)
+          return prev.map(m => 
+            m.value === aiModel 
+              ? { ...m, total, remaining, description: `剩${remaining.toLocaleString()}/共${total.toLocaleString()}` }
+              : m
+          )
+        })
+      } else {
+        console.log('[AI检索] ⚠️ 未获取到usage.total_tokens，额度显示保持不变')
+      }
+      // data已经在上面解析过了
       const text = data.output?.choices?.[0]?.message?.content?.[0]?.text || data.choices?.[0]?.message?.content || '[]'
       const clean = text.replace(/```json|```/g, '').trim()
       console.log(`[AI检索] API返回原始内容:`, text.substring(0, 200), '...')
@@ -1217,10 +1301,71 @@ export default function VirtualCockpit({ device, onClose }) {
                   </div>
                 </div>
               </div>
+              {/* AI模型选择 */}
+              <div className="mt-4">
+                <label className="text-xs text-gray-400 mb-1.5 block flex items-center gap-1">
+                  <Brain size={12} />
+                  多模态模型
+                </label>
+                <select
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  className="w-full h-9 px-3 bg-[#333] text-white text-sm rounded border border-[#444] focus:border-[#666] focus:outline-none cursor-pointer"
+                >
+                  {aiModels.map((model) => (
+                    <option key={model.value} value={model.value}>
+                      {model.label} - {model.description}
+                    </option>
+                  ))}
+                </select>
+                {/* 额度进度条 */}
+                <div className="mt-2">
+                  <div className="flex justify-between text-[10px] text-gray-500 mb-1">
+                    <span>剩余额度</span>
+                    <span>{(() => {
+                      const model = aiModels.find(m => m.value === aiModel)
+                      if (!model) return '-'
+                      const percent = Math.round((model.remaining / model.total) * 100)
+                      return `${model.remaining.toLocaleString()}/${model.total.toLocaleString()} (${percent}%)`
+                    })()}</span>
+                  </div>
+                  <div className="w-full h-2 bg-[#333] rounded-full overflow-hidden">
+                    {(() => {
+                      const model = aiModels.find(m => m.value === aiModel)
+                      if (!model) return null
+                      const percent = Math.round((model.remaining / model.total) * 100)
+                      let color = 'bg-green-500'
+                      if (percent < 30) color = 'bg-red-500'
+                      else if (percent < 60) color = 'bg-yellow-500'
+                      return (
+                        <div 
+                          className={`h-full ${color} transition-all duration-300`}
+                          style={{ width: `${percent}%` }}
+                        />
+                      )
+                    })()}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 mt-2 text-[10px] text-gray-500">
+                    <div className="bg-[#252525] rounded px-2 py-1">
+                      <span className="text-gray-400">本次消耗：</span>
+                      <span className="text-cyan-400">{lastTokenUsage ? lastTokenUsage.total_tokens?.toLocaleString() : 0}</span>
+                    </div>
+                    <div className="bg-[#252525] rounded px-2 py-1">
+                      <span className="text-gray-400">累计消耗：</span>
+                      <span className="text-cyan-400">{totalTokenUsage.toLocaleString()}</span>
+                    </div>
+                    {lastTokenUsage && (
+                      <div className="col-span-2 text-[10px] text-gray-600">
+                        输入 {lastTokenUsage.input_tokens || 0} / 输出 {lastTokenUsage.output_tokens || 0}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
               {/* 说明 */}
               <div className="text-xs text-gray-500 leading-5 bg-[#252525] rounded p-3">
                 <p>• 系统将每隔 {captureInterval} 秒自动截取无人机画面</p>
-                <p>• 调用 Qwen3-VL-Flash 多模态模型分析画面内容</p>
+                <p>• 调用 {aiModels.find(m => m.value === aiModel)?.label || 'Qwen3-VL'} 多模态模型分析画面内容</p>
                 <p>• 检测结果将自动写入左侧「目标告警记录」面板</p>
                 <p>• 点击告警可查看框选结果（{drawMode === 'python' ? 'Python Pillow 原图绘制' : '前端 Canvas 绘制'}）</p>
               </div>
