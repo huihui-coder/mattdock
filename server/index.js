@@ -5,6 +5,8 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const https = require('https');
+const http = require('http');
 
 const MQTTService = require('./mqtt-service');
 const WebSocketService = require('./ws-service');
@@ -93,6 +95,23 @@ function updateTokenUsage(model, usage) {
   console.log(`[AI额度] ${model} 本次:${usedTokens}, 累计:${nextUsed}, 剩余:${nextRemaining}`);
   return usageData[model];
 }
+
+// 视频代理（绕过CORS）
+app.get('/api/proxy-video', (req, res) => {
+  const videoUrl = 'https://videotourl.com/videos/1779380971189-9604078b-43c4-4d71-b28d-e7fe149dbf05.mp4';
+  const client = videoUrl.startsWith('https') ? https : http;
+  const range = req.headers.range;
+  const options = { headers: range ? { Range: range } : {} };
+  client.get(videoUrl, options, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode, {
+      ...proxyRes.headers,
+      'Access-Control-Allow-Origin': '*',
+    });
+    proxyRes.pipe(res);
+  }).on('error', (err) => {
+    res.status(500).send('代理视频失败');
+  });
+});
 
 // 静态文件服务（生产环境）
 app.use(express.static(path.join(__dirname, '../client/dist')));
