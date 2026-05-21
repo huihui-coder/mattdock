@@ -3,4 +3,5 @@ node_modules/
 dist/
 build/
 *.log
+videos/
 .DS_Store
