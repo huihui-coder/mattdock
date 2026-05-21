@@ -188,6 +188,7 @@ function FlvPlayer({ url, className = '', isMainStream = false }) {
           className="w-full h-full object-contain"
           src={TEST_VIDEO_URL}
           crossOrigin="anonymous"
+          data-main-stream={isMainStream ? "true" : undefined}
           muted
           autoPlay
           loop
