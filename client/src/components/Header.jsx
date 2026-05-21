@@ -1,4 +1,4 @@
-import { Plane, Wifi, WifiOff, Activity } from 'lucide-react'
+import { Wifi, WifiOff, Activity } from 'lucide-react'
 
 export default function Header({ mqttConnected, wsConnected }) {
   return (
@@ -6,9 +6,7 @@ export default function Header({ mqttConnected, wsConnected }) {
       <div className="max-w-7xl mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <Plane className="text-blue-600" size={24} />
-            </div>
+            <img src="/logos/platform-logo.png" alt="平台Logo" className="h-10 w-10 object-contain rounded-lg" />
             <div>
               <h1 className="text-xl font-bold text-gray-900">机场监测系统</h1>
               <p className="text-sm text-gray-500">基于MQTT的实时设备监控</p>

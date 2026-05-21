@@ -6,6 +6,7 @@ import DeviceDetail from './components/DeviceDetail'
 import AlertList from './components/AlertList'
 import AlertConfig from './components/AlertConfig'
 import Login from './components/Login'
+import VirtualCockpit from './components/VirtualCockpit'
 import { Activity, Wifi, WifiOff, LayoutDashboard, Bell } from 'lucide-react'
 
 const IS_PROD = import.meta.env.PROD
@@ -16,10 +17,7 @@ function apiFetch(url, opts = {}) {
   return fetch(url, { ...opts, headers: { ...(opts.headers || {}), 'x-auth-token': token } })
 }
 
-const WS_PORT = 3002
-const WS_URL = import.meta.env.PROD
-  ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
-  : `ws://localhost:${WS_PORT}`
+const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
 const MAX_ALERTS = 20  // 限制风速告警数量
 const MAX_HEALTH_ALERTS_PER_DEVICE = 5  // 每个设备最多保留5条健康告警
 const ALERT_UPDATE_INTERVAL = 5000  // 告警列表更新间隔（毫秒）
@@ -35,36 +33,53 @@ function App() {
   const [healthAlerts, setHealthAlerts] = useState({}) // 按设备ID存储健康告警
   const [selectedDevice, setSelectedDevice] = useState(null)
   const [statusFilter, setStatusFilter] = useState(null)  // 状态筛选：null/warning/critical
+  const [cockpitDevice, setCockpitDevice] = useState(null)
   const wsRef = useRef(null)
   const alertUpdateTimerRef = useRef(null)
 
-  // WebSocket连接
+  // WebSocket连接（含自动重连）
+  const reconnectTimerRef = useRef(null)
+  const destroyedRef = useRef(false)
+
   useEffect(() => {
-    const websocket = new WebSocket(WS_URL)
-    
-    websocket.onopen = () => {
-      console.log('[WS] 已连接')
-      setWsConnected(true)
+    destroyedRef.current = false
+
+    function connect() {
+      if (destroyedRef.current) return
+      const websocket = new WebSocket(WS_URL)
+
+      websocket.onopen = () => {
+        console.log('[WS] 已连接')
+        setWsConnected(true)
+      }
+
+      websocket.onclose = () => {
+        console.log('[WS] 已断开，3秒后重连...')
+        setWsConnected(false)
+        wsRef.current = null
+        if (!destroyedRef.current) {
+          reconnectTimerRef.current = setTimeout(connect, 3000)
+        }
+      }
+
+      websocket.onmessage = (event) => {
+        const data = JSON.parse(event.data)
+        handleMessage(data)
+      }
+
+      websocket.onerror = () => {
+        websocket.close()
+      }
+
+      wsRef.current = websocket
     }
 
-    websocket.onclose = () => {
-      console.log('[WS] 已断开')
-      setWsConnected(false)
-    }
-
-    websocket.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      handleMessage(data)
-    }
-
-    websocket.onerror = (error) => {
-      console.error('[WS] 错误:', error)
-    }
-
-    wsRef.current = websocket
+    connect()
 
     return () => {
-      websocket.close()
+      destroyedRef.current = true
+      clearTimeout(reconnectTimerRef.current)
+      if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
     }
   }, [])
 
@@ -188,7 +203,7 @@ function App() {
   }, [token])
 
   // 统计数据
-  const airportDevices = devices.filter(d => d.deviceType === 'airport')
+  const airportDevices = devices.filter(d => d.deviceType === 'airport' || d.deviceType === 'remote')
   const droneDevices = devices.filter(d => d.deviceType === 'drone')
   
   // 根据状态筛选设备
@@ -271,6 +286,7 @@ function App() {
               title="机场设备"
               filterActive={statusFilter !== null}
               onClearFilter={() => setStatusFilter(null)}
+              onCockpit={setCockpitDevice}
             />
           </div>
 
@@ -305,6 +321,14 @@ function App() {
           <DeviceDetail 
             device={selectedDevice} 
             onClose={() => setSelectedDevice(null)} 
+          />
+        )}
+
+        {/* 虚拟座舱 */}
+        {cockpitDevice && (
+          <VirtualCockpit
+            device={cockpitDevice}
+            onClose={() => setCockpitDevice(null)}
           />
         )}
       </main>

@@ -1,6 +1,6 @@
-import { Cpu, Thermometer, Droplets, Battery, Signal, Wind, CloudRain, MapPin, MoreHorizontal, AlertTriangle, Package, X, Home } from 'lucide-react'
+import { Cpu, Thermometer, Droplets, Battery, Signal, Wind, CloudRain, MapPin, MoreHorizontal, AlertTriangle, Package, X, Home, MonitorPlay } from 'lucide-react'
 
-export default function DeviceList({ devices, healthAlerts, onSelect, selectedId, title = "设备列表", filterActive = false, onClearFilter }) {
+export default function DeviceList({ devices, healthAlerts, onSelect, selectedId, title = "设备列表", filterActive = false, onClearFilter, onCockpit }) {
   const getStatusClass = (status) => {
     switch (status) {
       case 'normal': return 'bg-green-100 border-green-300'
@@ -70,9 +70,21 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
                     <span className="text-xs text-gray-400">({device.deviceId})</span>
                   )}
                 </div>
-                <span className={`text-xs px-2 py-1 rounded-full ${getStatusClass(device.status)}`}>
-                  {device.statusText}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-2 py-1 rounded-full ${getStatusClass(device.status)}`}>
+                    {device.statusText}
+                  </span>
+                  {(device.deviceType === 'airport' || device.deviceType === 'remote') && onCockpit && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onCockpit(device) }}
+                      className="flex items-center gap-1 px-2 py-1 bg-gray-800 hover:bg-blue-700 text-white text-xs rounded transition-colors"
+                      title="虚拟座舱"
+                    >
+                      <MonitorPlay size={12} />
+                      <span>虚拟座舱</span>
+                    </button>
+                  )}
+                </div>
               </div>
               
               <div className="grid grid-cols-4 gap-2 text-xs">

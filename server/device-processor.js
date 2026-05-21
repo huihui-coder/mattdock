@@ -54,6 +54,34 @@ class DeviceProcessor {
       'AHRXNAH00A019D': '三中-Dock3-M4TD',
       'NEST44202602U002': '艺术博物馆-换电-M4T',
       'AHRXNAH00A018Z': '分局-Dock3-M4TD',
+      '1581F9HEC259S00CFP71': '昌岗派出所-M4T',
+      '1581F9HEC259S00CTR1C': '南华西派出所-M4T',
+      '1581F9HEC259S00CSJ05': '南石头派出所-M4T',
+      '1581F9HEC256P00CY9TF': '赤岗派出所-M4T',
+      '1581F9HEC258T00CJD4W': '新港派出所-M4T',
+      '1581FACGW25AN00A2LBY': '巡特警一中队-M400',
+      '1581F9HEC258V00CNZ1P': '瑞宝派出所-M4T',
+      '1581F9HEC259S00CR5UD': '江南中派出所-M4T',
+      '1581F9HEC259S00CTEF7': '滨江派出所-M4T',
+      '1581F9HEC259S00C06UH': '巡特警三中队-M4T',
+      '1581F9HEC259S00C40C2': '巡特警一中队-M4T（2号机）',
+      '1581F9HEC258V00CPP4S': '巡特警四中队-M4T',
+      '1581F9HEC257L00CN4GU': '巡特警一中队-M4T（1号机）',
+      '1581F9HEC259S00CHR5R': '官洲派出所-M4T',
+      '1581F9HEC258V00C1HM1': '巡特警一中队-M4T（3号机）',
+      '1581F9HEC259S00C4X0T': '素社派出所-M4T',
+      '1581F9HEC258T00CGGFH': '沙园派出所-M4T',
+      '1581F9HEC257L00CU2KT': '江海派出所-M4T',
+      '1581F9HEC258V00CJ8FG': '龙凤派出所-M4T',
+      '1581F9HEC259S00CJ7B2': '人口大队-M4T',
+      '1581F9HEC258V00C1B83': '凤阳派出所-M4T',
+      '1581F9HEC259S00C1ESG': '海幢派出所-M4T',
+      '1581F9HEC258V00C1NPD': '巡特警二中队-M4T（1号机）',
+      '1581F9HEC259S00CLT1Q': '南洲派出所-M4T',
+      '1581F9HEC258T00CG2H0': '华洲派出所-M4T',
+      '1581F9HEC258V00CVX83': '琶洲派出所-M4T',
+      '1581F9HEC259S00CLZ33': '禁毒支队-M4T',
+      '9N9CN960016LZZ': '昌岗派出所-M4T-遥控器',
     };
 
     // 从 process.env 动态合并 DEVICE_* 配置（优先级高于硬编码）
@@ -108,7 +136,14 @@ class DeviceProcessor {
 
     // 判断设备类型：无人机设备ID以1581F开头，机场设备以NEST或8UUXN开头
     const isDrone = deviceId.startsWith('1581F');
-    result.deviceType = isDrone ? 'drone' : 'airport';
+    const isRemoteController = deviceId.startsWith('9N9');
+    result.deviceType = isDrone ? 'drone' : (isRemoteController ? 'remote' : 'airport');
+
+    // 机场绑定无人机时，机场显示为“无人机设备名称-遥控器”
+    const boundDroneSn = payload.sub_device?.device_sn || payload.sub_devices?.[0]?.device_sn;
+    if (!isDrone && !isRemoteController && boundDroneSn && this.deviceNames[boundDroneSn]) {
+      result.deviceName = `${this.deviceNames[boundDroneSn]}-遥控器`;
+    }
 
     // ========== 风速 (重点指标) ==========
     if (payload.wind_speed !== undefined) {

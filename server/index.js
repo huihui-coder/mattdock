@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 
 const MQTTService = require('./mqtt-service');
 const WebSocketService = require('./ws-service');
@@ -41,7 +42,7 @@ function authMiddleware(req, res, next) {
 
 // 中间件
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '25mb' }));
 
 // 静态文件服务（生产环境）
 app.use(express.static(path.join(__dirname, '../client/dist')));
@@ -190,6 +191,39 @@ app.post('/api/mqtt/reconnect', (req, res) => {
   }
   mqttService.connect();
   res.json({ message: '正在重新连接MQTT...' });
+});
+
+// Python Pillow 绘制边界框接口
+app.post('/api/draw-boxes', (req, res) => {
+  const { image, boxes, videoWidth, videoHeight } = req.body;
+  if (!image || !boxes) {
+    return res.status(400).json({ error: '缺少 image 或 boxes 参数' });
+  }
+  const input = JSON.stringify({ image, boxes, videoWidth: videoWidth || 1920, videoHeight: videoHeight || 1080 });
+  const scriptPath = path.join(__dirname, 'draw_boxes.py');
+  const py = spawn('python', [scriptPath], { timeout: 30000 });
+  let stdout = '';
+  let stderr = '';
+  py.stdin.write(input);
+  py.stdin.end();
+  py.stdout.on('data', d => { stdout += d.toString(); });
+  py.stderr.on('data', d => { stderr += d.toString(); });
+  py.on('close', code => {
+    if (code !== 0) {
+      console.error('[draw-boxes] Python 错误:', stderr);
+      return res.status(500).json({ error: stderr || 'Python 脚本执行失败' });
+    }
+    try {
+      const result = JSON.parse(stdout);
+      res.json(result);
+    } catch (e) {
+      res.status(500).json({ error: '解析 Python 输出失败: ' + stdout });
+    }
+  });
+  py.on('error', err => {
+    console.error('[draw-boxes] 启动 Python 失败:', err.message);
+    res.status(500).json({ error: '无法启动 Python，请确保已安装 Python 和 Pillow: ' + err.message });
+  });
 });
 
 // SPA回退路由

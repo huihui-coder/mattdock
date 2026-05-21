@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Lock, User, Wifi } from 'lucide-react'
+import { Lock, User } from 'lucide-react'
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('')
@@ -31,9 +31,7 @@ export default function Login({ onLogin }) {
     <div className="min-h-screen bg-gradient-to-br from-blue-900 to-blue-700 flex items-center justify-center px-4">
       <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
         <div className="flex flex-col items-center mb-6">
-          <div className="bg-blue-100 rounded-full p-3 mb-3">
-            <Wifi size={28} className="text-blue-600" />
-          </div>
+          <img src="/logos/platform-logo.png" alt="平台Logo" className="h-16 w-16 object-contain mb-3 rounded-xl" />
           <h1 className="text-xl font-bold text-gray-800">海珠无人机监控平台</h1>
           <p className="text-xs text-gray-400 mt-1">请登录后继续</p>
         </div>

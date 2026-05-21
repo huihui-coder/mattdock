@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>三维模型展示 - B3DM + LAS 点云</title>
+    <script src="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Cesium.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/proj4@2.11.0/dist/proj4.js"></script>
+    <link href="https://cesium.com/downloads/cesiumjs/releases/1.115/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Microsoft YaHei', Arial, sans-serif; overflow: hidden; background: #000; }
+
+        #cesiumContainer {
+            width: 100vw;
+            height: 100vh;
+            position: absolute;
+            top: 0; left: 0;
+        }
+
+        /* 隐藏 Cesium 默认控件 */
+        .cesium-viewer-toolbar,
+        .cesium-viewer-animationContainer,
+        .cesium-viewer-timelineContainer,
+        .cesium-viewer-bottom,
+        .cesium-credit-logoContainer { display: none !important; }
+
+        /* 控制面板 */
+        .control-panel {
+            position: absolute;
+            top: 20px; left: 20px;
+            background: rgba(15, 25, 40, 0.92);
+            padding: 16px 18px;
+            border-radius: 10px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 1000;
+            min-width: 240px;
+            border: 1px solid rgba(80, 160, 255, 0.25);
+        }
+        .control-panel h3 {
+            color: #7ec8ff;
+            font-size: 15px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(80, 160, 255, 0.2);
+            letter-spacing: 1px;
+        }
+        .control-panel h4 {
+            color: #aac8e8;
+            font-size: 12px;
+            margin: 10px 0 6px 0;
+            letter-spacing: 0.5px;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-family: 'Microsoft YaHei', Arial, sans-serif;
+            transition: all 0.2s;
+            text-align: left;
+        }
+        .btn-primary   { background: #1a6bb5; color: #fff; }
+        .btn-primary:hover { background: #2180d5; }
+        .btn-success   { background: #1a7a4a; color: #fff; }
+        .btn-success:hover { background: #21a05f; }
+        .btn-warning   { background: #8a6200; color: #fff; }
+        .btn-warning:hover { background: #b07f00; }
+        .btn-danger    { background: #8a1a1a; color: #fff; }
+        .btn-danger:hover  { background: #b02020; }
+        .btn-secondary { background: rgba(80,100,130,0.6); color: #cde; }
+        .btn-secondary:hover { background: rgba(80,100,130,0.9); }
+
+        .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 6px 0;
+        }
+        .slider-row label {
+            color: #aac8e8;
+            font-size: 12px;
+            white-space: nowrap;
+            width: 70px;
+        }
+        .slider-row input[type=range] {
+            flex: 1;
+            accent-color: #4a9eff;
+        }
+        .slider-row span {
+            color: #7ec8ff;
+            font-size: 12px;
+            min-width: 36px;
+            text-align: right;
+        }
+
+        /* 信息面板 */
+        .info-panel {
+            position: absolute;
+            bottom: 20px; left: 20px;
+            background: rgba(15, 25, 40, 0.88);
+            padding: 12px 16px;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+            z-index: 1000;
+            font-size: 12px;
+            color: #aac8e8;
+            border: 1px solid rgba(80, 160, 255, 0.2);
+            min-width: 220px;
+        }
+        .info-panel .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 4px 0;
+            gap: 12px;
+        }
+        .info-panel .info-label { color: #6a9cc8; }
+        .info-panel .info-value { color: #e0f0ff; font-weight: bold; }
+
+        /* 状态提示 */
+        #statusBar {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 25, 40, 0.92);
+            color: #7ec8ff;
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-size: 13px;
+            z-index: 2000;
+            border: 1px solid rgba(80, 160, 255, 0.3);
+            box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+            transition: opacity 0.4s;
+            pointer-events: none;
+        }
+        #statusBar.hidden { opacity: 0; }
+
+        /* 图层切换按钮组 */
+        .btn-group {
+            display: flex;
+            gap: 4px;
+            margin: 5px 0;
+        }
+        .btn-group .btn {
+            flex: 1;
+            text-align: center;
+            padding: 6px 4px;
+            font-size: 12px;
+        }
+        .btn-group .btn.active {
+            background: #2180d5 !important;
+            border: 1px solid #4aa0ff;
+        }
+
+        /* 模型调整区 */
+        .section-divider {
+            border: none;
+            border-top: 1px solid rgba(80, 160, 255, 0.15);
+            margin: 10px 0;
+        }
+
+        /* 加载遮罩 */
+        #loadingMask {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(5, 10, 20, 0.85);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #7ec8ff;
+            font-size: 16px;
+            letter-spacing: 2px;
+        }
+        .loading-spinner {
+            width: 50px; height: 50px;
+            border: 4px solid rgba(80, 160, 255, 0.2);
+            border-top-color: #4a9eff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 18px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .loading-sub {
+            font-size: 12px;
+            color: #5a8caa;
+            margin-top: 8px;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+
+    <!-- 加载遮罩 -->
+    <div id="loadingMask">
+        <div class="loading-spinner"></div>
+        <div>正在加载三维场景...</div>
+        <div class="loading-sub" id="loadingSub">terra_b3dms 地形模型</div>
+    </div>
+
+    <!-- 顶部状态条 -->
+    <div id="statusBar" class="hidden">就绪</div>
+
+    <!-- 控制面板 -->
+    <div class="control-panel">
+        <h3>🌐 三维地球控制台</h3>
+
+        <h4>视角控制</h4>
+        <button class="btn btn-primary" onclick="flyToB3dm()">📍 定位 B3DM</button>
+        <button class="btn btn-primary" onclick="flyToLas()" id="flyLasBtn" disabled>📍 定位 LAS</button>
+        <button class="btn btn-secondary" onclick="flyToOverview()">🌍 全球视角</button>
+        <div class="btn-group">
+            <button class="btn btn-secondary" onclick="zoomIn()">🔍 放大</button>
+            <button class="btn btn-secondary" onclick="zoomOut()">🔎 缩小</button>
+        </div>
+
+        <hr class="section-divider">
+        <h4>双模型</h4>
+        <div class="btn-group">
+            <button class="btn btn-secondary active" id="viewBoth" onclick="setModelViewMode('both')">同时</button>
+            <button class="btn btn-secondary" id="viewB3" onclick="setModelViewMode('b3dm')">仅 B3DM</button>
+            <button class="btn btn-secondary" id="viewLas" onclick="setModelViewMode('las')">仅 LAS</button>
+        </div>
+        <div style="font-size:11px; color:#5a8caa; margin:4px 0 6px 0;">优先加载 <code>las_pnts_tileset/tileset.json</code>（见 tools）；否则浏览器解析 LAS（易因 http-server 回退 HTML 失败）</div>
+        <div class="slider-row">
+            <label>LAS 抽样</label>
+            <input type="range" min="1" max="40" value="22" id="lasStrideSlider" onchange="reloadLasWithStride()" oninput="document.getElementById('lasStrideVal').textContent=this.value">
+            <span id="lasStrideVal">22</span>
+        </div>
+        <div class="slider-row">
+            <label>LAS 点大小</label>
+            <input type="range" min="1" max="12" value="4" id="lasSizeSlider" oninput="updateLasPointSize(this.value)">
+            <span id="lasSizeVal">4</span>
+        </div>
+
+        <hr class="section-divider">
+        <h4>底图图层</h4>
+        <div class="btn-group">
+            <button class="btn btn-secondary active" id="layerImg" onclick="switchLayer('img')">卫星</button>
+            <button class="btn btn-secondary" id="layerVec" onclick="switchLayer('vec')">矢量</button>
+            <button class="btn btn-secondary" id="layerNone" onclick="switchLayer('none')">无底图</button>
+        </div>
+
+        <hr class="section-divider">
+        <h4>模型显示</h4>
+        <div class="slider-row">
+            <label>透明度</label>
+            <input type="range" min="0" max="100" value="100" id="opacitySlider" oninput="updateOpacity(this.value)">
+            <span id="opacityVal">100%</span>
+        </div>
+        <div class="slider-row">
+            <label>最大误差</label>
+            <input type="range" min="1" max="64" value="8" id="sseSlider" oninput="updateSSE(this.value)">
+            <span id="sseVal">8</span>
+        </div>
+        <div class="slider-row">
+            <label>高度偏移</label>
+            <input type="range" min="-100" max="100" value="0" id="heightSlider" oninput="updateHeight(this.value)">
+            <span id="heightVal">0m</span>
+        </div>
+
+        <hr class="section-divider">
+        <h4>渲染模式</h4>
+        <div class="btn-group">
+            <button class="btn btn-secondary active" id="modeSurface" onclick="setRenderMode('surface')">面</button>
+            <button class="btn btn-secondary" id="modeWireframe" onclick="setRenderMode('wireframe')">线框</button>
+        </div>
+
+        <hr class="section-divider">
+        <h4>地形与模型关系</h4>
+        <div class="btn-group">
+            <button class="btn btn-secondary active" id="depthOff" onclick="setDepthTest(false)">模型优先</button>
+            <button class="btn btn-secondary" id="depthOn" onclick="setDepthTest(true)">地形优先</button>
+        </div>
+        <div style="font-size:11px; color:#5a8caa; margin:4px 0 6px 0;">模型优先：避免穿模 / 地形优先：地形遮挡地下模型</div>
+
+        <button class="btn btn-danger" style="margin-top:4px;" onclick="toggleModelVisibility()" id="visBtn">👁 隐藏模型</button>
+    </div>
+
+    <!-- 信息面板 -->
+    <div class="info-panel">
+        <div class="info-row">
+            <span class="info-label">B3DM</span>
+            <span class="info-value" id="modelStatus">加载中...</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">LAS 点云</span>
+            <span class="info-value" id="lasStatus">未加载</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">当前坐标</span>
+            <span class="info-value" id="currentCoords">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">相机高度</span>
+            <span class="info-value" id="cameraHeight">--</span>
+        </div>
+        <div class="info-row">
+            <span class="info-label">已渲染瓦片</span>
+            <span class="info-value" id="tileCount">--</span>
+        </div>
+    </div>
+
+    <script>
+        // ===== 配置 =====
+        const TK = '9eb56d3fe1e23a9bf19af660b3a9e37c';
+
+        // 模型路径（相对于本页面）
+        // 需要通过本地 HTTP 服务器访问，直接 file:// 协议会因跨域被浏览器拦截
+        const TILESET_URL = './3_b3dms_preview/terra_b3dms/tileset.json';
+
+        // 优先：py3dtiles 生成的点云 3D Tiles（PNTS，见 tools/las_to_pnts.py）
+        const LAS_PNTS_TILESET_URL = './las_pnts_tileset/tileset.json';
+
+        // 备选：浏览器直接解析 LAS（大文件 + 中文路径易被 http-server 回退成 index.html 导致非 LASF）
+        const LAS_URL_ENCODED = './%E5%AE%89%E5%B1%85%E5%AE%9D(2).las';
+        const LAS_URL_ASCII = './anju_las.las';
+
+        // 源坐标系：CGCS2000 横轴墨卡托（广西一带常用）；与 WGS84 椭球一致，小范围可用线性近似加速
+        const LAS_PROJ4 = '+proj=tmerc +lat_0=0 +lon_0=106 +k=1 +x_0=450000 +y_0=0 +ellps=GRS80 +units=m +no_defs';
+        const WGS84_PROJ4 = '+proj=longlat +datum=WGS84 +no_defs';
+
+        // 模型 ECEF 中心 => 约 108.97°E, 22.80°N（广西南宁附近）
+        const MODEL_LNG = 108.97;
+        const MODEL_LAT = 22.80;
+
+        let viewer = null;
+        let tileset = null;
+        let lasPntsTileset = null;
+        let pointCollection = null;
+        let lasBoundingSphere = null;
+        let lasHeader = null;
+        let lasShift = { ex: 0, ny: 0, z: 0 };
+        let lasJacobian = null;
+        let lasAnchorXY = null;
+        let modelVisible = true;
+        let currentLayerMode = 'img';
+        let heightOffset = 0;
+        let modelViewMode = 'both';
+        let lasLoadToken = 0;
+
+        // ===== 初始化 =====
+        window.onload = function () {
+            initCesium();
+        };
+
+        function initCesium() {
+            Cesium.Ion.defaultAccessToken = undefined;
+
+            viewer = new Cesium.Viewer('cesiumContainer', {
+                sceneMode: Cesium.SceneMode.SCENE3D,
+                baseLayerPicker: false,
+                geocoder: false,
+                homeButton: false,
+                sceneModePicker: false,
+                navigationHelpButton: false,
+                animation: false,
+                timeline: false,
+                fullscreenButton: false,
+                infoBox: false,
+                selectionIndicator: false,
+                imageryProvider: false,
+                terrainProvider: new Cesium.EllipsoidTerrainProvider(), // 初始占位，下方异步替换为真实地形
+                contextOptions: {
+                    webgl: { preserveDrawingBuffer: true, alpha: true }
+                }
+            });
+
+            // 提升渲染质量
+            viewer.resolutionScale = window.devicePixelRatio || 1.0;
+            viewer.scene.postProcessStages.fxaa.enabled = true;
+            viewer.scene.globe.maximumScreenSpaceError = 1;
+            viewer.scene.globe.show = true;
+
+            // 加载真实地形：优先 Mars3D 公开地形，失败则回退 ArcGIS 全球地形
+            Cesium.CesiumTerrainProvider.fromUrl(
+                'https://data.mars3d.cn/terrain'
+            ).then(function (tp) {
+                viewer.terrainProvider = tp;
+                // 关闭地形深度遮挡：避免地形网格穿插到 3D Tiles 模型内部
+                // 优先级：用户三维模型 > 全球高程地形
+                viewer.scene.globe.depthTestAgainstTerrain = false;
+                showStatus('地形加载成功 (Mars3D)', 2000);
+            }).catch(function (err) {
+                console.warn('Mars3D 地形不可用，回退 ArcGIS 地形:', err);
+                showStatus('Mars3D 地形不可用，切换备用地形...', 2000);
+                Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(
+                    'https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer'
+                ).then(function (tp2) {
+                    viewer.terrainProvider = tp2;
+                    viewer.scene.globe.depthTestAgainstTerrain = false;
+                    showStatus('地形加载成功 (ArcGIS 备用)', 2000);
+                }).catch(function () {
+                    viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+                    showStatus('地形服务不可用，使用平面地球', 3000);
+                });
+            });
+
+            // 加载天地图卫星底图
+            loadImageryLayer('img');
+
+            // 加载 3D Tiles 模型；无论 B3DM 是否成功都尝试加载 LAS
+            loadTileset().catch(function (e) {
+                console.error('B3DM', e);
+            }).finally(function () {
+                loadLasPointCloud();
+            });
+
+            // 鼠标交互
+            setupMouseEvents();
+
+            // 每秒刷新信息面板
+            setInterval(updateInfoPanel, 500);
+        }
+
+        // ===== 加载底图 =====
+        function loadImageryLayer(type) {
+            viewer.imageryLayers.removeAll();
+            if (type === 'none') return;
+
+            const layerKey = type === 'img' ? 'img' : 'vec';
+            const annotKey = type === 'img' ? 'cia' : 'cva';
+
+            viewer.imageryLayers.addImageryProvider(
+                new Cesium.WebMapTileServiceImageryProvider({
+                    url: `https://t{s}.tianditu.gov.cn/${layerKey}_w/wmts?tk=${TK}`,
+                    layer: layerKey, style: 'default', tileMatrixSetID: 'w', format: 'tiles',
+                    subdomains: ['0','1','2','3','4','5','6','7'],
+                    tilingScheme: new Cesium.WebMercatorTilingScheme(), maximumLevel: 18
+                })
+            );
+            viewer.imageryLayers.addImageryProvider(
+                new Cesium.WebMapTileServiceImageryProvider({
+                    url: `https://t{s}.tianditu.gov.cn/${annotKey}_w/wmts?tk=${TK}`,
+                    layer: annotKey, style: 'default', tileMatrixSetID: 'w', format: 'tiles',
+                    subdomains: ['0','1','2','3','4','5','6','7'],
+                    tilingScheme: new Cesium.WebMercatorTilingScheme(), maximumLevel: 18
+                })
+            );
+        }
+
+        // ===== LAS 解析与加载 =====
+        function readLasPublicHeader(buf) {
+            if (!buf || buf.byteLength < 227) {
+                throw new Error('LAS 数据过短或为空（至少需 227 字节头）');
+            }
+            const dv = new DataView(buf);
+            const sig = String.fromCharCode(
+                dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)
+            );
+            if (sig !== 'LASF') {
+                const probe = new TextDecoder('utf-8', { fatal: false }).decode(new Uint8Array(buf, 0, Math.min(200, buf.byteLength)));
+                if (probe.trimStart().toLowerCase().startsWith('<!') || probe.toLowerCase().includes('<html')) {
+                    throw new Error('请求返回了网页(常为404/index.html)而非 LAS。请用 python -m http.server 在目录启动，或运行 tools/las_to_pnts.py 生成切片，或将 LAS 复制为 anju_las.las');
+                }
+                throw new Error('非 LAS 文件（缺少 LASF 头），前4字节: ' + JSON.stringify(sig));
+            }
+            const headerSize = dv.getUint16(94, true);
+            const pointOffset = dv.getUint32(96, true);
+            const pointFormat = dv.getUint8(104);
+            const recordLength = dv.getUint16(105, true);
+            const numPoints = dv.getUint32(107, true);
+            const xScale = dv.getFloat64(131, true);
+            const yScale = dv.getFloat64(139, true);
+            const zScale = dv.getFloat64(147, true);
+            const xOffset = dv.getFloat64(155, true);
+            const yOffset = dv.getFloat64(163, true);
+            const zOffset = dv.getFloat64(171, true);
+            const maxX = dv.getFloat64(179, true);
+            const minX = dv.getFloat64(187, true);
+            const maxY = dv.getFloat64(195, true);
+            const minY = dv.getFloat64(203, true);
+            const maxZ = dv.getFloat64(211, true);
+            const minZ = dv.getFloat64(219, true);
+            return {
+                headerSize, pointOffset, pointFormat, recordLength, numPoints,
+                xScale, yScale, zScale, xOffset, yOffset, zOffset,
+                maxX, minX, maxY, minY, maxZ, minZ
+            };
+        }
+
+        function computeLasAlignment(header) {
+            const lasCX = (header.minX + header.maxX) * 0.5;
+            const lasCY = (header.minY + header.maxY) * 0.5;
+            const lasCZ = (header.minZ + header.maxZ) * 0.5;
+            let targetLon = MODEL_LNG;
+            let targetLat = MODEL_LAT;
+            let targetH = 0;
+            if (tileset && tileset.ready) {
+                const c = Cesium.Cartographic.fromCartesian(tileset.boundingSphere.center);
+                targetLon = Cesium.Math.toDegrees(c.longitude);
+                targetLat = Cesium.Math.toDegrees(c.latitude);
+                targetH = c.height;
+            }
+            const toProj = proj4(WGS84_PROJ4, LAS_PROJ4);
+            const tp = toProj.forward([targetLon, targetLat]);
+            const shiftEX = tp[0] - lasCX;
+            const shiftNY = tp[1] - lasCY;
+            const shiftZ = targetH - lasCZ;
+            const toWgs = function (xm, ym) {
+                return proj4(LAS_PROJ4, WGS84_PROJ4, [xm + shiftEX, ym + shiftNY]);
+            };
+            const p0 = toWgs(lasCX, lasCY);
+            const pXp = toWgs(lasCX + 1, lasCY);
+            const pYp = toWgs(lasCX, lasCY + 1);
+            return {
+                lasCX, lasCY, lasCZ,
+                shiftEX, shiftNY, shiftZ,
+                p0Lon: p0[0], p0Lat: p0[1],
+                dLon_dX: pXp[0] - p0[0],
+                dLat_dX: pXp[1] - p0[1],
+                dLon_dY: pYp[0] - p0[0],
+                dLat_dY: pYp[1] - p0[1]
+            };
+        }
+
+        function parseLasPointsToCollection(buffer, header, align, stride, collection) {
+            const dv = new DataView(buffer);
+            const fmt = header.pointFormat;
+            const recLen = header.recordLength;
+            const n = header.numPoints;
+            if (fmt !== 2 || recLen < 26) {
+                throw new Error('当前仅支持 LAS 点格式 2（含 RGB），本文件为 format=' + fmt + ' len=' + recLen);
+            }
+            const { xScale, yScale, zScale, xOffset, yOffset, zOffset } = header;
+            const { lasCX, lasCY, shiftZ, p0Lon, p0Lat, dLon_dX, dLat_dX, dLon_dY, dLat_dY } = align;
+            const off = header.pointOffset;
+            let minLon = 180, maxLon = -180, minLat = 90, maxLat = -90;
+            let minH = 1e30, maxH = -1e30;
+            let cx = 0, cy = 0, cz = 0, cnt = 0;
+            const step = Math.max(1, Math.floor(stride));
+            for (let i = 0; i < n; i += step) {
+                const o = off + i * recLen;
+                const xi = dv.getInt32(o, true);
+                const yi = dv.getInt32(o + 4, true);
+                const zi = dv.getInt32(o + 8, true);
+                const xm = xi * xScale + xOffset;
+                const ym = yi * yScale + yOffset;
+                const zm = zi * zScale + zOffset;
+                const lon = p0Lon + (xm - lasCX) * dLon_dX + (ym - lasCY) * dLon_dY;
+                const lat = p0Lat + (xm - lasCX) * dLat_dX + (ym - lasCY) * dLat_dY;
+                const h = zm + shiftZ;
+                const ru = dv.getUint16(o + 20, true);
+                const gu = dv.getUint16(o + 22, true);
+                const bu = dv.getUint16(o + 24, true);
+                const r = Math.min(255, Math.round(ru * 255 / 65535));
+                const g = Math.min(255, Math.round(gu * 255 / 65535));
+                const b = Math.min(255, Math.round(bu * 255 / 65535));
+                let col = Cesium.Color.fromBytes(r || 80, g || 200, b || 255, 220);
+                if ((r + g + b) < 8) {
+                    const t = (zm - header.minZ) / Math.max(1e-6, header.maxZ - header.minZ);
+                    col = Cesium.Color.fromHsl(0.55 - t * 0.12, 0.85, 0.55, 0.85);
+                }
+                collection.add({
+                    position: Cesium.Cartesian3.fromDegrees(lon, lat, h),
+                    color: col,
+                    pixelSize: parseFloat(document.getElementById('lasSizeSlider').value) || 4
+                });
+                if (lon < minLon) minLon = lon;
+                if (lon > maxLon) maxLon = lon;
+                if (lat < minLat) minLat = lat;
+                if (lat > maxLat) maxLat = lat;
+                if (h < minH) minH = h;
+                if (h > maxH) maxH = h;
+                cx += lon; cy += lat; cz += h; cnt++;
+            }
+            const cLon = cx / cnt;
+            const cLat = cy / cnt;
+            const cH = cz / cnt;
+            const c3 = Cesium.Cartesian3.fromDegrees(cLon, cLat, cH);
+            const dx = Cesium.Cartesian3.distance(c3, Cesium.Cartesian3.fromDegrees(maxLon, cLat, cH));
+            const dy = Cesium.Cartesian3.distance(c3, Cesium.Cartesian3.fromDegrees(cLon, maxLat, cH));
+            const dz = (maxH - minH) * 0.5;
+            const rad = Math.sqrt(dx * dx + dy * dy + dz * dz) * 1.8 || 120;
+            lasBoundingSphere = new Cesium.BoundingSphere(c3, rad);
+        }
+
+        async function fetchLasArrayBuffer() {
+            const candidates = [
+                new URL(LAS_URL_ASCII, window.location.href).href,
+                new URL('安居宝(2).las', window.location.href).href,
+                new URL(LAS_URL_ENCODED, window.location.href).href
+            ];
+            const uniq = [];
+            candidates.forEach(function (u) { if (uniq.indexOf(u) < 0) uniq.push(u); });
+            let lastErr = null;
+            for (let i = 0; i < uniq.length; i++) {
+                const url = uniq[i];
+                try {
+                    const res = await fetch(url);
+                    if (!res.ok) {
+                        lastErr = new Error(url + ' → HTTP ' + res.status);
+                        continue;
+                    }
+                    const buf = await res.arrayBuffer();
+                    if (buf.byteLength < 227) {
+                        lastErr = new Error(url + ' 文件过小(' + buf.byteLength + ' B)，不是有效 LAS');
+                        continue;
+                    }
+                    const u8 = new Uint8Array(buf, 0, 4);
+                    const sig = String.fromCharCode(u8[0] || 0, u8[1] || 0, u8[2] || 0, u8[3] || 0);
+                    if (sig === 'LASF') return buf;
+                    lastErr = new Error(url + ' 响应不是 LAS（可能为 index.html）');
+                } catch (e) {
+                    lastErr = e;
+                }
+            }
+            throw lastErr || new Error('无法获取 LAS 文件');
+        }
+
+        async function loadLasPnts3DTiles() {
+            const res = await fetch(LAS_PNTS_TILESET_URL, { cache: 'no-store' });
+            if (!res.ok) {
+                return false;
+            }
+            const txt = await res.text();
+            let root;
+            try {
+                root = JSON.parse(txt);
+            } catch (e) {
+                return false;
+            }
+            if (!root || !root.asset) return false;
+
+            if (lasPntsTileset) {
+                viewer.scene.primitives.remove(lasPntsTileset);
+                lasPntsTileset = null;
+            }
+            lasPntsTileset = await Cesium.Cesium3DTileset.fromUrl(LAS_PNTS_TILESET_URL, {
+                maximumScreenSpaceError: 4,
+                skipLevelOfDetail: true,
+                baseScreenSpaceError: 1024,
+                skipScreenSpaceErrorFactor: 16,
+                skipLevels: 1
+            });
+            viewer.scene.primitives.add(lasPntsTileset);
+            lasPntsTileset.show = true;
+            if (pointCollection) {
+                viewer.scene.primitives.remove(pointCollection);
+                pointCollection = null;
+            }
+            try {
+                await lasPntsTileset.readyPromise;
+            } catch (e) { /* 忽略 */ }
+            lasBoundingSphere = lasPntsTileset.boundingSphere
+                ? Cesium.BoundingSphere.clone(lasPntsTileset.boundingSphere)
+                : null;
+            document.getElementById('flyLasBtn').disabled = false;
+            document.getElementById('lasStatus').textContent = '✅ PNTS 切片';
+            const sub = document.getElementById('loadingSub');
+            if (sub) sub.textContent = 'terra_b3dms + LAS(PNTS)';
+            showStatus('已加载 LAS 点云切片 (3D Tiles)', 2500);
+            applyModelViewMode();
+            return true;
+        }
+
+        async function loadLasPointCloud() {
+            const token = ++lasLoadToken;
+            const el = document.getElementById('lasStatus');
+            const sub = document.getElementById('loadingSub');
+            showStatus('正在加载 LAS 点云…', null);
+
+            try {
+                if (sub) sub.textContent = '尝试加载 PNTS 切片 las_pnts_tileset…';
+                const okPnts = await loadLasPnts3DTiles();
+                if (token !== lasLoadToken) return;
+                if (okPnts) return;
+            } catch (e) {
+                console.warn('PNTS 切片未就绪，回退浏览器解析 LAS:', e);
+            }
+
+            if (sub) sub.textContent = '正在下载 LAS 点云（约 235MB，请稍候）…';
+            showStatus('正在下载 LAS…', null);
+            try {
+                const buf = await fetchLasArrayBuffer();
+                if (token !== lasLoadToken) return;
+                if (tileset && tileset.readyPromise) {
+                    try { await tileset.readyPromise; } catch (e) { /* 忽略 */ }
+                }
+                lasHeader = readLasPublicHeader(buf);
+                const align = computeLasAlignment(lasHeader);
+                lasShift = { ex: align.shiftEX, ny: align.shiftNY, z: align.shiftZ };
+                if (sub) sub.textContent = '正在解析点云（抽样）…';
+                showStatus('正在解析 LAS 点云…', null);
+                const stride = parseInt(document.getElementById('lasStrideSlider').value, 10) || 22;
+                if (lasPntsTileset) {
+                    viewer.scene.primitives.remove(lasPntsTileset);
+                    lasPntsTileset = null;
+                }
+                if (pointCollection) {
+                    viewer.scene.primitives.remove(pointCollection);
+                    pointCollection = null;
+                }
+                pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+                parseLasPointsToCollection(buf, lasHeader, align, stride, pointCollection);
+                applyModelViewMode();
+                el.textContent = '✅ 约 ' + Math.floor(lasHeader.numPoints / Math.max(1, stride)) + ' 点(浏览器)';
+                document.getElementById('flyLasBtn').disabled = false;
+                showStatus('LAS 点云已加载', 2500);
+                if (sub) sub.textContent = 'terra_b3dms + LAS';
+            } catch (e) {
+                console.error(e);
+                el.textContent = '❌ ' + (e.message || e);
+                showStatus(
+                    [
+                        'LAS：未找到 las_pnts_tileset 或未找到 .las。',
+                        '在项目根执行: python tools/las_to_pnts.py -i 安居宝(2).las -o las_pnts_tileset --overwrite --no-pool',
+                        '并用 python -m http.server 在同级目录启动（勿用会回退 index 的 SPA 服务器）'
+                    ].join(' '),
+                    12000
+                );
+                if (sub) sub.textContent = 'terra_b3dms（LAS 未就绪）';
+            }
+        }
+
+        function reloadLasWithStride() {
+            if (lasPntsTileset) {
+                showStatus('当前为 PNTS 切片，抽样由转换脚本控制；请修改 tools/las_to_pnts.py 后重新生成', 5000);
+                return;
+            }
+            if (!lasHeader || !viewer) return;
+            showStatus('按新抽样重建 LAS…', null);
+            const stride = parseInt(document.getElementById('lasStrideSlider').value, 10) || 22;
+            fetchLasArrayBuffer().then(async function (buf) {
+                if (tileset && tileset.readyPromise) {
+                    try { await tileset.readyPromise; } catch (e) { /* 忽略 */ }
+                }
+                lasHeader = readLasPublicHeader(buf);
+                const align = computeLasAlignment(lasHeader);
+                if (pointCollection) {
+                    viewer.scene.primitives.remove(pointCollection);
+                    pointCollection = null;
+                }
+                pointCollection = viewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+                parseLasPointsToCollection(buf, lasHeader, align, stride, pointCollection);
+                applyModelViewMode();
+                document.getElementById('lasStatus').textContent =
+                    '✅ 约 ' + Math.floor(lasHeader.numPoints / Math.max(1, Math.floor(stride))) + ' 点';
+                showStatus('LAS 已重建', 1500);
+            }).catch(function (err) {
+                showStatus('LAS 重建失败', 3000);
+                console.error(err);
+            });
+        }
+
+        function updateLasPointSize(v) {
+            document.getElementById('lasSizeVal').textContent = v;
+            if (!pointCollection) return;
+            const n = pointCollection.length;
+            const ps = parseFloat(v);
+            for (let i = 0; i < n; i++) {
+                pointCollection.get(i).pixelSize = ps;
+            }
+        }
+
+        function applyModelViewMode() {
+            if (!viewer) return;
+            const showB = (modelViewMode === 'both' || modelViewMode === 'b3dm') && modelVisible;
+            const showL = modelViewMode === 'both' || modelViewMode === 'las';
+            if (tileset) tileset.show = showB;
+            if (pointCollection) pointCollection.show = showL;
+            if (lasPntsTileset) lasPntsTileset.show = showL;
+        }
+
+        function setModelViewMode(mode) {
+            modelViewMode = mode;
+            document.getElementById('viewBoth').classList.toggle('active', mode === 'both');
+            document.getElementById('viewB3').classList.toggle('active', mode === 'b3dm');
+            document.getElementById('viewLas').classList.toggle('active', mode === 'las');
+            applyModelViewMode();
+            showStatus(mode === 'both' ? '同时显示 B3DM 与 LAS' : (mode === 'b3dm' ? '仅显示 B3DM' : '仅显示 LAS'), 1800);
+        }
+
+        // ===== 加载 3D Tiles =====
+        async function loadTileset() {
+            showStatus('正在加载 B3DM 模型...');
+
+            try {
+                tileset = await Cesium.Cesium3DTileset.fromUrl(TILESET_URL, {
+                    maximumScreenSpaceError: 8,
+                    skipLevelOfDetail: true,
+                    baseScreenSpaceError: 1024,
+                    skipScreenSpaceErrorFactor: 16,
+                    skipLevels: 1,
+                    immediatelyLoadDesiredLevelOfDetail: false,
+                    loadSiblings: false,
+                    cullWithChildrenBounds: true,
+                    preloadWhenHidden: false
+                });
+                viewer.scene.primitives.add(tileset);
+                // 禁用地形对模型的深度裁剪，模型始终显示在地形之上
+                tileset.classificationType = undefined;
+                document.getElementById('loadingMask').style.display = 'none';
+                document.getElementById('modelStatus').textContent = '✅ 已加载';
+                showStatus('模型加载成功！正在定位...', 2000);
+
+                // 自动飞到模型
+                viewer.camera.flyToBoundingSphere(tileset.boundingSphere, {
+                    offset: new Cesium.HeadingPitchRange(
+                        0,
+                        Cesium.Math.toRadians(-35),
+                        tileset.boundingSphere.radius * 3.5
+                    ),
+                    duration: 2.5
+                });
+
+                tileset.tileLoad.addEventListener(function () {
+                    document.getElementById('tileCount').textContent =
+                        tileset.statistics ? tileset.statistics.numberOfTilesWithContentReady : '--';
+                });
+            } catch (err) {
+                document.getElementById('loadingMask').style.display = 'none';
+                document.getElementById('modelStatus').textContent = '❌ 加载失败';
+                showStatus('模型加载失败：' + (err.message || err), 5000);
+                console.error('Tileset 加载失败:', err);
+
+                // 提示用户需要本地服务器
+                if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('CORS') || err.message.includes('NetworkError'))) {
+                    document.getElementById('modelStatus').innerHTML =
+                        '❌ 需要 HTTP 服务器<br><small style="color:#f88">file:// 协议无法加载本地 3D Tiles<br>请用 VS Code Live Server 或 python -m http.server 8080 启动</small>';
+                }
+                throw err;
+            }
+        }
+
+        // ===== 视角控制 =====
+        function flyToB3dm() {
+            if (!tileset || !tileset.ready) {
+                showStatus('B3DM 尚未就绪', 1500);
+                return;
+            }
+            viewer.camera.flyToBoundingSphere(tileset.boundingSphere, {
+                offset: new Cesium.HeadingPitchRange(
+                    0,
+                    Cesium.Math.toRadians(-35),
+                    tileset.boundingSphere.radius * 3.5
+                ),
+                duration: 2.0
+            });
+        }
+
+        function flyToLas() {
+            if (lasPntsTileset && lasPntsTileset.ready && lasPntsTileset.boundingSphere) {
+                viewer.camera.flyToBoundingSphere(lasPntsTileset.boundingSphere, {
+                    offset: new Cesium.HeadingPitchRange(
+                        0,
+                        Cesium.Math.toRadians(-40),
+                        Math.max(lasPntsTileset.boundingSphere.radius * 4, 80)
+                    ),
+                    duration: 2.0
+                });
+                return;
+            }
+            if (!lasBoundingSphere) {
+                showStatus('LAS 尚未就绪', 1500);
+                return;
+            }
+            viewer.camera.flyToBoundingSphere(lasBoundingSphere, {
+                offset: new Cesium.HeadingPitchRange(
+                    0,
+                    Cesium.Math.toRadians(-40),
+                    Math.max(lasBoundingSphere.radius * 4, 80)
+                ),
+                duration: 2.0
+            });
+        }
+
+        function flyToOverview() {
+            viewer.camera.flyTo({
+                destination: Cesium.Cartesian3.fromDegrees(MODEL_LNG, MODEL_LAT, 500000),
+                orientation: { heading: 0, pitch: Cesium.Math.toRadians(-60), roll: 0 },
+                duration: 2.0
+            });
+        }
+
+        function zoomIn() {
+            viewer.camera.zoomIn(viewer.camera.positionCartographic.height * 0.4);
+        }
+
+        function zoomOut() {
+            viewer.camera.zoomOut(viewer.camera.positionCartographic.height * 0.4);
+        }
+
+        // ===== 图层切换 =====
+        function switchLayer(type) {
+            currentLayerMode = type;
+            loadImageryLayer(type);
+            ['img', 'vec', 'none'].forEach(k => {
+                const btn = document.getElementById('layer' + k.charAt(0).toUpperCase() + k.slice(1));
+                if (btn) btn.classList.toggle('active', k === type);
+            });
+        }
+
+        // ===== 模型属性调整 =====
+        function updateOpacity(val) {
+            document.getElementById('opacityVal').textContent = val + '%';
+            const a = val / 100;
+            if (tileset) {
+                tileset.style = new Cesium.Cesium3DTileStyle({
+                    color: `color('white', ${a})`
+                });
+            }
+            if (lasPntsTileset) {
+                lasPntsTileset.style = new Cesium.Cesium3DTileStyle({
+                    color: `color('white', ${a})`
+                });
+            }
+        }
+
+        function updateSSE(val) {
+            document.getElementById('sseVal').textContent = val;
+            const v = parseFloat(val);
+            if (tileset) tileset.maximumScreenSpaceError = v;
+            if (lasPntsTileset) lasPntsTileset.maximumScreenSpaceError = v;
+        }
+
+        function updateHeight(val) {
+            heightOffset = parseFloat(val);
+            document.getElementById('heightVal').textContent = val + 'm';
+            applyHeightOffset();
+        }
+
+        function applyHeightOffset() {
+            if (!tileset || !tileset.ready) return;
+            const cartographic = Cesium.Cartographic.fromCartesian(tileset.boundingSphere.center);
+            const surface = Cesium.Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, 0);
+            const offset = Cesium.Cartesian3.fromRadians(cartographic.longitude, cartographic.latitude, heightOffset);
+            const translation = Cesium.Cartesian3.subtract(offset, surface, new Cesium.Cartesian3());
+            tileset.modelMatrix = Cesium.Matrix4.fromTranslation(translation);
+        }
+
+        // ===== 渲染模式 =====
+        function setRenderMode(mode) {
+            document.getElementById('modeSurface').classList.toggle('active', mode === 'surface');
+            document.getElementById('modeWireframe').classList.toggle('active', mode === 'wireframe');
+            if (viewer) {
+                viewer.scene.debugShowWireframe = (mode === 'wireframe');
+            }
+        }
+
+        // ===== 地形深度遮挡开关 =====
+        function setDepthTest(enabled) {
+            if (viewer) viewer.scene.globe.depthTestAgainstTerrain = enabled;
+            document.getElementById('depthOff').classList.toggle('active', !enabled);
+            document.getElementById('depthOn').classList.toggle('active', enabled);
+            showStatus(enabled ? '已切换：地形优先（可能穿模）' : '已切换：模型优先（避免穿模）', 2000);
+        }
+
+        // ===== 模型显隐 =====
+        function toggleModelVisibility() {
+            if (!tileset) return;
+            modelVisible = !modelVisible;
+            applyModelViewMode();
+            const btn = document.getElementById('visBtn');
+            btn.textContent = modelVisible ? '👁 隐藏 B3DM' : '👁 显示 B3DM';
+            btn.className = modelVisible ? 'btn btn-danger' : 'btn btn-success';
+        }
+
+        // ===== 鼠标交互 =====
+        function setupMouseEvents() {
+            const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+
+            handler.setInputAction(function (movement) {
+                const cartesian = viewer.camera.pickEllipsoid(movement.endPosition, viewer.scene.globe.ellipsoid);
+                if (cartesian) {
+                    const carto = Cesium.Cartographic.fromCartesian(cartesian);
+                    const lng = Cesium.Math.toDegrees(carto.longitude).toFixed(5);
+                    const lat = Cesium.Math.toDegrees(carto.latitude).toFixed(5);
+                    document.getElementById('currentCoords').textContent = `${lng}, ${lat}`;
+                }
+            }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+        }
+
+        // ===== 信息面板刷新 =====
+        function updateInfoPanel() {
+            if (!viewer) return;
+            const h = viewer.camera.positionCartographic.height;
+            if (h < 1000) {
+                document.getElementById('cameraHeight').textContent = h.toFixed(1) + ' m';
+            } else if (h < 1000000) {
+                document.getElementById('cameraHeight').textContent = (h / 1000).toFixed(2) + ' km';
+            } else {
+                document.getElementById('cameraHeight').textContent = (h / 1000000).toFixed(3) + ' Mm';
+            }
+            if (tileset && tileset.ready && tileset.statistics) {
+                let t = 'B3DM ' + tileset.statistics.numberOfTilesWithContentReady + ' 块';
+                if (lasPntsTileset && lasPntsTileset.ready && lasPntsTileset.statistics) {
+                    t += ' | LAS ' + lasPntsTileset.statistics.numberOfTilesWithContentReady + ' 块';
+                }
+                document.getElementById('tileCount').textContent = t;
+            } else if (lasPntsTileset && lasPntsTileset.ready && lasPntsTileset.statistics) {
+                document.getElementById('tileCount').textContent =
+                    'LAS ' + lasPntsTileset.statistics.numberOfTilesWithContentReady + ' 块';
+            }
+        }
+
+        // ===== 状态提示 =====
+        let statusTimer = null;
+        function showStatus(msg, duration) {
+            const bar = document.getElementById('statusBar');
+            bar.textContent = msg;
+            bar.classList.remove('hidden');
+            if (statusTimer) clearTimeout(statusTimer);
+            if (duration) {
+                statusTimer = setTimeout(() => bar.classList.add('hidden'), duration);
+            }
+        }
+    </script>
+</body>
+</html>
