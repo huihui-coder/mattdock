@@ -211,7 +211,8 @@ class DeviceProcessor {
 
     // ========== 飞行状态机统计逻辑 ==========
     const currentMode = payload.mode_code;
-    const lastMode = prevState?.raw?.mode_code || (prevState?.raw?.data?.mode_code);
+    // prevState 存的是 mergedResult，直接取 raw_mode_code
+    const lastMode = prevState?.raw_mode_code;
     let session = this.activeSessions.get(deviceId);
 
     if (currentMode !== undefined) {
@@ -499,7 +500,9 @@ class DeviceProcessor {
       location: result.location || (prevState?.location) || null,
       // 每个设备只保留一条告警
       alerts: result.alerts,
-      lastSeen: new Date()
+      lastSeen: new Date(),
+      // 保存最新 mode_code 供下次状态机读取
+      raw_mode_code: currentMode !== undefined ? currentMode : prevState?.raw_mode_code
     };
 
     // 更新设备状态缓存
