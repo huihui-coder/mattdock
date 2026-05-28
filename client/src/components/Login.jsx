@@ -29,8 +29,9 @@ export default function Login({ onLogin }) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-900 to-blue-700 flex items-center justify-center px-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm">
+    <div className="min-h-screen bg-cover bg-center flex items-center justify-center px-4 relative" style={{ backgroundImage: "url('/images/preview.jpg')" }}>
+      <div className="absolute inset-0 bg-slate-950/45" />
+      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-sm relative z-10">
         <div className="flex flex-col items-center mb-6">
           <img src="/logos/platform-logo.png" alt="平台Logo" className="h-16 w-16 object-contain mb-3 rounded-xl" />
           <h1 className="text-xl font-bold text-gray-800">海珠无人机监控平台</h1>
