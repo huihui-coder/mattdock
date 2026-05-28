@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown } from 'lucide-react'
+import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight } from 'lucide-react'
+import * as XLSX from 'xlsx'
 
 const pad = (n) => String(n).padStart(2, '0')
 const toDatetimeLocal = (d) => {
@@ -17,8 +18,11 @@ const SHORTCUTS = [
   { label: '最近三个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 89*86400000); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(e)] } },
 ]
 
+const PAGE_SIZE = 20
+
 export default function FlightDashboard() {
   const [activeTab, setActiveTab] = useState('airport')
+  const [page, setPage] = useState(1)
   const initEnd = toDatetimeLocal(new Date())
   const initStart = (() => { const s = new Date(Date.now() - 6*86400000); s.setHours(0,0,0,0); return toDatetimeLocal(s) })()
   const [dateRange, setDateRange] = useState([initStart, initEnd])
@@ -53,11 +57,30 @@ export default function FlightDashboard() {
       const totalDuration = history.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
       setStats({ count: history.length, mileage: totalMileage, duration: totalDuration })
       setRecords(all)
+      setPage(1)
     } catch (e) {
       console.error('获取飞行统计失败:', e)
     } finally {
       setLoading(false)
     }
+  }
+
+  const exportExcel = () => {
+    const tabLabel = { airport: '自动机场', single: '单兵无人机', virtual: '虚拟机场', all: '全部设备' }[activeTab]
+    const rows = records.map((r, i) => ({
+      '序号': i + 1,
+      '状态': r.status === 'active' ? '进行中' : '已完成',
+      '设备名称': r.deviceName || r.deviceId,
+      '起飞时间': r.startTime ? new Date(r.startTime).toLocaleString('zh-CN') : '--',
+      '降落时间': r.status === 'active' ? '--' : (r.endTime ? new Date(r.endTime).toLocaleString('zh-CN') : '--'),
+      '飞行里程': r.totalMileage > 1000 ? `${(r.totalMileage/1000).toFixed(2)} km` : `${Math.round(r.totalMileage || 0)} m`,
+      '飞行时长': formatDuration(r.totalDuration || 0),
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '飞行记录')
+    const dateStr = new Date().toLocaleDateString('zh-CN').replace(///g, '-')
+    XLSX.writeFile(wb, `飞行记录_${tabLabel}_${dateStr}.xlsx`)
   }
 
   useEffect(() => { fetchStats() }, [activeTab, dateRange])
@@ -209,6 +232,10 @@ export default function FlightDashboard() {
           <ListChecks size={15} className="text-gray-400" />
           <span className="text-sm font-medium text-gray-500">飞行记录</span>
           <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{records.length} 条</span>
+          <button onClick={exportExcel} disabled={records.length === 0}
+            className="ml-auto flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+            <Download size={12} />导出 Excel
+          </button>
         </div>
 
         {records.length === 0 ? (
@@ -227,7 +254,7 @@ export default function FlightDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {records.slice(0, 50).map((r, i) => (
+                {records.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE).map((r, i) => (
                   <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
                     <td className="py-2.5 px-3">
                       {r.status === 'active' ? (
@@ -253,8 +280,39 @@ export default function FlightDashboard() {
                 ))}
               </tbody>
             </table>
-            {records.length > 50 && (
-              <p className="text-center text-xs text-gray-400 py-3">仅显示最近 50 条记录</p>
+            {/* 分页 */}
+            {records.length > PAGE_SIZE && (
+              <div className="flex items-center justify-between px-3 py-3 border-t border-gray-100">
+                <span className="text-xs text-gray-400">
+                  共 {records.length} 条，第 {page}/{Math.ceil(records.length/PAGE_SIZE)} 页
+                </span>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => setPage(p => Math.max(1,p-1))} disabled={page===1}
+                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 transition-colors">
+                    <ChevronLeft size={14} />
+                  </button>
+                  {Array.from({length: Math.ceil(records.length/PAGE_SIZE)}, (_,i)=>i+1)
+                    .filter(p => p===1 || p===Math.ceil(records.length/PAGE_SIZE) || Math.abs(p-page)<=1)
+                    .reduce((acc,p,idx,arr) => {
+                      if (idx>0 && p-arr[idx-1]>1) acc.push('...')
+                      acc.push(p)
+                      return acc
+                    }, [])
+                    .map((p,i) => p==='...' ? (
+                      <span key={`e${i}`} className="px-1 text-xs text-gray-400">...</span>
+                    ) : (
+                      <button key={p} onClick={() => setPage(p)}
+                        className={`w-7 h-7 text-xs rounded transition-colors ${
+                          page===p ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-600'
+                        }`}>{p}</button>
+                    ))
+                  }
+                  <button onClick={() => setPage(p => Math.min(Math.ceil(records.length/PAGE_SIZE),p+1))} disabled={page===Math.ceil(records.length/PAGE_SIZE)}
+                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 transition-colors">
+                    <ChevronRight size={14} />
+                  </button>
+                </div>
+              </div>
             )}
           </div>
         )}
