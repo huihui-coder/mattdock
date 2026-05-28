@@ -435,9 +435,6 @@ class DeviceProcessor {
       });
     }
 
-    // 获取之前的状态
-    const prevState = this.deviceStates.get(deviceId);
-
     // 如果当前消息没有电池槽数据，使用之前的数据（避免状态跳变）
     if (!result.metrics.batterySlots && prevState?.metrics?.batterySlots) {
       result.metrics.batterySlots = prevState.metrics.batterySlots;
