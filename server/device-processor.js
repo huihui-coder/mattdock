@@ -158,6 +158,12 @@ class DeviceProcessor {
     return name ? name.replace(/-无人机$/, '') : name;
   }
 
+  getTotalFlightDistance(payload) {
+    const value = payload.total_flight_distance ?? payload.data?.total_flight_distance;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  }
+
   /**
    * 获取设备友好名称
    * @param {string} deviceId
@@ -219,6 +225,7 @@ class DeviceProcessor {
 
     // ========== 飞行状态机统计逻辑 ==========
     const currentMode = payload.mode_code;
+    const totalFlightDistance = this.getTotalFlightDistance(payload);
     // prevState 存的是 mergedResult，直接取 raw_mode_code
     const lastMode = prevState?.raw_mode_code;
     let session = this.activeSessions.get(deviceId);
@@ -240,6 +247,7 @@ class DeviceProcessor {
           startTime: new Date().toISOString(),
           startLocation: result.location ? { ...result.location } : null,
           lastLocation: result.location ? { ...result.location } : null,
+          startTotalFlightDistance: totalFlightDistance,
           mileage: 0,
           duration: 0,
           deviceType: result.deviceType
@@ -253,17 +261,9 @@ class DeviceProcessor {
         const start = new Date(session.startTime).getTime();
         session.duration = Math.floor((now - start) / 1000);
         
-        // 累积里程
-        if (result.location && session.lastLocation) {
-          const dist = this.calculateDistance(
-            session.lastLocation.latitude, session.lastLocation.longitude,
-            result.location.latitude, result.location.longitude
-          );
-          // 过滤掉小于0.5米的GPS抖动
-          if (dist > 0.5) {
-            session.mileage += dist;
-            session.lastLocation = { ...result.location };
-          }
+        // 累积里程：使用当前累计飞行里程 - 起飞时累计飞行里程
+        if (totalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined) {
+          session.mileage = Math.max(0, totalFlightDistance - session.startTotalFlightDistance);
         }
       }
       // 3. 架次结束判定：切换回非飞行态
@@ -272,7 +272,9 @@ class DeviceProcessor {
         const finalRecord = {
           ...session,
           endTime: new Date().toISOString(),
-          totalMileage: parseFloat(session.mileage.toFixed(2)),
+          totalMileage: parseFloat(((totalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined)
+            ? Math.max(0, totalFlightDistance - session.startTotalFlightDistance)
+            : session.mileage).toFixed(2)),
           totalDuration: session.duration,
           status: 'completed'
         };
@@ -511,7 +513,8 @@ class DeviceProcessor {
       alerts: result.alerts,
       lastSeen: new Date(),
       // 保存最新 mode_code 供下次状态机读取
-      raw_mode_code: currentMode !== undefined ? currentMode : prevState?.raw_mode_code
+      raw_mode_code: currentMode !== undefined ? currentMode : prevState?.raw_mode_code,
+      raw_total_flight_distance: totalFlightDistance !== null ? totalFlightDistance : prevState?.raw_total_flight_distance
     };
 
     // 更新设备状态缓存

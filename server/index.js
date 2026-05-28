@@ -367,6 +367,7 @@ function buildActiveFlightSessions(type) {
       startTime: new Date(state.lastSeen || Date.now()).toISOString(),
       totalDuration: 0,
       totalMileage: 0,
+      currentTotalFlightDistance: state.raw_total_flight_distance ?? null,
       status: 'active'
     });
   }
