@@ -1,4 +1,4 @@
-import { Cpu, Thermometer, Droplets, Battery, Signal, Wind, CloudRain, MapPin, MoreHorizontal, AlertTriangle, Package, X, Home, MonitorPlay } from 'lucide-react'
+import { Cpu, Thermometer, Droplets, Battery, Signal, Wind, CloudRain, MapPin, MoreHorizontal, AlertTriangle, Package, X, Home, MonitorPlay, Activity } from 'lucide-react'
 
 export default function DeviceList({ devices, healthAlerts, onSelect, selectedId, title = "设备列表", filterActive = false, onClearFilter, onCockpit }) {
   const getStatusClass = (status) => {
