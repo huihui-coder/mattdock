@@ -73,6 +73,8 @@ class DeviceProcessor {
       'AHRXNAH00A019D': '三中-Dock3-M4TD',
       'NEST44202602U002': '艺术博物馆-换电-M4T',
       'AHRXNAH00A018Z': '分局-Dock3-M4TD',
+      'AHRXN9600A00R6': '市局（凤阳）-Dock3-M41',
+      '1581F9F4X25AF00A00X0': '市局（凤阳）-M4TD-无人机',
       '1581F9HEC259S00CFP71': '昌岗派出所-M4T',
       '1581F9HEC259S00CTR1C': '南华西派出所-M4T',
       '1581F9HEC259S00CSJ05': '南石头派出所-M4T',
