@@ -1,27 +1,44 @@
-import { useState, useEffect } from 'react'
-import { Plane, Navigation, Clock, Calendar, ChevronDown, RefreshCw, CheckCircle2, ListChecks, Loader2 } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown } from 'lucide-react'
+
+const toLocalDateStr = (d) => {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+const SHORTCUTS = [
+  { label: '今日', getDates: () => { const t = new Date(); return [toLocalDateStr(t), toLocalDateStr(t)] } },
+  { label: '最近一周', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 6 * 86400000); return [toLocalDateStr(s), toLocalDateStr(e)] } },
+  { label: '最近一个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 29 * 86400000); return [toLocalDateStr(s), toLocalDateStr(e)] } },
+  { label: '最近三个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 89 * 86400000); return [toLocalDateStr(s), toLocalDateStr(e)] } },
+]
 
 export default function FlightDashboard() {
   const [activeTab, setActiveTab] = useState('airport')
-  const [timeRange, setTimeRange] = useState('today')
+  const initEnd = toLocalDateStr(new Date())
+  const initStart = toLocalDateStr(new Date(Date.now() - 6 * 86400000))
+  const [dateRange, setDateRange] = useState([initStart, initEnd])
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [stats, setStats] = useState({ count: 0, mileage: 0, duration: 0 })
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(false)
+  const pickerRef = useRef(null)
 
-  const getStartTime = (range) => {
-    const now = new Date()
-    if (range === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
-    if (range === 'week') return new Date(now.getTime() - 7 * 86400000).toISOString()
-    if (range === 'month') return new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
-    return ''
-  }
+  useEffect(() => {
+    const handler = (e) => { if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const fetchStats = async () => {
     setLoading(true)
     try {
-      const startTime = getStartTime(timeRange)
+      const startTime = dateRange[0] ? new Date(dateRange[0] + 'T00:00:00').toISOString() : ''
+      const endTime = dateRange[1] ? new Date(dateRange[1] + 'T23:59:59').toISOString() : ''
       const [histRes, activeRes] = await Promise.all([
-        fetch(`/api/flight-history?type=${activeTab}&startTime=${startTime}`),
+        fetch(`/api/flight-history?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`),
         fetch(`/api/flight-active?type=${activeTab}`)
       ])
       const history = await histRes.json()
@@ -41,7 +58,7 @@ export default function FlightDashboard() {
     }
   }
 
-  useEffect(() => { fetchStats() }, [activeTab, timeRange])
+  useEffect(() => { fetchStats() }, [activeTab, dateRange])
   useEffect(() => {
     const timer = setInterval(fetchStats, 60000)
     return () => clearInterval(timer)
@@ -69,13 +86,6 @@ export default function FlightDashboard() {
     { id: 'all', label: '全部设备' }
   ]
 
-  const timeRanges = [
-    { id: 'today', label: '今日' },
-    { id: 'week', label: '本周' },
-    { id: 'month', label: '本月' },
-    { id: 'all', label: '累计' }
-  ]
-
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
       {/* 顶部工具栏 */}
@@ -94,16 +104,57 @@ export default function FlightDashboard() {
           ))}
         </div>
         <div className="flex items-center gap-3">
-          <div className="relative">
-            <select
-              value={timeRange}
-              onChange={(e) => setTimeRange(e.target.value)}
-              className="appearance-none bg-gray-50 border border-gray-200 rounded-lg pl-9 pr-8 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+          {/* 日期范围选择器 */}
+          <div className="relative" ref={pickerRef}>
+            <button
+              onClick={() => setPickerOpen(v => !v)}
+              className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:border-blue-400 transition-colors min-w-[210px]"
             >
-              {timeRanges.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
-            </select>
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
-            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
+              <CalendarRange size={14} className="text-gray-400 shrink-0" />
+              <span>{dateRange[0] || '开始日期'}</span>
+              <span className="text-gray-400">至</span>
+              <span>{dateRange[1] || '结束日期'}</span>
+              <ChevronDown size={13} className="text-gray-400 ml-auto" />
+            </button>
+
+            {pickerOpen && (
+              <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl flex" style={{minWidth: 340}}>
+                {/* 快捷选项 */}
+                <div className="border-r border-gray-100 py-3 px-1 flex flex-col gap-0.5" style={{width: 96}}>
+                  {SHORTCUTS.map(s => (
+                    <button
+                      key={s.label}
+                      onClick={() => { setDateRange(s.getDates()); setPickerOpen(false) }}
+                      className="text-left px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                    >{s.label}</button>
+                  ))}
+                </div>
+                {/* 日期输入 */}
+                <div className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-gray-400">开始日期</label>
+                      <input type="date" value={dateRange[0]} max={dateRange[1] || undefined}
+                        onChange={e => setDateRange([e.target.value, dateRange[1]])}
+                        className="border border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                    </div>
+                    <span className="text-gray-400 mt-4">→</span>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-gray-400">结束日期</label>
+                      <input type="date" value={dateRange[1]} min={dateRange[0] || undefined}
+                        onChange={e => setDateRange([dateRange[0], e.target.value])}
+                        className="border border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => { setDateRange(['', '']); setPickerOpen(false) }}
+                      className="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg">清空</button>
+                    <button onClick={() => setPickerOpen(false)}
+                      className="px-3 py-1 text-xs text-white bg-blue-600 hover:bg-blue-700 rounded-lg">确定</button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
           <button onClick={fetchStats} className={`p-2 text-gray-400 hover:text-blue-600 transition-colors ${loading ? 'animate-spin' : ''}`}>
             <RefreshCw size={16} />
