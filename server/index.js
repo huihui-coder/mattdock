@@ -349,15 +349,7 @@ app.post('/api/ai/analyze', async (req, res) => {
 app.get('/api/flight-history', (req, res) => {
   const { type, startTime, endTime } = req.query;
 
-  // 合并已完成历史 + 内存中正在飞行的活跃会话
-  const now = Date.now();
-  const activeSessions = Array.from(processor.activeSessions.values()).map(s => ({
-    ...s,
-    totalDuration: Math.floor((now - new Date(s.startTime).getTime()) / 1000),
-    totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
-    status: 'active'
-  }));
-  let history = [...processor.flightHistory, ...activeSessions];
+  let history = [...processor.flightHistory];
 
   // 1. 类型筛选：airport TAB 同时包含 drone（机场绑定无人机）
   if (type && type !== 'all') {

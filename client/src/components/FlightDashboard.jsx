@@ -1,38 +1,32 @@
 import { useState, useEffect } from 'react'
-import { Plane, Navigation, Clock, Calendar, ChevronDown, RefreshCw } from 'lucide-react'
+import { Plane, Navigation, Clock, Calendar, ChevronDown, RefreshCw, CheckCircle2, ListChecks } from 'lucide-react'
 
 export default function FlightDashboard() {
-  const [activeTab, setActiveTab] = useState('airport') // 'airport' | 'drone' | 'virtual' | 'all'
-  const [timeRange, setTimeRange] = useState('today') // 'today' | 'week' | 'month' | 'all'
+  const [activeTab, setActiveTab] = useState('airport')
+  const [timeRange, setTimeRange] = useState('today')
   const [stats, setStats] = useState({ count: 0, mileage: 0, duration: 0 })
+  const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(false)
+
+  const getStartTime = (range) => {
+    const now = new Date()
+    if (range === 'today') return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+    if (range === 'week') return new Date(now.getTime() - 7 * 86400000).toISOString()
+    if (range === 'month') return new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
+    return ''
+  }
 
   const fetchStats = async () => {
     setLoading(true)
     try {
-      let startTime = ''
-      const now = new Date()
-      if (timeRange === 'today') {
-        startTime = new Date(now.setHours(0, 0, 0, 0)).toISOString()
-      } else if (timeRange === 'week') {
-        const weekAgo = new Date(now.setDate(now.getDate() - 7))
-        startTime = weekAgo.toISOString()
-      } else if (timeRange === 'month') {
-        const monthAgo = new Date(now.setMonth(now.getMonth() - 1))
-        startTime = monthAgo.toISOString()
-      }
-
+      const startTime = getStartTime(timeRange)
       const res = await fetch(`/api/flight-history?type=${activeTab}&startTime=${startTime}`)
       const data = await res.json()
-      
+      const sorted = [...data].sort((a, b) => new Date(b.startTime) - new Date(a.startTime))
       const totalMileage = data.reduce((acc, cur) => acc + (cur.totalMileage || 0), 0)
       const totalDuration = data.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
-      
-      setStats({
-        count: data.length,
-        mileage: totalMileage,
-        duration: totalDuration
-      })
+      setStats({ count: data.length, mileage: totalMileage, duration: totalDuration })
+      setRecords(sorted)
     } catch (e) {
       console.error('获取飞行统计失败:', e)
     } finally {
@@ -40,12 +34,9 @@ export default function FlightDashboard() {
     }
   }
 
+  useEffect(() => { fetchStats() }, [activeTab, timeRange])
   useEffect(() => {
-    fetchStats()
-  }, [activeTab, timeRange])
-
-  useEffect(() => {
-    const timer = setInterval(fetchStats, 30000)
+    const timer = setInterval(fetchStats, 60000)
     return () => clearInterval(timer)
   }, [])
 
@@ -56,11 +47,19 @@ export default function FlightDashboard() {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
   }
 
+  const formatMileage = (m) => m > 1000 ? `${(m / 1000).toFixed(2)} km` : `${Math.round(m)} m`
+
+  const formatTime = (iso) => {
+    if (!iso) return '--'
+    const d = new Date(iso)
+    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`
+  }
+
   const tabs = [
-    { id: 'airport', label: '自动机场', color: 'blue' },
-    { id: 'single', label: '单兵无人机', color: 'indigo' },
-    { id: 'virtual', label: '虚拟机场', color: 'purple' },
-    { id: 'all', label: '全部设备', color: 'gray' }
+    { id: 'airport', label: '自动机场' },
+    { id: 'single', label: '单兵无人机' },
+    { id: 'virtual', label: '虚拟机场' },
+    { id: 'all', label: '全部设备' }
   ]
 
   const timeRanges = [
@@ -72,23 +71,21 @@ export default function FlightDashboard() {
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+      {/* 顶部工具栏 */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
         <div className="flex bg-gray-100 p-1 rounded-lg">
           {tabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                activeTab === tab.id 
-                  ? 'bg-white text-blue-600 shadow-sm' 
-                  : 'text-gray-500 hover:text-gray-700'
+                activeTab === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               {tab.label}
             </button>
           ))}
         </div>
-
         <div className="flex items-center gap-3">
           <div className="relative">
             <select
@@ -96,27 +93,22 @@ export default function FlightDashboard() {
               onChange={(e) => setTimeRange(e.target.value)}
               className="appearance-none bg-gray-50 border border-gray-200 rounded-lg pl-9 pr-8 py-1.5 text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
             >
-              {timeRanges.map(range => (
-                <option key={range.id} value={range.id}>{range.label}</option>
-              ))}
+              {timeRanges.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
             </select>
             <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={14} />
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={14} />
           </div>
-          <button 
-            onClick={fetchStats}
-            className={`p-2 text-gray-400 hover:text-blue-600 transition-colors ${loading ? 'animate-spin' : ''}`}
-          >
+          <button onClick={fetchStats} className={`p-2 text-gray-400 hover:text-blue-600 transition-colors ${loading ? 'animate-spin' : ''}`}>
             <RefreshCw size={16} />
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* 架次统计 */}
+      {/* 统计卡片 */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="bg-blue-50/50 rounded-xl p-5 border border-blue-100 flex items-center gap-5">
           <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-            <Plane size={24} />
+            <Plane size={22} />
           </div>
           <div>
             <p className="text-sm text-blue-600 font-medium opacity-80">飞行架次</p>
@@ -126,11 +118,9 @@ export default function FlightDashboard() {
             </div>
           </div>
         </div>
-
-        {/* 里程统计 */}
         <div className="bg-indigo-50/50 rounded-xl p-5 border border-indigo-100 flex items-center gap-5">
           <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-            <Navigation size={24} />
+            <Navigation size={22} />
           </div>
           <div>
             <p className="text-sm text-indigo-600 font-medium opacity-80">飞行里程</p>
@@ -142,19 +132,63 @@ export default function FlightDashboard() {
             </div>
           </div>
         </div>
-
-        {/* 时间统计 */}
         <div className="bg-purple-50/50 rounded-xl p-5 border border-purple-100 flex items-center gap-5">
           <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
-            <Clock size={24} />
+            <Clock size={22} />
           </div>
           <div>
             <p className="text-sm text-purple-600 font-medium opacity-80">累计时长</p>
-            <div className="flex items-baseline gap-1">
-              <span className="text-2xl font-bold text-purple-900 tracking-tight">{formatDuration(stats.duration)}</span>
-            </div>
+            <span className="text-2xl font-bold text-purple-900 tracking-tight">{formatDuration(stats.duration)}</span>
           </div>
         </div>
+      </div>
+
+      {/* 飞行记录列表 */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <ListChecks size={15} className="text-gray-400" />
+          <span className="text-sm font-medium text-gray-500">飞行记录</span>
+          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{records.length} 条</span>
+        </div>
+
+        {records.length === 0 ? (
+          <div className="text-center py-10 text-gray-400 text-sm">暂无飞行记录</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="text-left py-2 px-3 text-xs font-medium text-gray-400 w-1/4">设备</th>
+                  <th className="text-left py-2 px-3 text-xs font-medium text-gray-400">起飞时间</th>
+                  <th className="text-left py-2 px-3 text-xs font-medium text-gray-400">降落时间</th>
+                  <th className="text-right py-2 px-3 text-xs font-medium text-gray-400">里程</th>
+                  <th className="text-right py-2 px-3 text-xs font-medium text-gray-400">时长</th>
+                </tr>
+              </thead>
+              <tbody>
+                {records.slice(0, 50).map((r, i) => (
+                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
+                    <td className="py-2.5 px-3">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle2 size={13} className="text-green-500 shrink-0" />
+                        <span className="font-medium text-gray-700 truncate max-w-[160px]" title={r.deviceName || r.deviceId}>
+                          {r.deviceName || r.deviceId}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{formatTime(r.startTime)}</td>
+                    <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{formatTime(r.endTime)}</td>
+                    <td className="py-2.5 px-3 text-right text-gray-600 whitespace-nowrap">{formatMileage(r.totalMileage || 0)}</td>
+                    <td className="py-2.5 px-3 text-right text-gray-600 whitespace-nowrap font-mono">{formatDuration(r.totalDuration || 0)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {records.length > 50 && (
+              <p className="text-center text-xs text-gray-400 py-3">仅显示最近 50 条记录</p>
+            )}
+          </div>
+        )}
       </div>
     </div>
   )
