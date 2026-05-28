@@ -1,0 +1,13 @@
+[
+  {
+    "id": "AHRXNAH00A01DF_1748390200000",
+    "deviceId": "AHRXNAH00A01DF",
+    "deviceName": "华洲-Dock3-M4TD",
+    "deviceType": "drone",
+    "startTime": "2026-05-27T09:30:00.000+08:00",
+    "endTime": "2026-05-27T10:15:00.000+08:00",
+    "totalMileage": 30000,
+    "totalDuration": 2700,
+    "status": "completed"
+  }
+]
