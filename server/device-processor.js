@@ -150,6 +150,14 @@ class DeviceProcessor {
     return R * c;
   }
 
+  isFlightMode(modeCode) {
+    return FLIGHT_MODES.has(modeCode);
+  }
+
+  normalizeFlightDisplayName(name) {
+    return name ? name.replace(/-无人机$/, '') : name;
+  }
+
   /**
    * 获取设备友好名称
    * @param {string} deviceId
@@ -228,7 +236,7 @@ class DeviceProcessor {
         session = {
           id: `${deviceId}_${Date.now()}`,
           deviceId,
-          deviceName: result.deviceName || deviceId,
+          deviceName: this.normalizeFlightDisplayName(result.deviceName || deviceId),
           startTime: new Date().toISOString(),
           startLocation: result.location ? { ...result.location } : null,
           lastLocation: result.location ? { ...result.location } : null,

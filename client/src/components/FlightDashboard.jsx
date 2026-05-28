@@ -10,6 +10,7 @@ const toDisplayStr = (dtStr) => {
   if (!dtStr) return ''
   return dtStr.replace('T', ' ')
 }
+const getRecordDeviceName = (r) => (r.deviceName || r.deviceId || '').replace(/-无人机$/, '')
 
 const SHORTCUTS = [
   { label: '今日', getDates: () => { const s = new Date(); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(new Date())] } },
@@ -71,7 +72,7 @@ export default function FlightDashboard() {
     const rows = records.map((r, i) => ({
       '序号': i + 1,
       '状态': r.status === 'active' ? '进行中' : '已完成',
-      '设备名称': r.deviceName || r.deviceId,
+      '设备名称': getRecordDeviceName(r),
       '起飞时间': r.startTime ? new Date(r.startTime).toLocaleString('zh-CN') : '--',
       '降落时间': r.status === 'active' ? '--' : (r.endTime ? new Date(r.endTime).toLocaleString('zh-CN') : '--'),
       '飞行里程': r.totalMileage > 1000 ? `${(r.totalMileage/1000).toFixed(2)} km` : `${Math.round(r.totalMileage || 0)} m`,
@@ -269,8 +270,8 @@ export default function FlightDashboard() {
                       )}
                     </td>
                     <td className="py-2.5 px-3">
-                      <span className="font-medium text-gray-700 truncate max-w-[160px] block" title={r.deviceName || r.deviceId}>
-                        {r.deviceName || r.deviceId}
+                      <span className="font-medium text-gray-700 truncate max-w-[160px] block" title={getRecordDeviceName(r)}>
+                        {getRecordDeviceName(r)}
                       </span>
                     </td>
                     <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{formatTime(r.startTime)}</td>

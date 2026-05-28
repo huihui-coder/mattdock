@@ -351,10 +351,10 @@ app.get('/api/flight-history', (req, res) => {
 
   let history = [...processor.flightHistory];
 
-  // 1. 类型筛选：airport TAB 同时包含 drone（机场绑定无人机）
+  // 1. 类型筛选：airport TAB 只统计机场绑定无人机（drone），不统计机场本体（airport）
   if (type && type !== 'all') {
     if (type === 'airport') {
-      history = history.filter(h => h.deviceType === 'airport' || h.deviceType === 'drone');
+      history = history.filter(h => h.deviceType === 'drone');
     } else {
       history = history.filter(h => h.deviceType === type);
     }
@@ -379,15 +379,33 @@ app.get('/api/flight-active', (req, res) => {
   const now = Date.now();
   const allSessions = Array.from(processor.activeSessions.values());
   console.log(`[飞行记录接口] /api/flight-active type=${type || 'all'} activeSessions=${allSessions.length}`);
-  let sessions = Array.from(processor.activeSessions.values()).map(s => ({
+  let sessions = allSessions.map(s => ({
     ...s,
+    deviceName: processor.normalizeFlightDisplayName(s.deviceName || s.deviceId),
     totalDuration: Math.floor((now - new Date(s.startTime).getTime()) / 1000),
     totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
     status: 'active'
   }));
+
+  for (const [deviceId, state] of processor.deviceStates.entries()) {
+    if (sessions.find(s => s.deviceId === deviceId)) continue;
+    if (!['drone', 'single', 'virtual'].includes(state.deviceType)) continue;
+    if (!processor.isFlightMode(state.raw_mode_code)) continue;
+    sessions.push({
+      id: `${deviceId}_${new Date(state.lastSeen || Date.now()).getTime()}`,
+      deviceId,
+      deviceName: processor.normalizeFlightDisplayName(state.deviceName || deviceId),
+      deviceType: state.deviceType,
+      startTime: new Date(state.lastSeen || Date.now()).toISOString(),
+      totalDuration: 0,
+      totalMileage: 0,
+      status: 'active'
+    });
+  }
+
   if (type && type !== 'all') {
     if (type === 'airport') {
-      sessions = sessions.filter(s => s.deviceType === 'airport' || s.deviceType === 'drone');
+      sessions = sessions.filter(s => s.deviceType === 'drone');
     } else {
       sessions = sessions.filter(s => s.deviceType === type);
     }
