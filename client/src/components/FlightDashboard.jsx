@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Plane, Navigation, Clock, Calendar, ChevronDown, RefreshCw, CheckCircle2, ListChecks } from 'lucide-react'
+import { Plane, Navigation, Clock, Calendar, ChevronDown, RefreshCw, CheckCircle2, ListChecks, Loader2 } from 'lucide-react'
 
 export default function FlightDashboard() {
   const [activeTab, setActiveTab] = useState('airport')
@@ -20,13 +20,20 @@ export default function FlightDashboard() {
     setLoading(true)
     try {
       const startTime = getStartTime(timeRange)
-      const res = await fetch(`/api/flight-history?type=${activeTab}&startTime=${startTime}`)
-      const data = await res.json()
-      const sorted = [...data].sort((a, b) => new Date(b.startTime) - new Date(a.startTime))
-      const totalMileage = data.reduce((acc, cur) => acc + (cur.totalMileage || 0), 0)
-      const totalDuration = data.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
-      setStats({ count: data.length, mileage: totalMileage, duration: totalDuration })
-      setRecords(sorted)
+      const [histRes, activeRes] = await Promise.all([
+        fetch(`/api/flight-history?type=${activeTab}&startTime=${startTime}`),
+        fetch(`/api/flight-active?type=${activeTab}`)
+      ])
+      const history = await histRes.json()
+      const active = await activeRes.json()
+      const all = [
+        ...active,
+        ...history.filter(h => !active.find(a => a.deviceId === h.deviceId))
+      ].sort((a, b) => new Date(b.startTime) - new Date(a.startTime))
+      const totalMileage = history.reduce((acc, cur) => acc + (cur.totalMileage || 0), 0)
+      const totalDuration = history.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
+      setStats({ count: history.length, mileage: totalMileage, duration: totalDuration })
+      setRecords(all)
     } catch (e) {
       console.error('获取飞行统计失败:', e)
     } finally {
@@ -158,6 +165,7 @@ export default function FlightDashboard() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100">
+                  <th className="text-left py-2 px-3 text-xs font-medium text-gray-400">状态</th>
                   <th className="text-left py-2 px-3 text-xs font-medium text-gray-400 w-1/4">设备</th>
                   <th className="text-left py-2 px-3 text-xs font-medium text-gray-400">起飞时间</th>
                   <th className="text-left py-2 px-3 text-xs font-medium text-gray-400">降落时间</th>
@@ -169,15 +177,23 @@ export default function FlightDashboard() {
                 {records.slice(0, 50).map((r, i) => (
                   <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
                     <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-2">
-                        <CheckCircle2 size={13} className="text-green-500 shrink-0" />
-                        <span className="font-medium text-gray-700 truncate max-w-[160px]" title={r.deviceName || r.deviceId}>
-                          {r.deviceName || r.deviceId}
+                      {r.status === 'active' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-600 border border-green-200">
+                          <Loader2 size={10} className="animate-spin" />进行中
                         </span>
-                      </div>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                          <CheckCircle2 size={10} />已完成
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 px-3">
+                      <span className="font-medium text-gray-700 truncate max-w-[160px] block" title={r.deviceName || r.deviceId}>
+                        {r.deviceName || r.deviceId}
+                      </span>
                     </td>
                     <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{formatTime(r.startTime)}</td>
-                    <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{formatTime(r.endTime)}</td>
+                    <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{r.status === 'active' ? '--' : formatTime(r.endTime)}</td>
                     <td className="py-2.5 px-3 text-right text-gray-600 whitespace-nowrap">{formatMileage(r.totalMileage || 0)}</td>
                     <td className="py-2.5 px-3 text-right text-gray-600 whitespace-nowrap font-mono">{formatDuration(r.totalDuration || 0)}</td>
                   </tr>

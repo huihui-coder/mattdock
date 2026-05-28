@@ -373,6 +373,26 @@ app.get('/api/flight-history', (req, res) => {
   res.json(history);
 });
 
+// 获取进行中的飞行会话
+app.get('/api/flight-active', (req, res) => {
+  const { type } = req.query;
+  const now = Date.now();
+  let sessions = Array.from(processor.activeSessions.values()).map(s => ({
+    ...s,
+    totalDuration: Math.floor((now - new Date(s.startTime).getTime()) / 1000),
+    totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
+    status: 'active'
+  }));
+  if (type && type !== 'all') {
+    if (type === 'airport') {
+      sessions = sessions.filter(s => s.deviceType === 'airport' || s.deviceType === 'drone');
+    } else {
+      sessions = sessions.filter(s => s.deviceType === type);
+    }
+  }
+  res.json(sessions);
+});
+
 // SPA回退路由
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
