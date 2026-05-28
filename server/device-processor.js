@@ -164,6 +164,10 @@ class DeviceProcessor {
     return Number.isFinite(num) ? num : null;
   }
 
+  logFlight(message) {
+    console.log(`[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${message}`);
+  }
+
   /**
    * 获取设备友好名称
    * @param {string} deviceId
@@ -240,11 +244,11 @@ class DeviceProcessor {
       const isCurrentlyFlying = FLIGHT_MODES.has(currentMode);
       const wasFlying = lastMode !== undefined && FLIGHT_MODES.has(lastMode);
 
-      console.log(`[飞行统计] ${result.deviceName || deviceId} | mode=${currentMode} flying=${isCurrentlyFlying} wasFlying=${wasFlying} hasSession=${!!session} type=${result.deviceType}`);
+      this.logFlight(`[飞行统计] ${result.deviceName || deviceId} | mode=${currentMode} flying=${isCurrentlyFlying} wasFlying=${wasFlying} hasSession=${!!session} type=${result.deviceType}`);
 
       // 1. 架次开始判定：从非飞行态切换到飞行态
       if (isCurrentlyFlying && (!wasFlying || !session)) {
-        console.log(`[飞行统计] >>> 设备 ${result.deviceName || deviceId} 开始新架次，mode=${currentMode}`);
+        this.logFlight(`[飞行统计] >>> 设备 ${result.deviceName || deviceId} 开始新架次，mode=${currentMode}`);
         session = {
           id: `${deviceId}_${Date.now()}`,
           deviceId,
@@ -273,7 +277,7 @@ class DeviceProcessor {
       }
       // 3. 架次结束判定：切换回非飞行态
       else if (NON_FLIGHT_MODES.has(currentMode) && session) {
-        console.log(`[飞行统计] <<< 设备 ${result.deviceName || deviceId} 降落结束，保存记录，mode=${currentMode}`);
+        this.logFlight(`[飞行统计] <<< 设备 ${result.deviceName || deviceId} 降落结束，保存记录，mode=${currentMode}`);
         const finalRecord = {
           ...session,
           endTime: new Date().toISOString(),
