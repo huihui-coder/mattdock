@@ -75,6 +75,7 @@ class DeviceProcessor {
       'AHRXNAH00A018Z': '分局-Dock3-M4TD',
       'AHRXN9600A00R6': '市局（凤阳）-Dock3-M41',
       '1581F9F4X25AF00A00X0': '市局（凤阳）-M4TD-无人机',
+      '1581F9F4X25AF00A00ZQ': '市局（凤阳）-M4TD-无人机2号',
       '1581F9HEC259S00CFP71': '昌岗派出所-M4T',
       '1581F9HEC259S00CTR1C': '南华西派出所-M4T',
       '1581F9HEC259S00CSJ05': '南石头派出所-M4T',
@@ -200,11 +201,10 @@ class DeviceProcessor {
     } else if (isRemoteController) {
       result.deviceType = 'remote';
     } else if (isDrone) {
-      // 有直接名称映射 且 没有 gateway（未绑定机场）= 单兵无人机
-      // 有 gateway 且 gateway 在机场映射里 = 机场绑定无人机
-      const hasDirectName = !!this.deviceNames[deviceId];
+      // 有 gateway 且 gateway 在机场映射里 = 机场绑定无人机(drone)
+      // 其余所有 1581F 开头的无人机（Pilot上云单兵）= single
       const hasAirportGateway = gateway && !!this.deviceNames[gateway];
-      result.deviceType = (hasDirectName && !hasAirportGateway) ? 'single' : 'drone';
+      result.deviceType = hasAirportGateway ? 'drone' : 'single';
     } else {
       result.deviceType = 'airport';
     }
