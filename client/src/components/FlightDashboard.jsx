@@ -79,7 +79,7 @@ export default function FlightDashboard() {
     const ws = XLSX.utils.json_to_sheet(rows)
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '飞行记录')
-    const dateStr = new Date().toLocaleDateString('zh-CN').replace(///g, '-')
+    const dateStr = new Date().toLocaleDateString('zh-CN').split('/').join('-')
     XLSX.writeFile(wb, `飞行记录_${tabLabel}_${dateStr}.xlsx`)
   }
 
