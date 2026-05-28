@@ -345,6 +345,38 @@ app.post('/api/ai/analyze', async (req, res) => {
   }
 });
 
+function buildActiveFlightSessions(type) {
+  const now = Date.now();
+  let sessions = Array.from(processor.activeSessions.values()).map(s => ({
+    ...s,
+    deviceName: processor.normalizeFlightDisplayName(s.deviceName || s.deviceId),
+    totalDuration: Math.floor((now - new Date(s.startTime).getTime()) / 1000),
+    totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
+    status: 'active'
+  }));
+
+  for (const [deviceId, state] of processor.deviceStates.entries()) {
+    if (sessions.find(s => s.deviceId === deviceId)) continue;
+    if (!['drone', 'single', 'virtual'].includes(state.deviceType)) continue;
+    if (!processor.isFlightMode(state.raw_mode_code)) continue;
+    sessions.push({
+      id: `${deviceId}_${new Date(state.lastSeen || Date.now()).getTime()}`,
+      deviceId,
+      deviceName: processor.normalizeFlightDisplayName(state.deviceName || deviceId),
+      deviceType: state.deviceType,
+      startTime: new Date(state.lastSeen || Date.now()).toISOString(),
+      totalDuration: 0,
+      totalMileage: 0,
+      status: 'active'
+    });
+  }
+
+  if (type && type !== 'all') {
+    sessions = sessions.filter(s => type === 'airport' ? s.deviceType === 'drone' : s.deviceType === type);
+  }
+  return sessions;
+}
+
 // 获取飞行统计历史
 app.get('/api/flight-history', (req, res) => {
   const { type, startTime, endTime } = req.query;
@@ -373,43 +405,31 @@ app.get('/api/flight-history', (req, res) => {
   res.json(history);
 });
 
+// 获取飞行记录列表（已完成 + 进行中）
+app.get('/api/flight-records', (req, res) => {
+  const { type, startTime, endTime } = req.query;
+  const start = startTime ? new Date(startTime).getTime() : 0;
+  const end = endTime ? new Date(endTime).getTime() : Infinity;
+  let history = [...processor.flightHistory].filter(h => {
+    const matchType = !type || type === 'all' || (type === 'airport' ? h.deviceType === 'drone' : h.deviceType === type);
+    const time = new Date(h.startTime).getTime();
+    return matchType && time >= start && time <= end;
+  });
+  const active = buildActiveFlightSessions(type);
+  const records = [
+    ...active,
+    ...history.filter(h => !active.find(a => a.deviceId === h.deviceId))
+  ].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+  console.log(`[飞行记录接口] /api/flight-records type=${type || 'all'} completed=${history.length} active=${active.length} total=${records.length}: ${active.map(s => `${s.deviceName || s.deviceId}(${s.deviceType})`).join(', ') || '无进行中'}`);
+  res.json({ records, history, active });
+});
+
 // 获取进行中的飞行会话
 app.get('/api/flight-active', (req, res) => {
   const { type } = req.query;
-  const now = Date.now();
   const allSessions = Array.from(processor.activeSessions.values());
   console.log(`[飞行记录接口] /api/flight-active type=${type || 'all'} activeSessions=${allSessions.length}`);
-  let sessions = allSessions.map(s => ({
-    ...s,
-    deviceName: processor.normalizeFlightDisplayName(s.deviceName || s.deviceId),
-    totalDuration: Math.floor((now - new Date(s.startTime).getTime()) / 1000),
-    totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
-    status: 'active'
-  }));
-
-  for (const [deviceId, state] of processor.deviceStates.entries()) {
-    if (sessions.find(s => s.deviceId === deviceId)) continue;
-    if (!['drone', 'single', 'virtual'].includes(state.deviceType)) continue;
-    if (!processor.isFlightMode(state.raw_mode_code)) continue;
-    sessions.push({
-      id: `${deviceId}_${new Date(state.lastSeen || Date.now()).getTime()}`,
-      deviceId,
-      deviceName: processor.normalizeFlightDisplayName(state.deviceName || deviceId),
-      deviceType: state.deviceType,
-      startTime: new Date(state.lastSeen || Date.now()).toISOString(),
-      totalDuration: 0,
-      totalMileage: 0,
-      status: 'active'
-    });
-  }
-
-  if (type && type !== 'all') {
-    if (type === 'airport') {
-      sessions = sessions.filter(s => s.deviceType === 'drone');
-    } else {
-      sessions = sessions.filter(s => s.deviceType === type);
-    }
-  }
+  const sessions = buildActiveFlightSessions(type);
   console.log(`[飞行记录接口] 返回进行中=${sessions.length}: ${sessions.map(s => `${s.deviceName || s.deviceId}(${s.deviceType})`).join(', ') || '无'}`);
   res.json(sessions);
 });

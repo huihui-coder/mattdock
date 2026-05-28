@@ -44,17 +44,12 @@ export default function FlightDashboard() {
     try {
       const startTime = dateRange[0] ? new Date(dateRange[0]).toISOString() : ''
       const endTime = dateRange[1] ? new Date(dateRange[1]).toISOString() : ''
-      const [histRes, activeRes] = await Promise.all([
-        fetch(`/api/flight-history?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`),
-        fetch(`/api/flight-active?type=${activeTab}`)
-      ])
-      const history = await histRes.json()
-      const active = await activeRes.json()
-      console.log('[飞行记录] history=', history.length, 'active=', active.length, active)
-      const all = [
-        ...active,
-        ...history.filter(h => !active.find(a => a.deviceId === h.deviceId))
-      ].sort((a, b) => new Date(b.startTime) - new Date(a.startTime))
+      const res = await fetch(`/api/flight-records?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`)
+      const data = await res.json()
+      const history = data.history || []
+      const active = data.active || []
+      const all = data.records || []
+      console.log('[飞行记录] records=', all.length, 'history=', history.length, 'active=', active.length, active)
       const totalMileage = history.reduce((acc, cur) => acc + (cur.totalMileage || 0), 0)
       const totalDuration = history.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
       setStats({ count: history.length, mileage: totalMileage, duration: totalDuration })
