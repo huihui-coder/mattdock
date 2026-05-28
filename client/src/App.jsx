@@ -8,7 +8,7 @@ import AlertConfig from './components/AlertConfig'
 import FlightDashboard from './components/FlightDashboard'
 import Login from './components/Login'
 import VirtualCockpit from './components/VirtualCockpit'
-import { Activity, Wifi, WifiOff, LayoutDashboard, Bell } from 'lucide-react'
+import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History } from 'lucide-react'
 
 const IS_PROD = import.meta.env.PROD
 
@@ -257,6 +257,15 @@ function App() {
             <Bell size={15} />
             离巢告警配置
           </button>
+          <button
+            onClick={() => setActiveTab('flight-records')}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              activeTab === 'flight-records' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+            }`}
+          >
+            <History size={15} />
+            飞行记录
+          </button>
         </div>
         {/* 连接状态提示 */}
         {!mqttConnected && (
@@ -268,9 +277,6 @@ function App() {
 
         {/* 监控内容（仅 monitor tab 显示） */}
         {activeTab === 'monitor' && <>
-        {/* 飞行统计看板 */}
-        <FlightDashboard />
-        
         {/* 状态概览 */}
         <StatusPanel 
           stats={stats} 
@@ -318,6 +324,11 @@ function App() {
         {/* 告警配置页 */}
         {activeTab === 'alert-config' && (
           <AlertConfig devices={devices} />
+        )}
+
+        {/* 飞行记录页 */}
+        {activeTab === 'flight-records' && (
+          <FlightDashboard />
         )}
 
         {/* 设备详情弹窗 */}
