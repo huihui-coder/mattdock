@@ -7,6 +7,7 @@ const FLIGHT_HISTORY_FILE = path.join(__dirname, '../haizhuDB/flight-history.jso
 // 判定规则：飞行态与非飞行态
 const FLIGHT_MODES = new Set([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19]);
 const NON_FLIGHT_MODES = new Set([0, 1, 2, 13, 14]);
+const FLIGHT_STALE_TIMEOUT_MS = 90 * 1000;
 
 /**
  * 设备数据处理模块
@@ -20,6 +21,7 @@ class DeviceProcessor {
     
     // 运行时飞行会话缓存 (deviceId -> sessionData)
     this.activeSessions = new Map();
+    this.staleFlightTimer = setInterval(() => this.closeStaleFlightSessions(), 30 * 1000);
     
     // 加载历史数据
     this.flightHistory = this.loadFlightHistory();
@@ -168,6 +170,42 @@ class DeviceProcessor {
     console.log(`[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${message}`);
   }
 
+  completeFlightSession(deviceId, session, endTime = new Date(), totalFlightDistance = null, reason = 'mode') {
+    const totalMileage = parseFloat(((totalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined)
+      ? Math.max(0, totalFlightDistance - session.startTotalFlightDistance)
+      : session.mileage).toFixed(2));
+    const finalRecord = {
+      ...session,
+      endTime: endTime.toISOString(),
+      totalMileage,
+      totalDuration: Math.floor((endTime.getTime() - new Date(session.startTime).getTime()) / 1000),
+      status: 'completed'
+    };
+    if (finalRecord.totalDuration > 5 || finalRecord.totalMileage > 2) {
+      this.flightHistory.push(finalRecord);
+      if (this.flightHistory.length > 1000) this.flightHistory.shift();
+      this.saveFlightHistory();
+      this.logFlight(`[飞行统计] 已写入历史记录 ${session.deviceName || deviceId} reason=${reason} mileage=${finalRecord.totalMileage}m duration=${finalRecord.totalDuration}s`);
+    }
+    this.activeSessions.delete(deviceId);
+    return finalRecord;
+  }
+
+  closeStaleFlightSessions() {
+    const now = Date.now();
+    for (const [deviceId, session] of this.activeSessions.entries()) {
+      const lastUpdate = new Date(session.lastUpdateTime || session.startTime).getTime();
+      if (now - lastUpdate <= FLIGHT_STALE_TIMEOUT_MS) continue;
+      this.logFlight(`[飞行统计] <<< 设备 ${session.deviceName || deviceId} 超过${FLIGHT_STALE_TIMEOUT_MS / 1000}s无飞行数据，自动结束`);
+      this.completeFlightSession(deviceId, session, new Date(lastUpdate), session.lastTotalFlightDistance ?? null, 'stale-timeout');
+      const state = this.deviceStates.get(deviceId);
+      if (state) {
+        state.flightSession = null;
+        this.deviceStates.set(deviceId, state);
+      }
+    }
+  }
+
   /**
    * 获取设备友好名称
    * @param {string} deviceId
@@ -257,6 +295,8 @@ class DeviceProcessor {
           startLocation: result.location ? { ...result.location } : null,
           lastLocation: result.location ? { ...result.location } : null,
           startTotalFlightDistance: totalFlightDistance,
+          lastTotalFlightDistance: totalFlightDistance,
+          lastUpdateTime: new Date().toISOString(),
           mileage: 0,
           duration: 0,
           deviceType: result.deviceType
@@ -269,6 +309,8 @@ class DeviceProcessor {
         const now = Date.now();
         const start = new Date(session.startTime).getTime();
         session.duration = Math.floor((now - start) / 1000);
+        session.lastUpdateTime = new Date(now).toISOString();
+        if (totalFlightDistance !== null) session.lastTotalFlightDistance = totalFlightDistance;
         
         // 累积里程：使用当前累计飞行里程 - 起飞时累计飞行里程
         if (totalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined) {
@@ -278,23 +320,7 @@ class DeviceProcessor {
       // 3. 架次结束判定：切换回非飞行态
       else if (NON_FLIGHT_MODES.has(currentMode) && session) {
         this.logFlight(`[飞行统计] <<< 设备 ${result.deviceName || deviceId} 降落结束，保存记录，mode=${currentMode}`);
-        const finalRecord = {
-          ...session,
-          endTime: new Date().toISOString(),
-          totalMileage: parseFloat(((totalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined)
-            ? Math.max(0, totalFlightDistance - session.startTotalFlightDistance)
-            : session.mileage).toFixed(2)),
-          totalDuration: session.duration,
-          status: 'completed'
-        };
-        // 防止数据过少（如只有1秒）的误判记录
-        if (finalRecord.totalDuration > 5 || finalRecord.totalMileage > 2) {
-          this.flightHistory.push(finalRecord);
-          // 限制历史记录数量，保留最近1000条
-          if (this.flightHistory.length > 1000) this.flightHistory.shift();
-          this.saveFlightHistory();
-        }
-        this.activeSessions.delete(deviceId);
+        this.completeFlightSession(deviceId, session, new Date(), totalFlightDistance, 'mode-non-flight');
         session = null;
       }
     }
