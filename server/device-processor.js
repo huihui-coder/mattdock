@@ -1,3 +1,13 @@
+const fs = require('fs');
+const path = require('path');
+
+// 飞行统计持久化路径
+const FLIGHT_HISTORY_FILE = path.join(__dirname, '../haizhuDB/flight-history.json');
+
+// 判定规则：飞行态与非飞行态
+const FLIGHT_MODES = new Set([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19]);
+const NON_FLIGHT_MODES = new Set([0, 1, 2, 13, 14]);
+
 /**
  * 设备数据处理模块
  * 解析JSON数据并判断设备状态
@@ -5,6 +15,15 @@
 
 class DeviceProcessor {
   constructor(customThresholds = {}) {
+    // 飞行统计持久化路径
+    this.historyFile = FLIGHT_HISTORY_FILE;
+    
+    // 运行时飞行会话缓存 (deviceId -> sessionData)
+    this.activeSessions = new Map();
+    
+    // 加载历史数据
+    this.flightHistory = this.loadFlightHistory();
+
     // 设备状态阈值配置 - 默认值，可被外部配置覆盖
     this.thresholds = {
       temperature: {
@@ -93,6 +112,42 @@ class DeviceProcessor {
     });
   }
 
+  loadFlightHistory() {
+    try {
+      if (fs.existsSync(FLIGHT_HISTORY_FILE)) {
+        return JSON.parse(fs.readFileSync(FLIGHT_HISTORY_FILE, 'utf8'));
+      }
+    } catch (e) {
+      console.error('[飞行统计] 加载历史失败:', e.message);
+    }
+    return [];
+  }
+
+  saveFlightHistory() {
+    try {
+      fs.mkdirSync(path.dirname(FLIGHT_HISTORY_FILE), { recursive: true });
+      fs.writeFileSync(FLIGHT_HISTORY_FILE, JSON.stringify(this.flightHistory, null, 2));
+    } catch (e) {
+      console.error('[飞行统计] 保存历史失败:', e.message);
+    }
+  }
+
+  // Haversine 公式计算两点间距离 (米)
+  calculateDistance(lat1, lon1, lat2, lon2) {
+    if (!lat1 || !lon1 || !lat2 || !lon2) return 0;
+    const R = 6371e3; // 地球半径
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  }
+
   /**
    * 获取设备友好名称
    * @param {string} deviceId
@@ -134,10 +189,81 @@ class DeviceProcessor {
     // 提取实际数据 (支持嵌套data字段和扁平结构)
     const payload = data.data || data;
 
-    // 判断设备类型：无人机设备ID以1581F开头，机场设备以NEST或8UUXN开头
+    // 识别设备类型：无人机设备ID以1581F开头，机场设备以NEST或8UUXN开头
     const isDrone = deviceId.startsWith('1581F');
     const isRemoteController = deviceId.startsWith('9N9');
     result.deviceType = isDrone ? 'drone' : (isRemoteController ? 'remote' : 'airport');
+    
+    // 额外标记虚拟机场
+    if (deviceId.startsWith('VIRTUAL')) result.deviceType = 'virtual';
+
+    // ========== 飞行状态机统计逻辑 ==========
+    const currentMode = payload.mode_code;
+    const lastMode = prevState?.raw?.mode_code || (prevState?.raw?.data?.mode_code);
+    let session = this.activeSessions.get(deviceId);
+
+    if (currentMode !== undefined) {
+      const isCurrentlyFlying = FLIGHT_MODES.has(currentMode);
+      const wasFlying = lastMode !== undefined && FLIGHT_MODES.has(lastMode);
+
+      // 1. 架次开始判定：从非飞行态切换到飞行态
+      if (isCurrentlyFlying && (!wasFlying || !session)) {
+        console.log(`[飞行统计] 设备 ${deviceId} 开始新架次`);
+        session = {
+          id: `${deviceId}_${Date.now()}`,
+          deviceId,
+          startTime: new Date().toISOString(),
+          startLocation: result.location ? { ...result.location } : null,
+          lastLocation: result.location ? { ...result.location } : null,
+          mileage: 0,
+          duration: 0,
+          deviceType: result.deviceType
+        };
+        this.activeSessions.set(deviceId, session);
+      } 
+      // 2. 飞行中：累计里程和时间
+      else if (isCurrentlyFlying && session) {
+        // 累积时间
+        const now = Date.now();
+        const start = new Date(session.startTime).getTime();
+        session.duration = Math.floor((now - start) / 1000);
+        
+        // 累积里程
+        if (result.location && session.lastLocation) {
+          const dist = this.calculateDistance(
+            session.lastLocation.latitude, session.lastLocation.longitude,
+            result.location.latitude, result.location.longitude
+          );
+          // 过滤掉小于0.5米的GPS抖动
+          if (dist > 0.5) {
+            session.mileage += dist;
+            session.lastLocation = { ...result.location };
+          }
+        }
+      }
+      // 3. 架次结束判定：切换回非飞行态
+      else if (NON_FLIGHT_MODES.has(currentMode) && session) {
+        console.log(`[飞行统计] 设备 ${deviceId} 架次结束，保存记录`);
+        const finalRecord = {
+          ...session,
+          endTime: new Date().toISOString(),
+          totalMileage: parseFloat(session.mileage.toFixed(2)),
+          totalDuration: session.duration,
+          status: 'completed'
+        };
+        // 防止数据过少（如只有1秒）的误判记录
+        if (finalRecord.totalDuration > 5 || finalRecord.totalMileage > 2) {
+          this.flightHistory.push(finalRecord);
+          // 限制历史记录数量，保留最近1000条
+          if (this.flightHistory.length > 1000) this.flightHistory.shift();
+          this.saveFlightHistory();
+        }
+        this.activeSessions.delete(deviceId);
+      }
+    }
+    
+    // 把当前的活跃 session 也放进 result 返回给前端实时显示
+    result.activeSession = session;
 
     // 机场绑定无人机时，机场显示为“无人机设备名称-遥控器”
     const boundDroneSn = payload.sub_device?.device_sn || payload.sub_devices?.[0]?.device_sn;
@@ -375,12 +501,26 @@ class DeviceProcessor {
    */
   getModeText(modeCode) {
     const modes = {
-      0: '待机',
-      1: '准备起飞',
-      2: '任务中',
-      3: '返航',
-      4: '降落',
-      5: '紧急停止'
+      0: "待机",
+      1: "起飞准备",
+      2: "起飞准备完毕",
+      3: "手动飞行",
+      4: "自动起飞",
+      5: "航线飞行",
+      6: "全景拍照",
+      7: "智能跟随",
+      8: "ADS-B 躲避",
+      9: "自动返航",
+      10: "自动降落",
+      11: "强制降落",
+      12: "三桨叶降落",
+      13: "升级中",
+      14: "未连接",
+      15: "APAS",
+      16: "虚拟摇杆状态",
+      17: "指令飞行",
+      18: "空中 RTK 收敛模式",
+      19: "机场选址中"
     };
     return modes[modeCode] || `模式${modeCode}`;
   }

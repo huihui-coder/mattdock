@@ -5,6 +5,7 @@ import DeviceList from './components/DeviceList'
 import DeviceDetail from './components/DeviceDetail'
 import AlertList from './components/AlertList'
 import AlertConfig from './components/AlertConfig'
+import FlightDashboard from './components/FlightDashboard'
 import Login from './components/Login'
 import VirtualCockpit from './components/VirtualCockpit'
 import { Activity, Wifi, WifiOff, LayoutDashboard, Bell } from 'lucide-react'
@@ -267,6 +268,9 @@ function App() {
 
         {/* 监控内容（仅 monitor tab 显示） */}
         {activeTab === 'monitor' && <>
+        {/* 飞行统计看板 */}
+        <FlightDashboard />
+        
         {/* 状态概览 */}
         <StatusPanel 
           stats={stats} 

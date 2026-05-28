@@ -816,6 +816,12 @@ export default function VirtualCockpit({ device, onClose }) {
         <span className={`flex items-center gap-1 ${droneInDock === 1 ? 'text-green-400' : 'text-orange-400'}`}>
           <Home size={12} />{droneInDock === 1 ? '在巢' : droneInDock === 0 ? '离巢' : '--'}
         </span>
+        {device.metrics.modeCode && (
+          <span className="flex items-center gap-1 text-indigo-400">
+            <Activity size={12} />
+            {device.metrics.modeCode.statusText}
+          </span>
+        )}
         {device.location && (
           <span className="flex items-center gap-1 text-gray-400">
             <MapPin size={11} />{device.location.latitude.toFixed(4)}, {device.location.longitude.toFixed(4)}

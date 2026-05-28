@@ -345,6 +345,29 @@ app.post('/api/ai/analyze', async (req, res) => {
   }
 });
 
+// 获取飞行统计历史
+app.get('/api/flight-history', (req, res) => {
+  const { type, startTime, endTime } = req.query;
+  let history = processor.flightHistory;
+
+  // 1. 类型筛选
+  if (type && type !== 'all') {
+    history = history.filter(h => h.deviceType === type);
+  }
+
+  // 2. 时间筛选
+  if (startTime || endTime) {
+    const start = startTime ? new Date(startTime).getTime() : 0;
+    const end = endTime ? new Date(endTime).getTime() : Infinity;
+    history = history.filter(h => {
+      const time = new Date(h.startTime).getTime();
+      return time >= start && time <= end;
+    });
+  }
+
+  res.json(history);
+});
+
 // SPA回退路由
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));

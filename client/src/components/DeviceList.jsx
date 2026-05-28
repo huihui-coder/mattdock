@@ -71,6 +71,11 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {device.metrics.modeCode && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 border border-indigo-100 font-medium">
+                      {device.metrics.modeCode.statusText}
+                    </span>
+                  )}
                   <span className={`text-xs px-2 py-1 rounded-full ${getStatusClass(device.status)}`}>
                     {device.statusText}
                   </span>
@@ -124,6 +129,13 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
                   <div className={`flex items-center gap-1 font-medium ${device.metrics.droneInDock.value === 1 ? 'text-green-600' : 'text-orange-500'}`}>
                     <Home size={12} />
                     <span>{device.metrics.droneInDock.statusText}</span>
+                  </div>
+                )}
+                {/* 飞行状态 */}
+                {device.metrics.modeCode && (
+                  <div className="flex items-center gap-1 text-indigo-600 font-medium col-span-2">
+                    <Activity size={12} />
+                    <span>{device.metrics.modeCode.statusText}</span>
                   </div>
                 )}
               </div>
