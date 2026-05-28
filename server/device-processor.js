@@ -171,6 +171,7 @@ class DeviceProcessor {
    */
   process(topic, data) {
     const deviceId = this.extractDeviceId(topic, data);
+    const prevState = this.deviceStates.get(deviceId);
     const gateway = data.gateway || null;
     const result = {
       deviceId,
