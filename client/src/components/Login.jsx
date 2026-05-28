@@ -20,7 +20,8 @@ export default function Login({ onLogin }) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '登录失败')
       localStorage.setItem('auth_token', data.token)
-      onLogin(data.token)
+      localStorage.setItem('auth_user', JSON.stringify(data.user))
+      onLogin(data.token, data.user)
     } catch (err) {
       setError(err.message)
     }

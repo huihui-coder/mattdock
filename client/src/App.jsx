@@ -8,11 +8,15 @@ import AlertConfig from './components/AlertConfig'
 import FlightDashboard from './components/FlightDashboard'
 import Login from './components/Login'
 import VirtualCockpit from './components/VirtualCockpit'
-import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History } from 'lucide-react'
+import AccountManager from './components/AccountManager'
+import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users } from 'lucide-react'
 
 const IS_PROD = import.meta.env.PROD
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
+function getStoredUser() {
+  try { return JSON.parse(localStorage.getItem('auth_user') || 'null') } catch { return null }
+}
 function apiFetch(url, opts = {}) {
   const token = getToken()
   return fetch(url, { ...opts, headers: { ...(opts.headers || {}), 'x-auth-token': token } })
@@ -25,6 +29,7 @@ const ALERT_UPDATE_INTERVAL = 5000  // 告警列表更新间隔（毫秒）
 
 function App() {
   const [token, setToken] = useState(getToken())
+  const [user, setUser] = useState(getStoredUser())
   const [activeTab, setActiveTab] = useState('monitor') // 'monitor' | 'alert-config'
   const [mqttConnected, setMqttConnected] = useState(false)
   const [wsConnected, setWsConnected] = useState(false)
@@ -224,9 +229,29 @@ function App() {
     critical: devices.filter(d => d.status === 'critical').length
   }
 
+  const hasPermission = (p) => user?.role === 'admin' || user?.permissions?.includes(p)
+  const visibleTabs = [
+    hasPermission('monitor') && { key: 'monitor', label: '实时监控', icon: LayoutDashboard },
+    hasPermission('alert-config') && { key: 'alert-config', label: '离巢告警配置', icon: Bell },
+    hasPermission('flight-records') && { key: 'flight-records', label: '飞行记录', icon: History },
+    user?.role === 'admin' && { key: 'accounts', label: '账号管理', icon: Users }
+  ].filter(Boolean)
+
+  useEffect(() => {
+    if (visibleTabs.length && !visibleTabs.find(t => t.key === activeTab)) setActiveTab(visibleTabs[0].key)
+  }, [user, activeTab])
+
+  const handleLogout = async () => {
+    try { await apiFetch('/api/logout', { method: 'POST' }) } catch {}
+    localStorage.removeItem('auth_token')
+    localStorage.removeItem('auth_user')
+    setToken('')
+    setUser(null)
+  }
+
   // 未登录（生产模式）显示登录页
   if (IS_PROD && !token) {
-    return <Login onLogin={t => setToken(t)} />
+    return <Login onLogin={(t, u) => { setToken(t); setUser(u) }} />
   }
 
   return (
@@ -234,38 +259,28 @@ function App() {
       <Header 
         mqttConnected={mqttConnected} 
         wsConnected={wsConnected}
+        user={user}
+        onLogout={handleLogout}
       />
       
       <main className="max-w-7xl mx-auto px-4 py-6">
         {/* Tab 切换 */}
         <div className="flex gap-1 mb-4 bg-white rounded-lg p-1 shadow-sm border border-gray-200 w-fit">
-          <button
-            onClick={() => setActiveTab('monitor')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'monitor' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            <LayoutDashboard size={15} />
-            实时监控
-          </button>
-          <button
-            onClick={() => setActiveTab('alert-config')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'alert-config' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            <Bell size={15} />
-            离巢告警配置
-          </button>
-          <button
-            onClick={() => setActiveTab('flight-records')}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              activeTab === 'flight-records' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-            }`}
-          >
-            <History size={15} />
-            飞行记录
-          </button>
+          {visibleTabs.map(tab => {
+            const Icon = tab.icon
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                  activeTab === tab.key ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                <Icon size={15} />
+                {tab.label}
+              </button>
+            )
+          })}
         </div>
         {/* 连接状态提示 */}
         {!mqttConnected && (
@@ -276,7 +291,7 @@ function App() {
         )}
 
         {/* 监控内容（仅 monitor tab 显示） */}
-        {activeTab === 'monitor' && <>
+        {activeTab === 'monitor' && hasPermission('monitor') && <>
         {/* 状态概览 */}
         <StatusPanel 
           stats={stats} 
@@ -322,13 +337,17 @@ function App() {
         </>}
 
         {/* 告警配置页 */}
-        {activeTab === 'alert-config' && (
+        {activeTab === 'alert-config' && hasPermission('alert-config') && (
           <AlertConfig devices={devices} />
         )}
 
         {/* 飞行记录页 */}
-        {activeTab === 'flight-records' && (
+        {activeTab === 'flight-records' && hasPermission('flight-records') && (
           <FlightDashboard />
+        )}
+
+        {activeTab === 'accounts' && user?.role === 'admin' && (
+          <AccountManager />
         )}
 
         {/* 设备详情弹窗 */}

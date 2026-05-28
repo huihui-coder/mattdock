@@ -21,26 +21,85 @@ const IS_PROD = process.env.NODE_ENV === 'production';
 // 简单 token 鉴权（无需 jwt 库）
 const AUTH_USER = process.env.AUTH_USER || 'admin';
 const AUTH_PASS = process.env.AUTH_PASS || 'admin123';
-const TOKEN_SECRET = process.env.TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
-const sessions = new Map(); // token -> expireAt
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const USER_FILE = path.join(__dirname, '../haizhuDB/users.json');
+const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records'];
+const sessions = new Map();
 
-function signToken() {
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
+  return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+  const [salt, hash] = String(stored || '').split(':');
+  if (!salt || !hash) return false;
+  return hashPassword(password, salt) === stored;
+}
+
+function readUsers() {
+  try {
+    if (!fs.existsSync(USER_FILE)) {
+      const users = [{
+        username: AUTH_USER,
+        passwordHash: hashPassword(AUTH_PASS),
+        role: 'admin',
+        permissions: ALL_PERMISSIONS,
+        createdAt: new Date().toISOString()
+      }];
+      fs.mkdirSync(path.dirname(USER_FILE), { recursive: true });
+      fs.writeFileSync(USER_FILE, JSON.stringify(users, null, 2), 'utf8');
+      return users;
+    }
+    return JSON.parse(fs.readFileSync(USER_FILE, 'utf8'));
+  } catch (error) {
+    console.error('[用户] 读取用户文件失败:', error.message);
+    return [];
+  }
+}
+
+function writeUsers(users) {
+  fs.mkdirSync(path.dirname(USER_FILE), { recursive: true });
+  fs.writeFileSync(USER_FILE, JSON.stringify(users, null, 2), 'utf8');
+}
+
+function sanitizeUser(user) {
+  if (!user) return null;
+  const { passwordHash, ...safe } = user;
+  return safe;
+}
+
+function signToken(user) {
   const token = crypto.randomBytes(24).toString('hex');
-  sessions.set(token, Date.now() + 12 * 60 * 60 * 1000); // 12h
+  sessions.set(token, { expireAt: Date.now() + TOKEN_TTL_MS, user: sanitizeUser(user) });
   return token;
 }
 
-function authMiddleware(req, res, next) {
-  // 只有生产模式下 POST /api/alert-config（保存配置）才需要验证
-  if (!IS_PROD) return next();
-  if (!(req.method === 'POST' && req.path === '/alert-config')) return next();
+function getSession(req) {
   const token = req.headers['x-auth-token'] || req.query.token;
-  const expire = sessions.get(token);
-  if (!token || !expire || Date.now() > expire) {
+  const session = sessions.get(token);
+  if (!token || !session || Date.now() > session.expireAt) {
+    if (token) sessions.delete(token);
+    return null;
+  }
+  return { token, ...session };
+}
+
+function requireLogin(req, res, next) {
+  const session = getSession(req);
+  if (!session) {
     return res.status(401).json({ error: '未登录或会话已过期' });
   }
-  sessions.set(token, Date.now() + 12 * 60 * 60 * 1000); // 续期
+  req.user = session.user;
+  req.token = session.token;
   next();
+}
+
+function requireAdmin(req, res, next) {
+  requireLogin(req, res, () => {
+    if (req.user?.role !== 'admin') return res.status(403).json({ error: '仅管理员可操作' });
+    next();
+  });
 }
 
 // 中间件
@@ -122,10 +181,43 @@ app.use(express.static(path.join(__dirname, '../client/dist')));
 // 登录接口
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  if (username === AUTH_USER && password === AUTH_PASS) {
-    return res.json({ token: signToken() });
+  const user = readUsers().find(u => u.username === username);
+  if (user && verifyPassword(password, user.passwordHash)) {
+    const token = signToken(user);
+    return res.json({ token, user: sanitizeUser(user), expiresIn: TOKEN_TTL_MS });
   }
   res.status(401).json({ error: '用户名或密码错误' });
+});
+
+app.post('/api/logout', requireLogin, (req, res) => {
+  sessions.delete(req.token);
+  res.json({ success: true });
+});
+
+app.get('/api/me', requireLogin, (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.get('/api/users', requireAdmin, (req, res) => {
+  res.json({ users: readUsers().map(sanitizeUser), permissions: ALL_PERMISSIONS });
+});
+
+app.post('/api/users', requireAdmin, (req, res) => {
+  const { username, password, permissions = [] } = req.body;
+  if (!username || !password) return res.status(400).json({ error: '用户名和密码不能为空' });
+  const users = readUsers();
+  if (users.find(u => u.username === username)) return res.status(409).json({ error: '用户名已存在' });
+  const safePermissions = permissions.filter(p => ALL_PERMISSIONS.includes(p));
+  const user = {
+    username,
+    passwordHash: hashPassword(password),
+    role: 'user',
+    permissions: safePermissions,
+    createdAt: new Date().toISOString()
+  };
+  users.push(user);
+  writeUsers(users);
+  res.json({ user: sanitizeUser(user) });
 });
 
 
