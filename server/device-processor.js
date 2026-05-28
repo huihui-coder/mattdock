@@ -228,7 +228,12 @@ class DeviceProcessor {
     const totalFlightDistance = this.getTotalFlightDistance(payload);
     // prevState 存的是 mergedResult，直接取 raw_mode_code
     const lastMode = prevState?.raw_mode_code;
+    const prevFlightSession = prevState?.flightSession;
     let session = this.activeSessions.get(deviceId);
+    if (!session && prevFlightSession) {
+      session = prevFlightSession;
+      this.activeSessions.set(deviceId, session);
+    }
 
     const canTrackFlight = ['drone', 'single', 'virtual'].includes(result.deviceType);
     if (currentMode !== undefined && canTrackFlight) {
@@ -268,7 +273,7 @@ class DeviceProcessor {
       }
       // 3. 架次结束判定：切换回非飞行态
       else if (NON_FLIGHT_MODES.has(currentMode) && session) {
-        console.log(`[飞行统计] 设备 ${deviceId} 架次结束，保存记录`);
+        console.log(`[飞行统计] <<< 设备 ${result.deviceName || deviceId} 降落结束，保存记录，mode=${currentMode}`);
         const finalRecord = {
           ...session,
           endTime: new Date().toISOString(),
@@ -286,6 +291,7 @@ class DeviceProcessor {
           this.saveFlightHistory();
         }
         this.activeSessions.delete(deviceId);
+        session = null;
       }
     }
     
@@ -514,7 +520,8 @@ class DeviceProcessor {
       lastSeen: new Date(),
       // 保存最新 mode_code 供下次状态机读取
       raw_mode_code: currentMode !== undefined ? currentMode : prevState?.raw_mode_code,
-      raw_total_flight_distance: totalFlightDistance !== null ? totalFlightDistance : prevState?.raw_total_flight_distance
+      raw_total_flight_distance: totalFlightDistance !== null ? totalFlightDistance : prevState?.raw_total_flight_distance,
+      flightSession: session || null
     };
 
     // 更新设备状态缓存
