@@ -42,9 +42,12 @@ export default function FlightDashboard() {
 
   useEffect(() => {
     fetchStats()
-    const timer = setInterval(fetchStats, 30000) // 每30秒自动刷新
-    return () => clearInterval(timer)
   }, [activeTab, timeRange])
+
+  useEffect(() => {
+    const timer = setInterval(fetchStats, 30000)
+    return () => clearInterval(timer)
+  }, [])
 
   const formatDuration = (seconds) => {
     const h = Math.floor(seconds / 3600)
@@ -55,7 +58,7 @@ export default function FlightDashboard() {
 
   const tabs = [
     { id: 'airport', label: '自动机场', color: 'blue' },
-    { id: 'drone', label: '单兵无人机', color: 'indigo' },
+    { id: 'single', label: '单兵无人机', color: 'indigo' },
     { id: 'virtual', label: '虚拟机场', color: 'purple' },
     { id: 'all', label: '全部设备', color: 'gray' }
   ]

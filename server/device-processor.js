@@ -192,13 +192,22 @@ class DeviceProcessor {
     // 提取实际数据 (支持嵌套data字段和扁平结构)
     const payload = data.data || data;
 
-    // 识别设备类型：无人机设备ID以1581F开头，机场设备以NEST或8UUXN开头
+    // 识别设备类型
     const isDrone = deviceId.startsWith('1581F');
     const isRemoteController = deviceId.startsWith('9N9');
-    result.deviceType = isDrone ? 'drone' : (isRemoteController ? 'remote' : 'airport');
-    
-    // 额外标记虚拟机场
-    if (deviceId.startsWith('VIRTUAL')) result.deviceType = 'virtual';
+    if (deviceId.startsWith('VIRTUAL')) {
+      result.deviceType = 'virtual';
+    } else if (isRemoteController) {
+      result.deviceType = 'remote';
+    } else if (isDrone) {
+      // 有直接名称映射 且 没有 gateway（未绑定机场）= 单兵无人机
+      // 有 gateway 且 gateway 在机场映射里 = 机场绑定无人机
+      const hasDirectName = !!this.deviceNames[deviceId];
+      const hasAirportGateway = gateway && !!this.deviceNames[gateway];
+      result.deviceType = (hasDirectName && !hasAirportGateway) ? 'single' : 'drone';
+    } else {
+      result.deviceType = 'airport';
+    }
 
     // ========== 飞行状态机统计逻辑 ==========
     const currentMode = payload.mode_code;
