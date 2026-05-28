@@ -377,6 +377,8 @@ app.get('/api/flight-history', (req, res) => {
 app.get('/api/flight-active', (req, res) => {
   const { type } = req.query;
   const now = Date.now();
+  const allSessions = Array.from(processor.activeSessions.values());
+  console.log(`[飞行记录接口] /api/flight-active type=${type || 'all'} activeSessions=${allSessions.length}`);
   let sessions = Array.from(processor.activeSessions.values()).map(s => ({
     ...s,
     totalDuration: Math.floor((now - new Date(s.startTime).getTime()) / 1000),
@@ -390,6 +392,7 @@ app.get('/api/flight-active', (req, res) => {
       sessions = sessions.filter(s => s.deviceType === type);
     }
   }
+  console.log(`[飞行记录接口] 返回进行中=${sessions.length}: ${sessions.map(s => `${s.deviceName || s.deviceId}(${s.deviceType})`).join(', ') || '无'}`);
   res.json(sessions);
 });
 

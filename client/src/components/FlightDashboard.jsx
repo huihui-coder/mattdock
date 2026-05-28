@@ -49,6 +49,7 @@ export default function FlightDashboard() {
       ])
       const history = await histRes.json()
       const active = await activeRes.json()
+      console.log('[飞行记录] history=', history.length, 'active=', active.length, active)
       const all = [
         ...active,
         ...history.filter(h => !active.find(a => a.deviceId === h.deviceId))

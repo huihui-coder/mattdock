@@ -215,7 +215,8 @@ class DeviceProcessor {
     const lastMode = prevState?.raw_mode_code;
     let session = this.activeSessions.get(deviceId);
 
-    if (currentMode !== undefined) {
+    const canTrackFlight = ['drone', 'single', 'virtual'].includes(result.deviceType);
+    if (currentMode !== undefined && canTrackFlight) {
       const isCurrentlyFlying = FLIGHT_MODES.has(currentMode);
       const wasFlying = lastMode !== undefined && FLIGHT_MODES.has(lastMode);
 
