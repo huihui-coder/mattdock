@@ -1,24 +1,26 @@
 import { useState, useEffect, useRef } from 'react'
 import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown } from 'lucide-react'
 
-const toLocalDateStr = (d) => {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+const pad = (n) => String(n).padStart(2, '0')
+const toDatetimeLocal = (d) => {
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+const toDisplayStr = (dtStr) => {
+  if (!dtStr) return ''
+  return dtStr.replace('T', ' ')
 }
 
 const SHORTCUTS = [
-  { label: '今日', getDates: () => { const t = new Date(); return [toLocalDateStr(t), toLocalDateStr(t)] } },
-  { label: '最近一周', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 6 * 86400000); return [toLocalDateStr(s), toLocalDateStr(e)] } },
-  { label: '最近一个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 29 * 86400000); return [toLocalDateStr(s), toLocalDateStr(e)] } },
-  { label: '最近三个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 89 * 86400000); return [toLocalDateStr(s), toLocalDateStr(e)] } },
+  { label: '今日', getDates: () => { const s = new Date(); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(new Date())] } },
+  { label: '最近一周', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 6*86400000); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(e)] } },
+  { label: '最近一个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 29*86400000); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(e)] } },
+  { label: '最近三个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 89*86400000); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(e)] } },
 ]
 
 export default function FlightDashboard() {
   const [activeTab, setActiveTab] = useState('airport')
-  const initEnd = toLocalDateStr(new Date())
-  const initStart = toLocalDateStr(new Date(Date.now() - 6 * 86400000))
+  const initEnd = toDatetimeLocal(new Date())
+  const initStart = (() => { const s = new Date(Date.now() - 6*86400000); s.setHours(0,0,0,0); return toDatetimeLocal(s) })()
   const [dateRange, setDateRange] = useState([initStart, initEnd])
   const [pickerOpen, setPickerOpen] = useState(false)
   const [stats, setStats] = useState({ count: 0, mileage: 0, duration: 0 })
@@ -35,8 +37,8 @@ export default function FlightDashboard() {
   const fetchStats = async () => {
     setLoading(true)
     try {
-      const startTime = dateRange[0] ? new Date(dateRange[0] + 'T00:00:00').toISOString() : ''
-      const endTime = dateRange[1] ? new Date(dateRange[1] + 'T23:59:59').toISOString() : ''
+      const startTime = dateRange[0] ? new Date(dateRange[0]).toISOString() : ''
+      const endTime = dateRange[1] ? new Date(dateRange[1]).toISOString() : ''
       const [histRes, activeRes] = await Promise.all([
         fetch(`/api/flight-history?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`),
         fetch(`/api/flight-active?type=${activeTab}`)
@@ -111,9 +113,9 @@ export default function FlightDashboard() {
               className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:border-blue-400 transition-colors min-w-[210px]"
             >
               <CalendarRange size={14} className="text-gray-400 shrink-0" />
-              <span>{dateRange[0] || '开始日期'}</span>
+              <span>{toDisplayStr(dateRange[0]) || '开始时间'}</span>
               <span className="text-gray-400">至</span>
-              <span>{dateRange[1] || '结束日期'}</span>
+              <span>{toDisplayStr(dateRange[1]) || '结束时间'}</span>
               <ChevronDown size={13} className="text-gray-400 ml-auto" />
             </button>
 
@@ -133,15 +135,15 @@ export default function FlightDashboard() {
                 <div className="p-4 flex flex-col gap-3">
                   <div className="flex items-center gap-2">
                     <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-400">开始日期</label>
-                      <input type="date" value={dateRange[0]} max={dateRange[1] || undefined}
+                      <label className="text-xs text-gray-400">开始时间</label>
+                      <input type="datetime-local" value={dateRange[0]} max={dateRange[1] || undefined}
                         onChange={e => setDateRange([e.target.value, dateRange[1]])}
                         className="border border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
                     </div>
                     <span className="text-gray-400 mt-4">→</span>
                     <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-400">结束日期</label>
-                      <input type="date" value={dateRange[1]} min={dateRange[0] || undefined}
+                      <label className="text-xs text-gray-400">结束时间</label>
+                      <input type="datetime-local" value={dateRange[1]} min={dateRange[0] || undefined}
                         onChange={e => setDateRange([dateRange[0], e.target.value])}
                         className="border border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
                     </div>
