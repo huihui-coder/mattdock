@@ -197,8 +197,26 @@ function App() {
 
   // 获取初始设备列表
   useEffect(() => {
+    if (IS_PROD && token && !user) {
+      apiFetch('/api/me')
+        .then(async res => {
+          if (!res.ok) throw new Error('会话已过期')
+          return res.json()
+        })
+        .then(data => {
+          localStorage.setItem('auth_user', JSON.stringify(data.user))
+          setUser(data.user)
+        })
+        .catch(() => {
+          localStorage.removeItem('auth_token')
+          localStorage.removeItem('auth_user')
+          setToken('')
+          setUser(null)
+        })
+      return
+    }
     apiFetch('/api/devices')
-      .then(res => { if (res.status === 401) { setToken(''); localStorage.removeItem('auth_token') } return res.json() })
+      .then(res => { if (res.status === 401) { setToken(''); setUser(null); localStorage.removeItem('auth_token'); localStorage.removeItem('auth_user') } return res.json() })
       .then(data => setDevices(data.devices || []))
       .catch(err => console.error('获取设备列表失败:', err))
     
@@ -206,7 +224,7 @@ function App() {
       .then(res => res.json())
       .then(data => setMqttConnected(data.mqtt?.connected || false))
       .catch(err => console.error('获取状态失败:', err))
-  }, [token])
+  }, [token, user])
 
   // 统计数据
   const airportDevices = devices.filter(d => d.deviceType === 'airport' || d.deviceType === 'remote')
@@ -252,6 +270,15 @@ function App() {
   // 未登录（生产模式）显示登录页
   if (IS_PROD && !token) {
     return <Login onLogin={(t, u) => { setToken(t); setUser(u) }} />
+  }
+
+  if (IS_PROD && token && !user) {
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <Header mqttConnected={mqttConnected} wsConnected={wsConnected} />
+        <div className="max-w-7xl mx-auto px-4 py-6 text-sm text-gray-400">正在恢复登录状态...</div>
+      </div>
+    )
   }
 
   return (
