@@ -517,9 +517,11 @@ app.get('/api/flight-records', (req, res) => {
     return matchType && time >= start && time <= end;
   });
   const active = buildActiveFlightSessions(type);
+  // 进行中的架次还没写入 history，二者不会重复；
+  // 之前用 deviceId 去重会把“正在飞行设备”的所有历史完成记录全部抹掉，导致列表条数变少/看似不刷新，已移除
   const records = [
     ...active,
-    ...history.filter(h => !active.find(a => a.deviceId === h.deviceId))
+    ...history
   ].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
   console.log(`[飞行记录接口] /api/flight-records type=${type || 'all'} completed=${history.length} active=${active.length} total=${records.length}: ${active.map(s => `${s.deviceName || s.deviceId}(${s.deviceType})`).join(', ') || '无进行中'}`);
   res.json({ records, history, active });

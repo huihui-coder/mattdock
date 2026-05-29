@@ -129,10 +129,27 @@ class DeviceProcessor {
 
   saveFlightHistory() {
     try {
+      // 先重新加载磁盘最新数据，避免内存中的旧数据覆盖其他进程/重启后写入的新记录
+      const diskData = this.loadFlightHistory();
+      // 合并：内存中的新记录（不在磁盘里的）补充进去
+      const diskIds = new Set(diskData.map(r => r.id));
+      const merged = [...diskData];
+      for (const r of this.flightHistory) {
+        if (!diskIds.has(r.id)) merged.push(r);
+      }
+      // 限制大小并排序（最新的在后面）
+      if (merged.length > 1000) merged.splice(0, merged.length - 1000);
+      this.flightHistory = merged;
+
+      // 原子写入：先写临时文件再重命名
       fs.mkdirSync(path.dirname(FLIGHT_HISTORY_FILE), { recursive: true });
-      fs.writeFileSync(FLIGHT_HISTORY_FILE, JSON.stringify(this.flightHistory, null, 2));
+      const tempFile = FLIGHT_HISTORY_FILE + '.tmp';
+      fs.writeFileSync(tempFile, JSON.stringify(this.flightHistory, null, 2));
+      fs.renameSync(tempFile, FLIGHT_HISTORY_FILE);
+      this.logFlight(`[飞行统计] 文件保存成功: ${this.flightHistory.length} 条记录`);
     } catch (e) {
-      console.error('[飞行统计] 保存历史失败:', e.message);
+      this.logFlight(`[飞行统计] 保存历史失败: ${e.message}`);
+      console.error('[飞行统计] 保存历史异常:', e);
     }
   }
 
