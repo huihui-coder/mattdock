@@ -315,6 +315,12 @@ app.get('/api/status', (req, res) => {
 });
 
 // 获取所有设备状态
+function noCache(res) {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
+  res.set('Pragma', 'no-cache')
+  res.set('Expires', '0')
+}
+
 app.get('/api/devices', (req, res) => {
   const devices = processor.getAllDeviceStates();
   res.json({
@@ -472,6 +478,7 @@ function buildActiveFlightSessions(type) {
 
 // 获取飞行统计历史
 app.get('/api/flight-history', (req, res) => {
+  noCache(res)
   const { type, startTime, endTime } = req.query;
 
   let history = [...processor.flightHistory];
@@ -500,6 +507,7 @@ app.get('/api/flight-history', (req, res) => {
 
 // 获取飞行记录列表（已完成 + 进行中）
 app.get('/api/flight-records', (req, res) => {
+  noCache(res)
   const { type, startTime, endTime } = req.query;
   const start = startTime ? new Date(startTime).getTime() : 0;
   const end = endTime ? new Date(endTime).getTime() : Infinity;
@@ -519,6 +527,7 @@ app.get('/api/flight-records', (req, res) => {
 
 // 获取进行中的飞行会话
 app.get('/api/flight-active', (req, res) => {
+  noCache(res)
   const { type } = req.query;
   const allSessions = Array.from(processor.activeSessions.values());
   console.log(`[飞行记录接口] /api/flight-active type=${type || 'all'} activeSessions=${allSessions.length}`);
