@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import flvjs from 'flv.js'
-import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, Maximize2, Boxes, Siren, Bell, PanelLeft, Keyboard, Filter, Search, Sparkles, Settings, Camera, Loader2, ChevronLeft, ChevronRight, Brain } from 'lucide-react'
+import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, Maximize2, Boxes, Siren, Bell, PanelLeft, Keyboard, Filter, Search, Sparkles, Settings, Camera, Loader2, ChevronLeft, ChevronRight, Brain, Activity } from 'lucide-react'
 
 const STREAM_BASE = 'https://www.hzdkjw.com:1443/live/'
 const CESIUM_TK = '9eb56d3fe1e23a9bf19af660b3a9e37c'
