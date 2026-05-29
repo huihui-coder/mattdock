@@ -7,7 +7,7 @@ const FLIGHT_HISTORY_FILE = path.join(__dirname, '../haizhuDB/flight-history.jso
 // 判定规则：飞行态与非飞行态
 const FLIGHT_MODES = new Set([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19]);
 const NON_FLIGHT_MODES = new Set([0, 1, 2, 13, 14]);
-const FLIGHT_STALE_TIMEOUT_MS = 90 * 1000;
+const FLIGHT_STALE_TIMEOUT_MS = 30 * 1000;
 
 /**
  * 设备数据处理模块
@@ -195,10 +195,15 @@ class DeviceProcessor {
     const now = Date.now();
     for (const [deviceId, session] of this.activeSessions.entries()) {
       const lastUpdate = new Date(session.lastUpdateTime || session.startTime).getTime();
-      if (now - lastUpdate <= FLIGHT_STALE_TIMEOUT_MS) continue;
-      this.logFlight(`[飞行统计] <<< 设备 ${session.deviceName || deviceId} 超过${FLIGHT_STALE_TIMEOUT_MS / 1000}s无飞行数据，自动结束`);
-      this.completeFlightSession(deviceId, session, new Date(lastUpdate), session.lastTotalFlightDistance ?? null, 'stale-timeout');
       const state = this.deviceStates.get(deviceId);
+      const latestMode = state?.raw_mode_code;
+      // 如果最新 mode 已经是非飞行态，立即结束（不等超时）
+      const alreadyLanded = latestMode !== undefined && NON_FLIGHT_MODES.has(latestMode);
+      const isStale = now - lastUpdate > FLIGHT_STALE_TIMEOUT_MS;
+      if (!alreadyLanded && !isStale) continue;
+      const reason = alreadyLanded ? 'non-flight-mode' : 'stale-timeout';
+      this.logFlight(`[飞行统计] <<< 设备 ${session.deviceName || deviceId} 自动结束 reason=${reason} mode=${latestMode}`);
+      this.completeFlightSession(deviceId, session, new Date(alreadyLanded ? now : lastUpdate), session.lastTotalFlightDistance ?? null, reason);
       if (state) {
         state.flightSession = null;
         this.deviceStates.set(deviceId, state);
@@ -323,6 +328,9 @@ class DeviceProcessor {
         this.completeFlightSession(deviceId, session, new Date(), totalFlightDistance, 'mode-non-flight');
         session = null;
       }
+    } else if (session && currentMode === undefined) {
+      // 消息无 mode_code 但有进行中 session，刷新 lastUpdateTime 保证超时计时正确
+      session.lastUpdateTime = new Date().toISOString();
     }
     
     // 把当前的活跃 session 也放进 result 返回给前端实时显示
