@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight, FlaskConical } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 const pad = (n) => String(n).padStart(2, '0')
@@ -33,6 +33,7 @@ export default function FlightDashboard() {
   const [loading, setLoading] = useState(false)
   const pickerRef = useRef(null)
   const fetchStatsRef = useRef(null)
+  const [simulating, setSimulating] = useState(false)
 
   useEffect(() => {
     const handler = (e) => { if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false) }
@@ -72,6 +73,18 @@ export default function FlightDashboard() {
     }
   }
   fetchStatsRef.current = fetchStats
+
+  const simulateFlight = async () => {
+    setSimulating(true)
+    try {
+      await fetch('/api/simulate-flight', { method: 'POST' })
+      await fetchStats(false)
+    } catch (e) {
+      console.error('模拟飞行失败:', e)
+    } finally {
+      setSimulating(false)
+    }
+  }
 
   const exportExcel = () => {
     const tabLabel = { airport: '自动机场', single: '单兵无人机', virtual: '虚拟机场', all: '全部设备' }[activeTab]
@@ -189,6 +202,17 @@ export default function FlightDashboard() {
               </div>
             )}
           </div>
+          {activeTab === 'airport' && (
+            <button
+              onClick={simulateFlight}
+              disabled={simulating}
+              title="模拟一次飞行记录（调试用）"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-600 border border-amber-200 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors disabled:opacity-50"
+            >
+              <FlaskConical size={13} />
+              {simulating ? '生成中...' : '模拟飞行'}
+            </button>
+          )}
           <button onClick={fetchStats} className={`p-2 text-gray-400 hover:text-blue-600 transition-colors ${loading ? 'animate-spin' : ''}`}>
             <RefreshCw size={16} />
           </button>

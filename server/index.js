@@ -536,6 +536,35 @@ app.get('/api/flight-active', (req, res) => {
   res.json(sessions);
 });
 
+// 模拟飞行测试接口（仅供调试，触发后立刻生成一条已完成的虚拟飞行记录）
+app.post('/api/simulate-flight', (req, res) => {
+  const deviceId = 'VIRTUAL_TEST_DOCK';
+  const deviceName = '测试虚拟机场-模拟无人机';
+  const durationSec = Math.floor(60 + Math.random() * 300); // 60~360s
+  const mileage = Math.floor(500 + Math.random() * 4500);   // 500~5000m
+  const endTime = new Date();
+  const startTime = new Date(endTime.getTime() - durationSec * 1000);
+  const record = {
+    id: `${deviceId}_${startTime.getTime()}`,
+    deviceId,
+    deviceName,
+    deviceType: 'drone',
+    startTime: startTime.toISOString(),
+    endTime: endTime.toISOString(),
+    totalMileage: mileage,
+    totalDuration: durationSec,
+    startTotalFlightDistance: 1000,
+    lastTotalFlightDistance: 1000 + mileage,
+    mileage,
+    status: 'completed'
+  };
+  processor.flightHistory.push(record);
+  if (processor.flightHistory.length > 1000) processor.flightHistory.shift();
+  processor.saveFlightHistory();
+  processor.logFlight(`[模拟飞行] 写入虚拟记录 ${deviceName} duration=${durationSec}s mileage=${mileage}m`);
+  res.json({ ok: true, record });
+});
+
 // SPA回退路由
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../client/dist/index.html'));
