@@ -32,6 +32,7 @@ export default function FlightDashboard() {
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(false)
   const pickerRef = useRef(null)
+  const fetchStatsRef = useRef(null)
 
   useEffect(() => {
     const handler = (e) => { if (pickerRef.current && !pickerRef.current.contains(e.target)) setPickerOpen(false) }
@@ -39,11 +40,20 @@ export default function FlightDashboard() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const fetchStats = async () => {
+  const fetchStats = async (resetPage = true) => {
     setLoading(true)
     try {
       const startTime = dateRange[0] ? new Date(dateRange[0]).toISOString() : ''
-      const endTime = dateRange[1] ? new Date(dateRange[1]).toISOString() : ''
+      // 结束时间若是“今天”，按实时当前时间查询，避免冻结在页面加载时刻而漏掉新记录
+      let endTime = ''
+      if (dateRange[1]) {
+        const endDate = new Date(dateRange[1])
+        const now = new Date()
+        const sameDay = endDate.getFullYear() === now.getFullYear()
+          && endDate.getMonth() === now.getMonth()
+          && endDate.getDate() === now.getDate()
+        endTime = (sameDay ? now : endDate).toISOString()
+      }
       const res = await fetch(`/api/flight-records?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`)
       const data = await res.json()
       const history = data.history || []
@@ -54,13 +64,14 @@ export default function FlightDashboard() {
       const totalDuration = history.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
       setStats({ count: history.length, mileage: totalMileage, duration: totalDuration })
       setRecords(all)
-      setPage(1)
+      if (resetPage) setPage(1)
     } catch (e) {
       console.error('获取飞行统计失败:', e)
     } finally {
       setLoading(false)
     }
   }
+  fetchStatsRef.current = fetchStats
 
   const exportExcel = () => {
     const tabLabel = { airport: '自动机场', single: '单兵无人机', virtual: '虚拟机场', all: '全部设备' }[activeTab]
@@ -82,7 +93,7 @@ export default function FlightDashboard() {
 
   useEffect(() => { fetchStats() }, [activeTab, dateRange])
   useEffect(() => {
-    const timer = setInterval(fetchStats, 60000)
+    const timer = setInterval(() => fetchStatsRef.current?.(false), 30000)
     return () => clearInterval(timer)
   }, [])
 
