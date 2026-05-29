@@ -68,13 +68,17 @@ export default function FlightDashboard() {
       const active = data.active || []
       const all = data.records || []
       console.log('[飞行记录] records=', all.length, 'history=', history.length, 'active=', active.length, active)
-      const totalMileage = history.reduce((acc, cur) => acc + (cur.totalMileage || 0), 0)
-      const totalDuration = history.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
-      setStats({ count: history.length, mileage: totalMileage, duration: totalDuration })
+      // 过滤有效记录（里程>0 或 时长>5秒）
+      const validHistory = history.filter(r => (r.totalMileage || 0) > 0 || (r.totalDuration || 0) > 5)
+      const totalMileage = validHistory.reduce((acc, cur) => acc + (cur.totalMileage || 0), 0)
+      const totalDuration = validHistory.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
+      setStats({ count: validHistory.length, mileage: totalMileage, duration: totalDuration })
       setRecords(all)
-      // 计算设备排名（仅 completed 记录，按设备聚合）
+      // 计算设备排名（仅 completed 记录，过滤掉里程=0或时长<=5秒的无意义记录）
       const deviceMap = new Map()
       for (const r of history) {
+        // 过滤无效记录：里程为0或时长<=5秒
+        if ((r.totalMileage || 0) <= 0 && (r.totalDuration || 0) <= 5) continue
         const id = r.deviceId || r.deviceName
         const name = getRecordDeviceName(r)
         if (!deviceMap.has(id)) {
