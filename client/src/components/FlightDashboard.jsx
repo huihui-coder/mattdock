@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight, FlaskConical } from 'lucide-react'
+import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight, FlaskConical, Trophy, ArrowUpDown } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 const pad = (n) => String(n).padStart(2, '0')
@@ -35,6 +35,8 @@ export default function FlightDashboard() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [stats, setStats] = useState({ count: 0, mileage: 0, duration: 0 })
   const [records, setRecords] = useState([])
+  const [ranking, setRanking] = useState([])
+  const [rankSort, setRankSort] = useState({ key: 'count', order: 'desc' })
   const [loading, setLoading] = useState(false)
   const pickerRef = useRef(null)
   const fetchStatsRef = useRef(null)
@@ -70,6 +72,20 @@ export default function FlightDashboard() {
       const totalDuration = history.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
       setStats({ count: history.length, mileage: totalMileage, duration: totalDuration })
       setRecords(all)
+      // 计算设备排名（仅 completed 记录，按设备聚合）
+      const deviceMap = new Map()
+      for (const r of history) {
+        const id = r.deviceId || r.deviceName
+        const name = getRecordDeviceName(r)
+        if (!deviceMap.has(id)) {
+          deviceMap.set(id, { deviceId: id, deviceName: name, count: 0, mileage: 0, duration: 0 })
+        }
+        const d = deviceMap.get(id)
+        d.count += 1
+        d.mileage += (r.totalMileage || 0)
+        d.duration += (r.totalDuration || 0)
+      }
+      setRanking(Array.from(deviceMap.values()))
       if (resetPage) setPage(1)
     } catch (e) {
       console.error('获取飞行统计失败:', e)
@@ -107,6 +123,37 @@ export default function FlightDashboard() {
     XLSX.utils.book_append_sheet(wb, ws, '飞行记录')
     const dateStr = new Date().toLocaleDateString('zh-CN').split('/').join('-')
     XLSX.writeFile(wb, `飞行记录_${tabLabel}_${dateStr}.xlsx`)
+  }
+
+  const exportRankingExcel = () => {
+    const sorted = [...ranking].sort((a, b) => {
+      const v = rankSort.key === 'count' ? b.count - a.count : rankSort.key === 'mileage' ? b.mileage - a.mileage : b.duration - a.duration
+      return rankSort.order === 'asc' ? -v : v
+    })
+    const rows = sorted.map((r, i) => ({
+      '排名': i + 1,
+      '设备名称': r.deviceName || r.deviceId,
+      '飞行架次': r.count,
+      '累计里程': r.mileage > 1000 ? `${(r.mileage/1000).toFixed(2)} km` : `${Math.round(r.mileage)} m`,
+      '累计时长': formatDuration(r.duration),
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '设备排名')
+    const dateStr = new Date().toLocaleDateString('zh-CN').split('/').join('-')
+    const tabLabel = { airport: '自动机场', single: '单兵无人机', virtual: '虚拟机场', all: '全部设备' }[activeTab]
+    XLSX.writeFile(wb, `设备排名_${tabLabel}_${dateStr}.xlsx`)
+  }
+
+  const sortedRanking = () => {
+    const { key, order } = rankSort
+    return [...ranking].sort((a, b) => {
+      let v = 0
+      if (key === 'count') v = b.count - a.count
+      else if (key === 'mileage') v = b.mileage - a.mileage
+      else if (key === 'duration') v = b.duration - a.duration
+      return order === 'asc' ? -v : v
+    })
   }
 
   useEffect(() => { fetchStats() }, [activeTab, dateRange])
@@ -262,6 +309,53 @@ export default function FlightDashboard() {
           </div>
         </div>
       </div>
+
+      {/* 设备排名 */}
+      {ranking.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center gap-2 mb-3">
+            <Trophy size={15} className="text-amber-500" />
+            <span className="text-sm font-medium text-gray-500">设备排名</span>
+            <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{ranking.length} 架</span>
+            <button onClick={exportRankingExcel}
+              className="ml-auto flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors">
+              <Download size={12} />导出排名
+            </button>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 text-gray-600">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">排名</th>
+                  <th className="px-3 py-2 text-left font-medium">设备名称</th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-gray-100" onClick={() => setRankSort(s => ({ key: 'count', order: s.key === 'count' && s.order === 'desc' ? 'asc' : 'desc' }))}>
+                    <span className="flex items-center gap-1">架次 {rankSort.key === 'count' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}</span>
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-gray-100" onClick={() => setRankSort(s => ({ key: 'mileage', order: s.key === 'mileage' && s.order === 'desc' ? 'asc' : 'desc' }))}>
+                    <span className="flex items-center gap-1">里程 {rankSort.key === 'mileage' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}</span>
+                  </th>
+                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-gray-100" onClick={() => setRankSort(s => ({ key: 'duration', order: s.key === 'duration' && s.order === 'desc' ? 'asc' : 'desc' }))}>
+                    <span className="flex items-center gap-1">时长 {rankSort.key === 'duration' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {sortedRanking().map((r, i) => (
+                  <tr key={r.deviceId} className="hover:bg-gray-50">
+                    <td className="px-3 py-2">
+                      <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-xs font-bold ${i < 3 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>{i + 1}</span>
+                    </td>
+                    <td className="px-3 py-2 text-gray-700">{r.deviceName || r.deviceId}</td>
+                    <td className="px-3 py-2 text-gray-700">{r.count} 架次</td>
+                    <td className="px-3 py-2 text-gray-700">{formatMileage(r.mileage)}</td>
+                    <td className="px-3 py-2 text-gray-700">{formatDuration(r.duration)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* 飞行记录列表 */}
       <div>
