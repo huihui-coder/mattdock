@@ -4,7 +4,12 @@ import * as XLSX from 'xlsx'
 
 const pad = (n) => String(n).padStart(2, '0')
 const toDatetimeLocal = (d) => {
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+const toEndOfDay = (d) => {
+  const e = new Date(d);
+  e.setHours(23, 59, 59, 999);
+  return toDatetimeLocal(e);
 }
 const toDisplayStr = (dtStr) => {
   if (!dtStr) return ''
@@ -13,7 +18,7 @@ const toDisplayStr = (dtStr) => {
 const getRecordDeviceName = (r) => (r.deviceName || r.deviceId || '').replace(/-无人机$/, '')
 
 const SHORTCUTS = [
-  { label: '今日', getDates: () => { const s = new Date(); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(new Date())] } },
+  { label: '今日', getDates: () => { const s = new Date(); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toEndOfDay(new Date())] } },
   { label: '最近一周', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 6*86400000); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(e)] } },
   { label: '最近一个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 29*86400000); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(e)] } },
   { label: '最近三个月', getDates: () => { const e = new Date(); const s = new Date(e.getTime() - 89*86400000); s.setHours(0,0,0,0); return [toDatetimeLocal(s), toDatetimeLocal(e)] } },
