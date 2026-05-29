@@ -334,6 +334,67 @@ class DeviceProcessor {
       result.deviceName = `${this.deviceNames[boundDroneSn]}-遥控器`;
     }
 
+    // ========== 机场代理子设备飞行状态机 ==========
+    // 机场OSD数据(deviceType=airport)中嵌套了无人机sub_device字段
+    // canTrackFlight=false导致上方状态机跳过 -> 飞行记录永远不写入
+    // 修复：sub_device含mode_code时，以子设备SN补跑一次状态机
+    if (!canTrackFlight && payload.sub_device && payload.sub_device.device_sn && payload.sub_device.mode_code !== undefined) {
+      const droneSn = payload.sub_device.device_sn;
+      const droneMode = payload.sub_device.mode_code;
+      const rawTfd = payload.sub_device.total_flight_distance;
+      const droneTfd = rawTfd != null ? Number(rawTfd) : null;
+      const droneName = this.normalizeFlightDisplayName(this.getDeviceName(droneSn, deviceId));
+      const dronePrev = this.deviceStates.get(droneSn);
+      const droneLastMode = dronePrev ? dronePrev.raw_mode_code : undefined;
+      let droneSession = this.activeSessions.get(droneSn);
+      if (!droneSession && dronePrev && dronePrev.flightSession) {
+        droneSession = dronePrev.flightSession;
+        this.activeSessions.set(droneSn, droneSession);
+      }
+      const droneIsFlying = FLIGHT_MODES.has(droneMode);
+      const droneWasFlying = droneLastMode !== undefined && FLIGHT_MODES.has(droneLastMode);
+      this.logFlight(`[飞行统计(子设备)] ${droneName} | mode=${droneMode} flying=${droneIsFlying} wasFlying=${droneWasFlying} hasSession=${!!droneSession}`);
+      if (droneIsFlying && (!droneWasFlying || !droneSession)) {
+        this.logFlight(`[飞行统计(子设备)] >>> ${droneName} 开始新架次 mode=${droneMode}`);
+        droneSession = {
+          id: `${droneSn}_${Date.now()}`,
+          deviceId: droneSn,
+          deviceName: droneName,
+          startTime: new Date().toISOString(),
+          startTotalFlightDistance: droneTfd,
+          lastTotalFlightDistance: droneTfd,
+          lastUpdateTime: new Date().toISOString(),
+          mileage: 0,
+          duration: 0,
+          deviceType: 'drone'
+        };
+        this.activeSessions.set(droneSn, droneSession);
+      } else if (droneIsFlying && droneSession) {
+        const now = Date.now();
+        droneSession.duration = Math.floor((now - new Date(droneSession.startTime).getTime()) / 1000);
+        droneSession.lastUpdateTime = new Date(now).toISOString();
+        if (droneTfd !== null) {
+          droneSession.lastTotalFlightDistance = droneTfd;
+          if (droneSession.startTotalFlightDistance !== null && droneSession.startTotalFlightDistance !== undefined) {
+            droneSession.mileage = Math.max(0, droneTfd - droneSession.startTotalFlightDistance);
+          }
+        }
+      } else if (NON_FLIGHT_MODES.has(droneMode) && droneSession) {
+        this.logFlight(`[飞行统计(子设备)] <<< ${droneName} 降落结束 mode=${droneMode}`);
+        this.completeFlightSession(droneSn, droneSession, new Date(), droneTfd, 'sub-mode-non-flight');
+        droneSession = null;
+      }
+      const droneCache = dronePrev || {};
+      this.deviceStates.set(droneSn, Object.assign({}, droneCache, {
+        deviceId: droneSn,
+        deviceName: droneName,
+        deviceType: 'drone',
+        raw_mode_code: droneMode,
+        flightSession: droneSession || null,
+        lastSeen: new Date()
+      }));
+    }
+
     // ========== 风速 (重点指标) ==========
     if (payload.wind_speed !== undefined) {
       // 无人机风速单位是0.1m/s，需要除以10；机场风速单位是1m/s
