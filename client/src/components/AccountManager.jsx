@@ -33,6 +33,12 @@ export default function AccountManager() {
 
   useEffect(() => { loadUsers().catch(err => setError(err.message)) }, [])
 
+  useEffect(() => {
+    const timer = setInterval(() => {
+      loadUsers().catch(() => {})
+    }, 15000)
+    return () => clearInterval(timer)
+  }, [])
   const togglePermission = (list, setList, p) => {
     setList(prev => ({
       ...prev,
@@ -140,6 +146,7 @@ export default function AccountManager() {
             <thead>
               <tr className="border-b border-gray-100">
                 <th className="text-left py-2 text-gray-400">用户名</th>
+                <th className="text-left py-2 text-gray-400">在线状态</th>
                 <th className="text-left py-2 text-gray-400">角色</th>
                 <th className="text-left py-2 text-gray-400">密码</th>
                 <th className="text-left py-2 text-gray-400">权限</th>
@@ -161,6 +168,19 @@ export default function AccountManager() {
                       )}
                       <span className="font-medium text-gray-700">{u.username}</span>
                     </div>
+                  </td>
+                  <td className="py-2.5">
+                    {u.online ? (
+                      <span className="inline-flex items-center gap-1.5 text-green-600" title={u.lastActiveAt ? `最近活跃：${new Date(u.lastActiveAt).toLocaleString('zh-CN')}` : '在线'}>
+                        <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                        在线{u.sessionCount > 1 ? ` (${u.sessionCount})` : ''}
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 text-gray-400">
+                        <span className="w-2 h-2 rounded-full bg-gray-300" />
+                        离线
+                      </span>
+                    )}
                   </td>
                   <td className="py-2.5 text-gray-500">{u.role === 'admin' ? '管理员' : '普通账号'}</td>
                   <td className="py-2.5 font-mono text-gray-600">

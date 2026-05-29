@@ -88,7 +88,11 @@ function setUserPassword(user, password) {
 
 function signToken(user) {
   const token = crypto.randomBytes(24).toString('hex');
-  sessions.set(token, { expireAt: Date.now() + TOKEN_TTL_MS, user: sanitizeUser(user) });
+  sessions.set(token, {
+    expireAt: Date.now() + TOKEN_TTL_MS,
+    user: sanitizeUser(user),
+    lastActiveAt: Date.now()
+  });
   return token;
 }
 
@@ -99,7 +103,26 @@ function getSession(req) {
     if (token) sessions.delete(token);
     return null;
   }
+  session.lastActiveAt = Date.now();
   return { token, ...session };
+}
+
+function getOnlineUserStats() {
+  const now = Date.now();
+  const stats = new Map();
+  for (const [token, session] of sessions.entries()) {
+    if (now > session.expireAt) {
+      sessions.delete(token);
+      continue;
+    }
+    const username = session.user?.username;
+    if (!username) continue;
+    const prev = stats.get(username) || { sessionCount: 0, lastActiveAt: 0 };
+    prev.sessionCount += 1;
+    prev.lastActiveAt = Math.max(prev.lastActiveAt, session.lastActiveAt || 0);
+    stats.set(username, prev);
+  }
+  return stats;
 }
 
 function requireLogin(req, res, next) {
@@ -218,8 +241,17 @@ app.get('/api/me', requireLogin, (req, res) => {
 });
 
 app.get('/api/users', requireAdmin, (req, res) => {
+  const onlineStats = getOnlineUserStats();
   res.json({
-    users: readUsers().map(u => sanitizeUser(u, { includePassword: true })),
+    users: readUsers().map(u => {
+      const stat = onlineStats.get(u.username);
+      return {
+        ...sanitizeUser(u, { includePassword: true }),
+        online: !!stat,
+        sessionCount: stat?.sessionCount || 0,
+        lastActiveAt: stat?.lastActiveAt ? new Date(stat.lastActiveAt).toISOString() : null
+      };
+    }),
     permissions: ALL_PERMISSIONS
   });
 });
