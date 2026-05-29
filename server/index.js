@@ -23,8 +23,25 @@ const AUTH_USER = process.env.AUTH_USER || 'admin';
 const AUTH_PASS = process.env.AUTH_PASS || 'admin123';
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const USER_FILE = path.join(__dirname, '../haizhuDB/users.json');
+const AVATAR_DIR = path.join(__dirname, '../haizhuDB/avatars');
 const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records'];
 const sessions = new Map();
+
+function sanitizeUser(user, { includePassword = false } = {}) {
+  if (!user) return null;
+  const { passwordHash, plainPassword, ...safe } = user;
+  if (includePassword) safe.plainPassword = plainPassword || '';
+  return safe;
+}
+
+function updateSessionUser(token, user) {
+  const session = sessions.get(token);
+  if (session) session.user = sanitizeUser(user);
+}
+
+function countAdmins(users) {
+  return users.filter(u => u.role === 'admin').length;
+}
 
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.createHash('sha256').update(`${salt}:${password}`).digest('hex');
@@ -43,6 +60,7 @@ function readUsers() {
       const users = [{
         username: AUTH_USER,
         passwordHash: hashPassword(AUTH_PASS),
+        plainPassword: AUTH_PASS,
         role: 'admin',
         permissions: ALL_PERMISSIONS,
         createdAt: new Date().toISOString()
@@ -63,10 +81,9 @@ function writeUsers(users) {
   fs.writeFileSync(USER_FILE, JSON.stringify(users, null, 2), 'utf8');
 }
 
-function sanitizeUser(user) {
-  if (!user) return null;
-  const { passwordHash, ...safe } = user;
-  return safe;
+function setUserPassword(user, password) {
+  user.passwordHash = hashPassword(password);
+  user.plainPassword = password;
 }
 
 function signToken(user) {
@@ -195,11 +212,16 @@ app.post('/api/logout', requireLogin, (req, res) => {
 });
 
 app.get('/api/me', requireLogin, (req, res) => {
-  res.json({ user: req.user });
+  const user = readUsers().find(u => u.username === req.user.username);
+  if (user) updateSessionUser(req.token, user);
+  res.json({ user: sanitizeUser(user || req.user) });
 });
 
 app.get('/api/users', requireAdmin, (req, res) => {
-  res.json({ users: readUsers().map(sanitizeUser), permissions: ALL_PERMISSIONS });
+  res.json({
+    users: readUsers().map(u => sanitizeUser(u, { includePassword: true })),
+    permissions: ALL_PERMISSIONS
+  });
 });
 
 app.post('/api/users', requireAdmin, (req, res) => {
@@ -210,16 +232,131 @@ app.post('/api/users', requireAdmin, (req, res) => {
   const safePermissions = permissions.filter(p => ALL_PERMISSIONS.includes(p));
   const user = {
     username,
-    passwordHash: hashPassword(password),
     role: 'user',
     permissions: safePermissions,
     createdAt: new Date().toISOString()
   };
+  setUserPassword(user, password);
   users.push(user);
   writeUsers(users);
+  res.json({ user: sanitizeUser(user, { includePassword: true }) });
+});
+
+app.put('/api/users/:username', requireAdmin, (req, res) => {
+  const target = req.params.username;
+  const { permissions, password } = req.body || {};
+  const users = readUsers();
+  const idx = users.findIndex(u => u.username === target);
+  if (idx === -1) return res.status(404).json({ error: '用户不存在' });
+
+  const user = users[idx];
+  if (user.role !== 'admin' && Array.isArray(permissions)) {
+    user.permissions = permissions.filter(p => ALL_PERMISSIONS.includes(p));
+  }
+  if (password) {
+    if (password.length < 4) return res.status(400).json({ error: '密码至少4位' });
+    setUserPassword(user, password);
+  }
+  user.updatedAt = new Date().toISOString();
+  users[idx] = user;
+  writeUsers(users);
+
+  for (const [token, session] of sessions.entries()) {
+    if (session.user?.username === user.username) {
+      updateSessionUser(token, user);
+    }
+  }
+
+  res.json({ user: sanitizeUser(user, { includePassword: true }) });
+});
+
+app.delete('/api/users/:username', requireAdmin, (req, res) => {
+  const target = req.params.username;
+  if (target === req.user.username) return res.status(400).json({ error: '不能删除当前登录账号' });
+
+  const users = readUsers();
+  const idx = users.findIndex(u => u.username === target);
+  if (idx === -1) return res.status(404).json({ error: '用户不存在' });
+
+  const user = users[idx];
+  if (user.role === 'admin' && countAdmins(users) <= 1) {
+    return res.status(400).json({ error: '不能删除最后一个管理员' });
+  }
+
+  users.splice(idx, 1);
+  writeUsers(users);
+
+  for (const [token, session] of sessions.entries()) {
+    if (session.user?.username === target) sessions.delete(token);
+  }
+
+  try {
+    const avatarFiles = fs.readdirSync(AVATAR_DIR).filter(f => f.startsWith(`${target}.`));
+    avatarFiles.forEach(f => fs.unlinkSync(path.join(AVATAR_DIR, f)));
+  } catch {}
+
+  res.json({ success: true });
+});
+
+app.put('/api/me/password', requireLogin, (req, res) => {
+  const { oldPassword, newPassword } = req.body || {};
+  if (!oldPassword || !newPassword) return res.status(400).json({ error: '请填写原密码和新密码' });
+  if (newPassword.length < 4) return res.status(400).json({ error: '新密码至少4位' });
+
+  const users = readUsers();
+  const idx = users.findIndex(u => u.username === req.user.username);
+  if (idx === -1) return res.status(404).json({ error: '用户不存在' });
+
+  const user = users[idx];
+  if (!verifyPassword(oldPassword, user.passwordHash)) {
+    return res.status(400).json({ error: '原密码错误' });
+  }
+
+  setUserPassword(user, newPassword);
+  user.updatedAt = new Date().toISOString();
+  users[idx] = user;
+  writeUsers(users);
+  updateSessionUser(req.token, user);
   res.json({ user: sanitizeUser(user) });
 });
 
+app.post('/api/me/avatar', requireLogin, (req, res) => {
+  const { avatar } = req.body || {};
+  const match = /^data:image\/(png|jpe?g|gif|webp);base64,(.+)$/i.exec(avatar || '');
+  if (!match) return res.status(400).json({ error: '请上传 PNG/JPG/GIF/WebP 图片' });
+
+  const ext = match[1].toLowerCase() === 'jpeg' ? 'jpg' : match[1].toLowerCase();
+  const buf = Buffer.from(match[2], 'base64');
+  if (buf.length > 2 * 1024 * 1024) return res.status(400).json({ error: '图片不能超过 2MB' });
+
+  fs.mkdirSync(AVATAR_DIR, { recursive: true });
+  try {
+    fs.readdirSync(AVATAR_DIR)
+      .filter(f => f.startsWith(`${req.user.username}.`))
+      .forEach(f => fs.unlinkSync(path.join(AVATAR_DIR, f)));
+  } catch {}
+
+  const filename = `${req.user.username}.${ext}`;
+  fs.writeFileSync(path.join(AVATAR_DIR, filename), buf);
+
+  const users = readUsers();
+  const idx = users.findIndex(u => u.username === req.user.username);
+  if (idx === -1) return res.status(404).json({ error: '用户不存在' });
+
+  const avatarUrl = `/api/avatars/${filename}?v=${Date.now()}`;
+  users[idx].avatar = avatarUrl;
+  users[idx].updatedAt = new Date().toISOString();
+  writeUsers(users);
+  updateSessionUser(req.token, users[idx]);
+  res.json({ user: sanitizeUser(users[idx]) });
+});
+
+app.get('/api/avatars/:filename', (req, res) => {
+  const filename = path.basename(req.params.filename);
+  const filePath = path.join(AVATAR_DIR, filename);
+  if (!fs.existsSync(filePath)) return res.status(404).end();
+  res.sendFile(filePath);
+});
 
 // 初始化服务
 const wsService = new WebSocketService(WS_PORT);

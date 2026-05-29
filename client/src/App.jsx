@@ -9,6 +9,7 @@ import FlightDashboard from './components/FlightDashboard'
 import Login from './components/Login'
 import VirtualCockpit from './components/VirtualCockpit'
 import AccountManager from './components/AccountManager'
+import UserProfile from './components/UserProfile'
 import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users } from 'lucide-react'
 
 const IS_PROD = import.meta.env.PROD
@@ -40,6 +41,7 @@ function App() {
   const [selectedDevice, setSelectedDevice] = useState(null)
   const [statusFilter, setStatusFilter] = useState(null)  // 状态筛选：null/warning/critical
   const [cockpitDevice, setCockpitDevice] = useState(null)
+  const [profileOpen, setProfileOpen] = useState(false)
   const wsRef = useRef(null)
   const alertUpdateTimerRef = useRef(null)
 
@@ -265,6 +267,13 @@ function App() {
     localStorage.removeItem('auth_user')
     setToken('')
     setUser(null)
+    setProfileOpen(false)
+  }
+
+  const handleUserUpdate = (nextUser) => {
+    if (!nextUser) return
+    localStorage.setItem('auth_user', JSON.stringify(nextUser))
+    setUser(nextUser)
   }
 
   // 未登录（生产模式）显示登录页
@@ -288,6 +297,7 @@ function App() {
         wsConnected={wsConnected}
         user={user}
         onLogout={handleLogout}
+        onOpenProfile={() => setProfileOpen(true)}
       />
       
       <main className="max-w-7xl mx-auto px-4 py-6">
@@ -390,6 +400,14 @@ function App() {
           <VirtualCockpit
             device={cockpitDevice}
             onClose={() => setCockpitDevice(null)}
+          />
+        )}
+
+        {profileOpen && user && (
+          <UserProfile
+            user={user}
+            onClose={() => setProfileOpen(false)}
+            onUserUpdate={handleUserUpdate}
           />
         )}
       </main>

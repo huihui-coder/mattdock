@@ -10,3 +10,4 @@ client/dist/
 
 # 保留额度记录
 !haizhuDB/
+haizhuDB/avatars/

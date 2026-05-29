@@ -1,6 +1,6 @@
-import { Wifi, WifiOff, Activity, LogOut, User } from 'lucide-react'
+import { Wifi, WifiOff, Activity, LogOut, User, Settings } from 'lucide-react'
 
-export default function Header({ mqttConnected, wsConnected, user, onLogout }) {
+export default function Header({ mqttConnected, wsConnected, user, onLogout, onOpenProfile }) {
   return (
     <header className="bg-white shadow-sm border-b border-gray-200">
       <div className="max-w-7xl mx-auto px-4 py-4">
@@ -46,10 +46,21 @@ export default function Header({ mqttConnected, wsConnected, user, onLogout }) {
 
             {user && (
               <div className="flex items-center gap-2 text-sm border-l border-gray-200 pl-4">
-                <span className="flex items-center gap-1 text-gray-600">
-                  <User size={15} />
-                  {user.username}
-                </span>
+                <button
+                  onClick={onOpenProfile}
+                  className="flex items-center gap-2 text-gray-600 hover:text-blue-600 transition-colors"
+                  title="个人中心"
+                >
+                  {user.avatar ? (
+                    <img src={user.avatar} alt="" className="w-7 h-7 rounded-full object-cover border border-gray-200" />
+                  ) : (
+                    <span className="w-7 h-7 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center">
+                      <User size={14} className="text-blue-500" />
+                    </span>
+                  )}
+                  <span>{user.username}</span>
+                  <Settings size={14} className="text-gray-400" />
+                </button>
                 <button onClick={onLogout} className="flex items-center gap-1 text-gray-500 hover:text-red-600 transition-colors">
                   <LogOut size={15} />
                   退出
