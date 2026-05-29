@@ -396,6 +396,10 @@ export default function FlightDashboard() {
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-600 border border-green-200">
                           <Loader2 size={10} className="animate-spin" />进行中
                         </span>
+                      ) : (r.totalMileage || 0) <= 0 || (r.totalDuration || 0) <= 5 ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-500 border border-red-200" title="里程为0或时长过短">
+                          <span className="w-2 h-2 rounded-full bg-red-400" />无效
+                        </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
                           <CheckCircle2 size={10} />已完成
