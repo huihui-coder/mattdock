@@ -481,6 +481,7 @@ app.get('/api/flight-history', (req, res) => {
   noCache(res)
   const { type, startTime, endTime } = req.query;
 
+  processor.syncFlightHistoryFromDisk();
   let history = [...processor.flightHistory];
 
   // 1. 类型筛选：airport TAB 只统计机场绑定无人机（drone），不统计机场本体（airport）
@@ -509,6 +510,7 @@ app.get('/api/flight-history', (req, res) => {
 app.get('/api/flight-records', (req, res) => {
   noCache(res)
   const { type, startTime, endTime } = req.query;
+  processor.syncFlightHistoryFromDisk();
   const start = startTime ? new Date(startTime).getTime() : 0;
   const end = endTime ? new Date(endTime).getTime() : Infinity;
   let history = [...processor.flightHistory].filter(h => {

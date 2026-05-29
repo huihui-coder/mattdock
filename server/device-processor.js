@@ -127,19 +127,32 @@ class DeviceProcessor {
     return [];
   }
 
+  // 合并磁盘与内存中的飞行记录（磁盘优先，内存补充未落盘的新记录）
+  mergeFlightHistoryWithDisk() {
+    const diskData = this.loadFlightHistory();
+    const diskIds = new Set(diskData.map(r => r.id));
+    const merged = [...diskData];
+    for (const r of this.flightHistory) {
+      if (!diskIds.has(r.id)) merged.push(r);
+    }
+    if (merged.length > 1000) merged.splice(0, merged.length - 1000);
+    this.flightHistory = merged;
+    return merged;
+  }
+
+  // 查询接口调用：从磁盘同步最新记录到内存，避免进程内存落后于 flight-history.json
+  syncFlightHistoryFromDisk() {
+    const before = this.flightHistory.length;
+    const merged = this.mergeFlightHistoryWithDisk();
+    if (merged.length !== before) {
+      this.logFlight(`[飞行统计] 从磁盘同步: ${before} -> ${merged.length} 条记录`);
+    }
+    return merged;
+  }
+
   saveFlightHistory() {
     try {
-      // 先重新加载磁盘最新数据，避免内存中的旧数据覆盖其他进程/重启后写入的新记录
-      const diskData = this.loadFlightHistory();
-      // 合并：内存中的新记录（不在磁盘里的）补充进去
-      const diskIds = new Set(diskData.map(r => r.id));
-      const merged = [...diskData];
-      for (const r of this.flightHistory) {
-        if (!diskIds.has(r.id)) merged.push(r);
-      }
-      // 限制大小并排序（最新的在后面）
-      if (merged.length > 1000) merged.splice(0, merged.length - 1000);
-      this.flightHistory = merged;
+      this.mergeFlightHistoryWithDisk();
 
       // 原子写入：先写临时文件再重命名
       fs.mkdirSync(path.dirname(FLIGHT_HISTORY_FILE), { recursive: true });
