@@ -196,19 +196,36 @@ class DeviceProcessor {
     return Number.isFinite(num) ? num : null;
   }
 
+  getTotalFlightTime(payload) {
+    const value = payload.total_flight_time ?? payload.data?.total_flight_time;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  calcFlightDuration(session, endTime = new Date()) {
+    const endTft = session.lastTotalFlightTime;
+    const startTft = session.startTotalFlightTime;
+    if (endTft != null && startTft != null && startTft !== undefined) {
+      return Math.max(0, Math.floor(endTft - startTft));
+    }
+    return Math.max(0, Math.floor((endTime.getTime() - new Date(session.startTime).getTime()) / 1000));
+  }
+
   logFlight(message) {
     console.log(`[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${message}`);
   }
 
-  completeFlightSession(deviceId, session, endTime = new Date(), totalFlightDistance = null, reason = 'mode') {
-    const totalMileage = parseFloat(((totalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined)
-      ? Math.max(0, totalFlightDistance - session.startTotalFlightDistance)
+  completeFlightSession(deviceId, session, endTime = new Date(), totalFlightDistance = null, totalFlightTime = null, reason = 'mode') {
+    if (totalFlightDistance !== null) session.lastTotalFlightDistance = totalFlightDistance;
+    if (totalFlightTime !== null) session.lastTotalFlightTime = totalFlightTime;
+    const totalMileage = parseFloat(((session.lastTotalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined)
+      ? Math.max(0, session.lastTotalFlightDistance - session.startTotalFlightDistance)
       : session.mileage).toFixed(2));
     const finalRecord = {
       ...session,
       endTime: endTime.toISOString(),
       totalMileage,
-      totalDuration: Math.floor((endTime.getTime() - new Date(session.startTime).getTime()) / 1000),
+      totalDuration: this.calcFlightDuration(session, endTime),
       status: 'completed'
     };
     if (finalRecord.totalDuration > 5 || finalRecord.totalMileage > 2) {
@@ -227,7 +244,7 @@ class DeviceProcessor {
       const lastUpdate = new Date(session.lastUpdateTime || session.startTime).getTime();
       if (now - lastUpdate <= FLIGHT_STALE_TIMEOUT_MS) continue;
       this.logFlight(`[飞行统计] <<< 设备 ${session.deviceName || deviceId} 超过${FLIGHT_STALE_TIMEOUT_MS / 1000}s无飞行数据，自动结束`);
-      this.completeFlightSession(deviceId, session, new Date(lastUpdate), session.lastTotalFlightDistance ?? null, 'stale-timeout');
+      this.completeFlightSession(deviceId, session, new Date(lastUpdate), session.lastTotalFlightDistance ?? null, session.lastTotalFlightTime ?? null, 'stale-timeout');
       const state = this.deviceStates.get(deviceId);
       if (state) {
         state.flightSession = null;
@@ -298,6 +315,7 @@ class DeviceProcessor {
     // ========== 飞行状态机统计逻辑 ==========
     const currentMode = payload.mode_code;
     const totalFlightDistance = this.getTotalFlightDistance(payload);
+    const totalFlightTime = this.getTotalFlightTime(payload);
     // prevState 存的是 mergedResult，直接取 raw_mode_code
     const lastMode = prevState?.raw_mode_code;
     const prevFlightSession = prevState?.flightSession;
@@ -326,6 +344,8 @@ class DeviceProcessor {
           lastLocation: result.location ? { ...result.location } : null,
           startTotalFlightDistance: totalFlightDistance,
           lastTotalFlightDistance: totalFlightDistance,
+          startTotalFlightTime: totalFlightTime,
+          lastTotalFlightTime: totalFlightTime,
           lastUpdateTime: new Date().toISOString(),
           mileage: 0,
           duration: 0,
@@ -335,22 +355,20 @@ class DeviceProcessor {
       } 
       // 2. 飞行中：累计里程和时间
       else if (isCurrentlyFlying && session) {
-        // 累积时间
-        const now = Date.now();
-        const start = new Date(session.startTime).getTime();
-        session.duration = Math.floor((now - start) / 1000);
-        session.lastUpdateTime = new Date(now).toISOString();
+        session.lastUpdateTime = new Date().toISOString();
         if (totalFlightDistance !== null) session.lastTotalFlightDistance = totalFlightDistance;
+        if (totalFlightTime !== null) session.lastTotalFlightTime = totalFlightTime;
         
         // 累积里程：使用当前累计飞行里程 - 起飞时累计飞行里程
         if (totalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined) {
           session.mileage = Math.max(0, totalFlightDistance - session.startTotalFlightDistance);
         }
+        session.duration = this.calcFlightDuration(session);
       }
       // 3. 架次结束判定：切换回非飞行态
       else if (NON_FLIGHT_MODES.has(currentMode) && session) {
         this.logFlight(`[飞行统计] <<< 设备 ${result.deviceName || deviceId} 降落结束，保存记录，mode=${currentMode}`);
-        this.completeFlightSession(deviceId, session, new Date(), totalFlightDistance, 'mode-non-flight');
+        this.completeFlightSession(deviceId, session, new Date(), totalFlightDistance, totalFlightTime, 'mode-non-flight');
         session = null;
       }
     }
@@ -373,6 +391,8 @@ class DeviceProcessor {
       const droneMode = payload.sub_device.mode_code;
       const rawTfd = payload.sub_device.total_flight_distance;
       const droneTfd = rawTfd != null ? Number(rawTfd) : null;
+      const rawTft = payload.sub_device.total_flight_time;
+      const droneTft = rawTft != null ? Number(rawTft) : null;
       const droneName = this.normalizeFlightDisplayName(this.getDeviceName(droneSn, deviceId));
       const dronePrev = this.deviceStates.get(droneSn);
       const droneLastMode = dronePrev ? dronePrev.raw_mode_code : undefined;
@@ -393,6 +413,8 @@ class DeviceProcessor {
           startTime: new Date().toISOString(),
           startTotalFlightDistance: droneTfd,
           lastTotalFlightDistance: droneTfd,
+          startTotalFlightTime: droneTft,
+          lastTotalFlightTime: droneTft,
           lastUpdateTime: new Date().toISOString(),
           mileage: 0,
           duration: 0,
@@ -400,18 +422,18 @@ class DeviceProcessor {
         };
         this.activeSessions.set(droneSn, droneSession);
       } else if (droneIsFlying && droneSession) {
-        const now = Date.now();
-        droneSession.duration = Math.floor((now - new Date(droneSession.startTime).getTime()) / 1000);
-        droneSession.lastUpdateTime = new Date(now).toISOString();
+        droneSession.lastUpdateTime = new Date().toISOString();
         if (droneTfd !== null) {
           droneSession.lastTotalFlightDistance = droneTfd;
           if (droneSession.startTotalFlightDistance !== null && droneSession.startTotalFlightDistance !== undefined) {
             droneSession.mileage = Math.max(0, droneTfd - droneSession.startTotalFlightDistance);
           }
         }
+        if (droneTft !== null) droneSession.lastTotalFlightTime = droneTft;
+        droneSession.duration = this.calcFlightDuration(droneSession);
       } else if (NON_FLIGHT_MODES.has(droneMode) && droneSession) {
         this.logFlight(`[飞行统计(子设备)] <<< ${droneName} 降落结束 mode=${droneMode}`);
-        this.completeFlightSession(droneSn, droneSession, new Date(), droneTfd, 'sub-mode-non-flight');
+        this.completeFlightSession(droneSn, droneSession, new Date(), droneTfd, droneTft, 'sub-mode-non-flight');
         droneSession = null;
       }
       const droneCache = dronePrev || {};
@@ -642,6 +664,7 @@ class DeviceProcessor {
       // 保存最新 mode_code 供下次状态机读取
       raw_mode_code: currentMode !== undefined ? currentMode : prevState?.raw_mode_code,
       raw_total_flight_distance: totalFlightDistance !== null ? totalFlightDistance : prevState?.raw_total_flight_distance,
+      raw_total_flight_time: totalFlightTime !== null ? totalFlightTime : prevState?.raw_total_flight_time,
       flightSession: session || null
     };
 

@@ -613,11 +613,10 @@ app.post('/api/ai/analyze', async (req, res) => {
 });
 
 function buildActiveFlightSessions(type) {
-  const now = Date.now();
   let sessions = Array.from(processor.activeSessions.values()).map(s => ({
     ...s,
     deviceName: processor.normalizeFlightDisplayName(s.deviceName || s.deviceId),
-    totalDuration: Math.floor((now - new Date(s.startTime).getTime()) / 1000),
+    totalDuration: processor.calcFlightDuration(s),
     totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
     status: 'active'
   }));
