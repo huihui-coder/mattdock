@@ -21,6 +21,7 @@ export default {
       },
       fontFamily: {
         sans: [
+          '"DM Sans"',
           '-apple-system',
           'BlinkMacSystemFont',
           'Segoe UI',

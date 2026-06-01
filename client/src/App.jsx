@@ -300,76 +300,102 @@ function App() {
         onOpenProfile={() => setProfileOpen(true)}
       />
       
-      <main className="max-w-7xl mx-auto px-4 py-6">
-        {/* Tab 切换 */}
-        <div className="ui-nav-bar mb-5">
+      <main className="max-w-7xl mx-auto px-4 py-5">
+        <nav className="ui-nav-bar-full mb-5" aria-label="主导航">
           {visibleTabs.map(tab => {
             const Icon = tab.icon
             return (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`ui-tab ${activeTab === tab.key ? 'ui-tab-active' : 'ui-tab-inactive'}`}
+                aria-current={activeTab === tab.key ? 'page' : undefined}
+                className={`ui-tab flex-1 sm:flex-none justify-center ${activeTab === tab.key ? 'ui-tab-active' : 'ui-tab-inactive'}`}
               >
-                <Icon size={15} />
+                <Icon size={15} aria-hidden />
                 {tab.label}
               </button>
             )
           })}
-        </div>
+        </nav>
         {/* 连接状态提示 */}
         {!mqttConnected && (
-          <div className="mb-4 p-4 ui-card flex items-center gap-2 border-amber-300/60 bg-amber-50/50">
-            <WifiOff className="text-amber-700 shrink-0" size={18} />
-            <span className="text-sm text-amber-900">MQTT 服务未连接，正在尝试重连...</span>
+          <div className="mb-4 p-3.5 ui-card flex items-center gap-3 border-amber-200 bg-amber-50" role="alert">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-100">
+              <WifiOff className="text-amber-700" size={16} />
+            </span>
+            <div>
+              <p className="text-sm font-medium text-amber-900">MQTT 未连接</p>
+              <p className="text-xs text-amber-800/80 mt-0.5">正在尝试重连，设备数据可能延迟</p>
+            </div>
           </div>
         )}
 
         {/* 监控内容（仅 monitor tab 显示） */}
-        {activeTab === 'monitor' && hasPermission('monitor') && <>
-        {/* 状态概览 */}
+        {activeTab === 'monitor' && hasPermission('monitor') && (
+        <section aria-labelledby="monitor-heading">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <h2 id="monitor-heading" className="text-xl font-semibold text-slate-800 tracking-tight">实时监控</h2>
+              <p className="text-sm text-slate-500 mt-1 tabular-nums">
+                {stats.total} 台设备 · {stats.normal} 正常
+                {stats.warning > 0 && <span className="text-amber-600"> · {stats.warning} 警告</span>}
+                {stats.critical > 0 && <span className="text-red-600"> · {stats.critical} 严重</span>}
+                <span className="text-slate-400"> · {alerts.length} 条近期告警</span>
+              </p>
+            </div>
+            {statusFilter && (
+              <button
+                type="button"
+                onClick={() => setStatusFilter(null)}
+                className="ui-btn-secondary shrink-0"
+              >
+                清除状态筛选
+              </button>
+            )}
+          </div>
+
         <StatusPanel 
           stats={stats} 
           onFilter={setStatusFilter}
           activeFilter={statusFilter}
         />
 
-        {/* 主内容区 */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-          {/* 机场设备列表 */}
-          <div className="lg:col-span-1">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5 lg:items-stretch">
+          <div className="lg:col-span-1 flex flex-col min-h-0">
             <DeviceList 
               devices={filteredAirportDevices} 
               healthAlerts={healthAlerts}
               onSelect={setSelectedDevice}
               selectedId={selectedDevice?.deviceId}
               title="机场设备"
+              accent="blue"
               filterActive={statusFilter !== null}
               onClearFilter={() => setStatusFilter(null)}
               onCockpit={setCockpitDevice}
+              className="flex-1"
             />
           </div>
 
-          {/* 无人机设备列表 */}
-          <div className="lg:col-span-1">
+          <div className="lg:col-span-1 flex flex-col min-h-0">
             <DeviceList 
               devices={filteredDroneDevices} 
               healthAlerts={healthAlerts}
               onSelect={setSelectedDevice}
               selectedId={selectedDevice?.deviceId}
               title="无人机设备"
+              accent="indigo"
               filterActive={statusFilter !== null}
               onClearFilter={() => setStatusFilter(null)}
+              className="flex-1"
             />
           </div>
           
-          {/* 告警列表 */}
-          <div className="lg:col-span-1">
-            <AlertList alerts={alerts} />
+          <div className="lg:col-span-1 flex flex-col min-h-0">
+            <AlertList alerts={alerts} className="flex-1" />
           </div>
         </div>
 
-        </>}
+        </section>)}
 
         {/* 告警配置页 */}
         {activeTab === 'alert-config' && hasPermission('alert-config') && (
