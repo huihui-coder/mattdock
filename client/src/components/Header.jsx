@@ -1,85 +1,152 @@
-import { Wifi, WifiOff, Activity, LogOut, User, Settings } from 'lucide-react'
+import { Wifi, WifiOff, Activity, LogOut, User } from 'lucide-react'
+
+function StatusChip({ label, ok, okText, failText, okIcon: OkIcon, failIcon: FailIcon }) {
+  return (
+    <div
+      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-colors duration-200 ${
+        ok
+          ? 'bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80'
+          : 'bg-red-50 text-red-700 ring-1 ring-red-200/80'
+      }`}
+      role="status"
+      aria-live="polite"
+      aria-label={`${label}：${ok ? okText : failText}`}
+    >
+      <span
+        className={`relative flex h-1.5 w-1.5 shrink-0 ${ok ? 'text-emerald-500' : 'text-red-500'}`}
+        aria-hidden
+      >
+        <span className={`absolute inset-0 rounded-full bg-current ${ok ? 'motion-safe:animate-ping opacity-40' : ''}`} />
+        <span className="relative rounded-full bg-current h-full w-full" />
+      </span>
+      <span className="hidden sm:inline text-slate-500 font-normal">{label}</span>
+      {ok ? (
+        <OkIcon size={13} className="shrink-0 sm:hidden" aria-hidden />
+      ) : (
+        <FailIcon size={13} className="shrink-0 sm:hidden" aria-hidden />
+      )}
+      <span className="whitespace-nowrap">{ok ? okText : failText}</span>
+    </div>
+  )
+}
 
 export default function Header({ mqttConnected, wsConnected, user, onLogout, onOpenProfile }) {
+  const allOnline = mqttConnected && wsConnected
+
   return (
-    <header className="bg-white sticky top-0 z-40 shadow-sm">
-      <div className="max-w-7xl mx-auto px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0">
-              <img src="/logos/platform-logo.png" alt="平台Logo" className="h-7 w-7 object-contain" />
+    <header className="sticky top-0 z-40 border-b border-slate-200/90 bg-white/85 backdrop-blur-md supports-[backdrop-filter]:bg-white/75 shadow-[0_1px_0_0_rgba(15,23,42,0.04)]">
+      <div className="max-w-7xl mx-auto px-4">
+        <div className="flex h-[3.25rem] items-center justify-between gap-3 sm:gap-4">
+          {/* 品牌区 */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="relative h-9 w-9 shrink-0 rounded-lg bg-blue-600 p-px shadow-sm shadow-blue-600/25">
+              <div className="flex h-full w-full items-center justify-center rounded-[7px] bg-white">
+                <img
+                  src="/logos/platform-logo.png"
+                  alt=""
+                  className="h-6 w-6 object-contain"
+                  width={24}
+                  height={24}
+                />
+              </div>
             </div>
-            <div>
-              <h1 className="text-lg font-semibold text-slate-800 tracking-tight">机场监测系统</h1>
-              <p className="text-xs text-slate-500">基于 MQTT 的实时设备监控</p>
+            <div className="min-w-0 leading-tight">
+              <h1 className="text-[15px] sm:text-base font-semibold text-slate-900 tracking-tight truncate">
+                机场监测系统
+              </h1>
+              <p className="text-[11px] text-slate-500 truncate hidden sm:block">
+                MQTT 实时设备监控
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-5">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-400">MQTT</span>
-              {mqttConnected ? (
-                <span className="flex items-center gap-1.5 text-emerald-700 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden />
-                  <Wifi size={14} className="text-emerald-600" aria-hidden />
-                  已连接
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 text-red-600">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500" aria-hidden />
-                  <WifiOff size={14} aria-hidden />
-                  未连接
-                </span>
-              )}
+          {/* 状态 + 用户 */}
+          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <div
+              className={`hidden md:flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors duration-200 ${
+                allOnline
+                  ? 'border-emerald-200/70 bg-emerald-50/40'
+                  : 'border-slate-200/80 bg-slate-50/60'
+              }`}
+              aria-label="连接状态"
+            >
+              <StatusChip
+                label="MQTT"
+                ok={mqttConnected}
+                okText="已连接"
+                failText="未连接"
+                okIcon={Wifi}
+                failIcon={WifiOff}
+              />
+              <span className="h-3 w-px bg-slate-200/90" aria-hidden />
+              <StatusChip
+                label="实时"
+                ok={wsConnected}
+                okText="在线"
+                failText="离线"
+                okIcon={Activity}
+                failIcon={Activity}
+              />
             </div>
 
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-slate-400">实时</span>
-              {wsConnected ? (
-                <span className="flex items-center gap-1.5 text-emerald-700 font-medium">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden />
-                  <Activity size={14} className="text-emerald-600" aria-hidden />
-                  在线
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 text-slate-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" aria-hidden />
-                  <Activity size={14} aria-hidden />
-                  离线
-                </span>
-              )}
+            {/* 窄屏：仅显示两枚状态胶囊 */}
+            <div className="flex md:hidden items-center gap-1.5">
+              <StatusChip
+                label="MQTT"
+                ok={mqttConnected}
+                okText="已连接"
+                failText="未连接"
+                okIcon={Wifi}
+                failIcon={WifiOff}
+              />
+              <StatusChip
+                label="实时"
+                ok={wsConnected}
+                okText="在线"
+                failText="离线"
+                okIcon={Activity}
+                failIcon={Activity}
+              />
             </div>
 
             {user && (
-              <div className="flex items-center gap-3 text-sm border-l border-slate-200 pl-5">
+              <div className="flex items-center gap-1 sm:gap-1.5 pl-2 sm:pl-3 border-l border-slate-200/90">
                 <button
+                  type="button"
                   onClick={onOpenProfile}
-                  className="flex items-center gap-2 text-slate-700 hover:text-blue-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 rounded-lg"
-                  title="个人中心"
+                  className="group flex items-center gap-2 rounded-lg py-1 pl-1 pr-2 sm:pr-2.5 text-slate-700 hover:bg-slate-100 active:scale-[0.98] transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
+                  title="打开个人中心"
+                  aria-label={`个人中心，当前用户 ${user.username}`}
                 >
                   {user.avatar ? (
-                    <img src={user.avatar} alt="" className="w-7 h-7 rounded-full object-cover border border-slate-200" />
+                    <img
+                      src={user.avatar}
+                      alt=""
+                      className="h-8 w-8 rounded-full object-cover ring-2 ring-white shadow-sm"
+                    />
                   ) : (
-                    <span className="w-7 h-7 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center">
-                      <User size={14} className="text-blue-500" />
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-50 text-blue-600 ring-1 ring-blue-100">
+                      <User size={15} aria-hidden />
                     </span>
                   )}
-                  <span className="text-sm font-medium">{user.username}</span>
-                  <Settings size={14} className="text-slate-400" />
+                  <span className="hidden sm:inline text-sm font-medium text-slate-800 group-hover:text-blue-700 transition-colors max-w-[88px] truncate">
+                    {user.username}
+                  </span>
                 </button>
                 <button
+                  type="button"
                   onClick={onLogout}
-                  className="flex items-center gap-1 text-slate-500 hover:text-red-600 transition-colors text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 rounded"
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-slate-500 hover:text-red-600 hover:bg-red-50 active:scale-[0.98] transition-all duration-200 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/30"
+                  aria-label="退出登录"
                 >
-                  <LogOut size={14} />
-                  退出
+                  <LogOut size={15} aria-hidden />
+                  <span className="hidden sm:inline">退出</span>
                 </button>
               </div>
             )}
           </div>
         </div>
       </div>
-      <div className="h-0.5 bg-gradient-to-r from-blue-400 via-blue-600 to-blue-400" aria-hidden />
     </header>
   )
 }
