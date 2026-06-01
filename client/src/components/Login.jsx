@@ -40,7 +40,7 @@ export default function Login({ onLogin }) {
 
       <div className="bg-white/75 backdrop-blur-xl border border-white/50 shadow-[0_8px_32px_0_rgba(31,38,135,0.08)] rounded-[24px] p-9 w-full max-w-[390px] relative z-10 transition-all duration-300 hover:shadow-[0_8px_40px_0_rgba(31,38,135,0.12)]">
         <div className="flex flex-col items-start mb-8">
-          <LogoMark variant="login" className="w-11 h-9 text-[#1c2d5a] mb-5" title="无人机管理平台" />
+          <LogoMark variant="login" className="mb-5" title="无人机管理平台" />
           <h1 className="text-2xl font-semibold text-slate-800 tracking-wide">无人机管理平台</h1>
           <p className="text-[11px] text-slate-400 font-medium tracking-[0.2em] uppercase mt-2">安全 · 稳定 · 高效</p>
         </div>

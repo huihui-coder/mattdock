@@ -748,7 +748,7 @@ export default function VirtualCockpit({ device, onClose }) {
       {/* 顶部座舱栏 */}
       <div className="h-8 bg-[#232323] border-b border-[#3a3a3a] text-xs text-gray-300 select-none grid grid-cols-3 items-center">
         <div className="h-full flex items-center">
-          <LogoMark variant="icon" className="h-5 w-5 mx-2" />
+          <LogoMark variant="icon" className="mx-2" />
           <div className="h-4 w-px bg-white/15" />
           <button className="w-9 h-full flex items-center justify-center hover:bg-white/10 text-white" title="设备">
             <Boxes size={16} />
@@ -1218,7 +1218,7 @@ export default function VirtualCockpit({ device, onClose }) {
       <div className="px-4 py-1.5 bg-gray-900 border-t border-gray-700 flex items-center justify-between text-xs text-gray-500">
         <span>SN: {deviceId}</span>
         <span className="flex items-center gap-1.5">
-          <LogoMark variant="icon" className="h-4 w-4" />
+          <LogoMark variant="icon" className="!h-4 !w-6" />
           虚拟座舱 · {device.deviceName || deviceId}
         </span>
         <span className={`flex items-center gap-1 ${
