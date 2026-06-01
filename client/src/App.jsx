@@ -283,15 +283,15 @@ function App() {
 
   if (IS_PROD && token && !user) {
     return (
-      <div className="min-h-screen bg-gray-100">
+      <div className="ui-page">
         <Header mqttConnected={mqttConnected} wsConnected={wsConnected} />
-        <div className="max-w-7xl mx-auto px-4 py-6 text-sm text-gray-400">正在恢复登录状态...</div>
+        <div className="max-w-7xl mx-auto px-4 py-6 text-sm text-dji-muted">正在恢复登录状态...</div>
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-gray-100">
+    <div className="ui-page">
       <Header 
         mqttConnected={mqttConnected} 
         wsConnected={wsConnected}
@@ -302,16 +302,14 @@ function App() {
       
       <main className="max-w-7xl mx-auto px-4 py-6">
         {/* Tab 切换 */}
-        <div className="flex gap-1 mb-4 bg-white rounded-lg p-1 shadow-sm border border-gray-200 w-fit">
+        <div className="ui-tab-group mb-5">
           {visibleTabs.map(tab => {
             const Icon = tab.icon
             return (
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key)}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-                  activeTab === tab.key ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-100'
-                }`}
+                className={`ui-tab ${activeTab === tab.key ? 'ui-tab-active' : 'ui-tab-inactive'}`}
               >
                 <Icon size={15} />
                 {tab.label}
@@ -321,9 +319,9 @@ function App() {
         </div>
         {/* 连接状态提示 */}
         {!mqttConnected && (
-          <div className="mb-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg flex items-center gap-2">
-            <WifiOff className="text-yellow-600" size={20} />
-            <span className="text-yellow-800">MQTT服务未连接，正在尝试重连...</span>
+          <div className="mb-4 p-4 ui-card flex items-center gap-2 border-amber-300/60 bg-amber-50/50">
+            <WifiOff className="text-amber-700 shrink-0" size={18} />
+            <span className="text-sm text-amber-900">MQTT 服务未连接，正在尝试重连...</span>
           </div>
         )}
 

@@ -27,9 +27,9 @@ const SHORTCUTS = [
 const PAGE_SIZE = 20
 
 const STAT_ITEMS = [
-  { key: 'count', label: '飞行架次', suffix: '架次', icon: Plane, accent: 'text-blue-600', bg: 'bg-blue-50' },
-  { key: 'mileage', label: '飞行里程', icon: Navigation, accent: 'text-blue-600', bg: 'bg-blue-50', isMileage: true },
-  { key: 'duration', label: '累计时长', icon: Clock, accent: 'text-blue-600', bg: 'bg-blue-50', isDuration: true },
+  { key: 'count', label: '飞行架次', suffix: '架次', icon: Plane },
+  { key: 'mileage', label: '飞行里程', icon: Navigation, isMileage: true },
+  { key: 'duration', label: '累计时长', icon: Clock, isDuration: true },
 ]
 
 function StatCard({ item, stats, formatDuration }) {
@@ -42,32 +42,28 @@ function StatCard({ item, stats, formatDuration }) {
   }
   if (item.isDuration) {
     return (
-      <div className="bg-white rounded-lg p-4 border border-gray-200">
+      <div className="ui-card p-4">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-gray-600">{item.label}</p>
-            <p className={`text-2xl font-bold ${item.accent} font-mono tracking-tight mt-0.5`}>{formatDuration(stats.duration)}</p>
+            <p className="text-sm text-dji-muted">{item.label}</p>
+            <p className="text-2xl font-bold text-dji-black font-mono tracking-tight mt-0.5 tabular-nums">{formatDuration(stats.duration)}</p>
           </div>
-          <div className={`${item.bg} p-2.5 rounded-lg`}>
-            <Icon className={item.accent} size={28} strokeWidth={1.75} />
-          </div>
+          <Icon className="text-dji-subtle opacity-30" size={28} strokeWidth={1.5} />
         </div>
       </div>
     )
   }
   return (
-    <div className="bg-white rounded-lg p-4 border border-gray-200">
+    <div className="ui-card p-4">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-gray-600">{item.label}</p>
-          <p className={`text-2xl font-bold ${item.accent} mt-0.5`}>
+          <p className="text-sm text-dji-muted">{item.label}</p>
+          <p className="text-2xl font-bold text-dji-black mt-0.5 tabular-nums">
             {value}
-            {suffix && <span className="text-sm font-medium text-gray-500 ml-1">{suffix}</span>}
+            {suffix && <span className="text-sm font-medium text-dji-subtle ml-1">{suffix}</span>}
           </p>
         </div>
-        <div className={`${item.bg} p-2.5 rounded-lg`}>
-          <Icon className={`${item.accent} opacity-80`} size={28} strokeWidth={1.75} />
-        </div>
+        <Icon className="text-dji-subtle opacity-30" size={28} strokeWidth={1.5} />
       </div>
     </div>
   )
@@ -76,22 +72,22 @@ function StatCard({ item, stats, formatDuration }) {
 function StatusBadge({ record }) {
   if (record.status === 'active') {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80">
-        <Loader2 size={10} className="animate-spin" aria-hidden />
+      <span className="ui-badge border border-dji-border text-dji-ink bg-dji-page">
+        <Loader2 size={10} className="animate-spin text-emerald-600" aria-hidden />
         进行中
       </span>
     )
   }
   if ((record.totalMileage || 0) <= 0 || (record.totalDuration || 0) <= 5) {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-rose-50 text-rose-700 ring-1 ring-rose-200/80" title="里程为 0 或时长不超过 5 秒">
-        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" aria-hidden />
+      <span className="ui-badge border border-dji-border text-dji-muted" title="里程为 0 或时长不超过 5 秒">
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500" aria-hidden />
         无效
       </span>
     )
   }
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 ring-1 ring-gray-200/80">
+    <span className="ui-badge border border-dji-border text-dji-ink">
       <CheckCircle2 size={10} aria-hidden />
       已完成
     </span>
@@ -255,23 +251,21 @@ export default function FlightDashboard() {
     setRankSort(s => ({ key, order: s.key === key && s.order === 'desc' ? 'asc' : 'desc' }))
   }
 
-  const btnSecondary = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:opacity-40 disabled:cursor-not-allowed'
+  const btnSecondary = 'ui-btn-secondary'
 
   return (
     <div className="space-y-5">
       {/* 筛选工具栏 */}
-      <div className="bg-white rounded-xl border border-gray-200 p-4">
+      <div className="ui-card p-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex bg-gray-100 p-1 rounded-lg w-fit" role="tablist" aria-label="设备类型">
+          <div className="ui-tab-group" role="tablist" aria-label="设备类型">
             {tabs.map(tab => (
               <button
                 key={tab.id}
                 role="tab"
                 aria-selected={activeTab === tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
-                  activeTab === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                }`}
+                className={`ui-tab ${activeTab === tab.id ? 'ui-tab-active' : 'ui-tab-inactive'}`}
               >
                 {tab.label}
               </button>
@@ -285,48 +279,48 @@ export default function FlightDashboard() {
                 onClick={() => setPickerOpen(v => !v)}
                 aria-expanded={pickerOpen}
                 aria-haspopup="dialog"
-                className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 hover:border-gray-300 transition-colors min-w-[220px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                className="flex items-center gap-2 ui-input !w-auto min-w-[220px] py-2 hover:border-dji-ink/30"
               >
-                <CalendarRange size={15} className="text-gray-500 shrink-0" aria-hidden />
+                <CalendarRange size={15} className="text-dji-subtle shrink-0" aria-hidden />
                 <span className="truncate">{toDisplayStr(dateRange[0]) || '开始时间'}</span>
-                <span className="text-gray-400 shrink-0">至</span>
+                <span className="text-dji-subtle shrink-0">至</span>
                 <span className="truncate">{toDisplayStr(dateRange[1]) || '结束时间'}</span>
-                <ChevronDown size={14} className={`text-gray-400 ml-auto shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`} aria-hidden />
+                <ChevronDown size={14} className={`text-dji-subtle ml-auto shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`} aria-hidden />
               </button>
 
               {pickerOpen && (
-                <div className="absolute right-0 top-full mt-1.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg flex overflow-hidden" style={{ minWidth: 340 }}>
-                  <div className="border-r border-gray-100 py-2 px-1 flex flex-col gap-0.5 shrink-0" style={{ width: 96 }}>
+                <div className="absolute right-0 top-full mt-1.5 z-50 ui-card shadow-dji-sm flex overflow-hidden" style={{ minWidth: 340 }}>
+                  <div className="border-r border-dji-border py-2 px-1 flex flex-col gap-0.5 shrink-0" style={{ width: 96 }}>
                     {SHORTCUTS.map(s => (
                       <button
                         key={s.label}
                         type="button"
                         onClick={() => { setDateRange(s.getDates()); setPickerOpen(false) }}
-                        className="text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                        className="text-left px-3 py-1.5 text-xs text-dji-ink hover:bg-dji-page rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20"
                       >{s.label}</button>
                     ))}
                   </div>
                   <div className="p-4 flex flex-col gap-3 min-w-0">
                     <div className="flex items-end gap-2">
                       <div className="flex flex-col gap-1 flex-1 min-w-0">
-                        <label className="text-xs font-medium text-gray-600">开始时间</label>
+                        <label className="text-xs font-medium text-dji-muted">开始时间</label>
                         <input type="datetime-local" value={dateRange[0]} max={dateRange[1] || undefined}
                           onChange={e => setDateRange([e.target.value, dateRange[1]])}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                          className="ui-input py-1.5" />
                       </div>
-                      <span className="text-gray-400 pb-2 shrink-0" aria-hidden>→</span>
+                      <span className="text-dji-subtle pb-2 shrink-0" aria-hidden>→</span>
                       <div className="flex flex-col gap-1 flex-1 min-w-0">
-                        <label className="text-xs font-medium text-gray-600">结束时间</label>
+                        <label className="text-xs font-medium text-dji-muted">结束时间</label>
                         <input type="datetime-local" value={dateRange[1]} min={dateRange[0] || undefined}
                           onChange={e => setDateRange([dateRange[0], e.target.value])}
-                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                          className="ui-input py-1.5" />
                       </div>
                     </div>
                     <div className="flex justify-end gap-2 pt-1">
                       <button type="button" onClick={() => { setDateRange(['', '']); setPickerOpen(false) }}
-                        className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50">清空</button>
+                        className="ui-btn-secondary !text-xs">清空</button>
                       <button type="button" onClick={() => setPickerOpen(false)}
-                        className="px-3 py-1.5 text-xs text-white bg-blue-600 hover:bg-blue-700 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40">确定</button>
+                        className="ui-btn-primary !text-xs !py-1.5">确定</button>
                     </div>
                   </div>
                 </div>
@@ -339,7 +333,7 @@ export default function FlightDashboard() {
                 onClick={simulateFlight}
                 disabled={simulating}
                 title="模拟一次飞行记录（调试用）"
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-amber-800 border border-amber-200 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/30"
+                className="ui-btn-ghost !text-xs !py-2 disabled:opacity-50"
               >
                 <FlaskConical size={13} aria-hidden />
                 {simulating ? '生成中...' : '模拟飞行'}
@@ -351,7 +345,7 @@ export default function FlightDashboard() {
               onClick={() => fetchStats()}
               disabled={loading}
               aria-label="刷新数据"
-              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+              className="p-2 text-dji-subtle hover:text-dji-black hover:bg-dji-page rounded-full transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20"
             >
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
@@ -368,48 +362,48 @@ export default function FlightDashboard() {
 
       {/* 设备排名 */}
       {ranking.length > 0 && (
-        <section className="bg-white rounded-xl border border-gray-200 overflow-hidden" aria-labelledby="ranking-heading">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
-            <Trophy size={16} className="text-amber-600" aria-hidden />
-            <h2 id="ranking-heading" className="text-sm font-semibold text-gray-800">设备排名</h2>
-            <span className="text-xs text-gray-500">{ranking.length} 架设备</span>
+        <section className="ui-card overflow-hidden" aria-labelledby="ranking-heading">
+          <div className="ui-card-header flex items-center gap-2">
+            <Trophy size={16} className="text-dji-black" aria-hidden />
+            <h2 id="ranking-heading" className="ui-section-title text-sm">设备排名</h2>
+            <span className="text-xs text-dji-muted">{ranking.length} 架设备</span>
             <button type="button" onClick={exportRankingExcel} className={`${btnSecondary} ml-auto`}>
               <Download size={12} aria-hidden />导出排名
             </button>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-gray-600">
+              <thead className="bg-dji-page text-dji-muted">
                 <tr>
                   <th className="px-4 py-2.5 text-left font-medium w-16">排名</th>
                   <th className="px-4 py-2.5 text-left font-medium">设备名称</th>
                   <th className="px-4 py-2.5 text-left font-medium">
-                    <button type="button" onClick={() => toggleRankSort('count')} className="inline-flex items-center gap-1 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 rounded px-1 -mx-1">
+                    <button type="button" onClick={() => toggleRankSort('count')} className="inline-flex items-center gap-1 hover:text-dji-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20 rounded px-1 -mx-1">
                       架次 {rankSort.key === 'count' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}
                     </button>
                   </th>
                   <th className="px-4 py-2.5 text-left font-medium">
-                    <button type="button" onClick={() => toggleRankSort('mileage')} className="inline-flex items-center gap-1 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 rounded px-1 -mx-1">
+                    <button type="button" onClick={() => toggleRankSort('mileage')} className="inline-flex items-center gap-1 hover:text-dji-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20 rounded px-1 -mx-1">
                       里程 {rankSort.key === 'mileage' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}
                     </button>
                   </th>
                   <th className="px-4 py-2.5 text-left font-medium">
-                    <button type="button" onClick={() => toggleRankSort('duration')} className="inline-flex items-center gap-1 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 rounded px-1 -mx-1">
+                    <button type="button" onClick={() => toggleRankSort('duration')} className="inline-flex items-center gap-1 hover:text-dji-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20 rounded px-1 -mx-1">
                       时长 {rankSort.key === 'duration' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}
                     </button>
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-dji-border">
                 {sortedRanking().map((r, i) => (
-                  <tr key={r.deviceId} className="hover:bg-gray-50/80 transition-colors">
+                  <tr key={r.deviceId} className="hover:bg-dji-page transition-colors">
                     <td className="px-4 py-2.5">
-                      <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${i < 3 ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'}`}>{i + 1}</span>
+                      <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${i < 3 ? 'bg-dji-black text-white' : 'bg-dji-page text-dji-muted border border-dji-border'}`}>{i + 1}</span>
                     </td>
-                    <td className="px-4 py-2.5 text-gray-800 font-medium">{r.deviceName || r.deviceId}</td>
-                    <td className="px-4 py-2.5 text-gray-700 tabular-nums">{r.count}</td>
-                    <td className="px-4 py-2.5 text-gray-700 tabular-nums">{formatMileage(r.mileage)}</td>
-                    <td className="px-4 py-2.5 text-gray-700 font-mono tabular-nums">{formatDuration(r.duration)}</td>
+                    <td className="px-4 py-2.5 text-dji-black font-medium">{r.deviceName || r.deviceId}</td>
+                    <td className="px-4 py-2.5 text-dji-ink tabular-nums">{r.count}</td>
+                    <td className="px-4 py-2.5 text-dji-ink tabular-nums">{formatMileage(r.mileage)}</td>
+                    <td className="px-4 py-2.5 text-dji-ink font-mono tabular-nums">{formatDuration(r.duration)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -419,12 +413,12 @@ export default function FlightDashboard() {
       )}
 
       {/* 飞行记录列表 */}
-      <section className="bg-white rounded-xl border border-gray-200 overflow-hidden" aria-labelledby="records-heading">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
-          <ListChecks size={16} className="text-gray-500" aria-hidden />
-          <h2 id="records-heading" className="text-sm font-semibold text-gray-800">飞行记录</h2>
-          <span className="text-xs text-gray-500">{records.length} 条</span>
-          {loading && <Loader2 size={14} className="text-blue-600 animate-spin ml-1" aria-label="加载中" />}
+      <section className="ui-card overflow-hidden" aria-labelledby="records-heading">
+        <div className="ui-card-header flex items-center gap-2">
+          <ListChecks size={16} className="text-dji-subtle" aria-hidden />
+          <h2 id="records-heading" className="ui-section-title text-sm">飞行记录</h2>
+          <span className="text-xs text-dji-muted">{records.length} 条</span>
+          {loading && <Loader2 size={14} className="text-dji-black animate-spin ml-1" aria-label="加载中" />}
           <button type="button" onClick={exportExcel} disabled={records.length === 0} className={`${btnSecondary} ml-auto`}>
             <Download size={12} aria-hidden />导出 Excel
           </button>
@@ -432,17 +426,17 @@ export default function FlightDashboard() {
 
         {records.length === 0 && !loading ? (
           <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
-            <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
-              <Inbox size={22} className="text-gray-400" aria-hidden />
+            <div className="w-12 h-12 rounded-full bg-dji-page border border-dji-border flex items-center justify-center mb-3">
+              <Inbox size={22} className="text-dji-subtle" aria-hidden />
             </div>
-            <p className="text-sm font-medium text-gray-700">当前时间范围内暂无飞行记录</p>
-            <p className="text-xs text-gray-500 mt-1 max-w-xs">调整日期范围或切换设备类型后重试，数据每 30 秒自动刷新</p>
+            <p className="text-sm font-medium text-dji-ink">当前时间范围内暂无飞行记录</p>
+            <p className="text-xs text-dji-muted mt-1 max-w-xs">调整日期范围或切换设备类型后重试，数据每 30 秒自动刷新</p>
           </div>
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-gray-50 text-gray-600">
+                <thead className="bg-dji-page text-dji-muted">
                   <tr>
                     <th className="px-4 py-2.5 text-left font-medium w-24">状态</th>
                     <th className="px-4 py-2.5 text-left font-medium min-w-[140px]">设备</th>
@@ -452,30 +446,30 @@ export default function FlightDashboard() {
                     <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">时长</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody className="divide-y divide-dji-border">
                   {loading && records.length === 0 ? (
                     Array.from({ length: 5 }).map((_, i) => (
                       <tr key={`sk-${i}`} className="animate-pulse">
-                        <td className="px-4 py-3"><div className="h-5 w-16 bg-gray-100 rounded-md" /></td>
-                        <td className="px-4 py-3"><div className="h-4 w-32 bg-gray-100 rounded" /></td>
-                        <td className="px-4 py-3"><div className="h-4 w-24 bg-gray-100 rounded" /></td>
-                        <td className="px-4 py-3"><div className="h-4 w-24 bg-gray-100 rounded" /></td>
-                        <td className="px-4 py-3"><div className="h-4 w-16 bg-gray-100 rounded ml-auto" /></td>
-                        <td className="px-4 py-3"><div className="h-4 w-20 bg-gray-100 rounded ml-auto" /></td>
+                        <td className="px-4 py-3"><div className="h-5 w-16 bg-dji-page rounded-md" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-32 bg-dji-page rounded" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-24 bg-dji-page rounded" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-24 bg-dji-page rounded" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-16 bg-dji-page rounded ml-auto" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-20 bg-dji-page rounded ml-auto" /></td>
                       </tr>
                     ))
                   ) : records.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE).map((r, i) => (
-                    <tr key={r.id || `${r.deviceId}-${r.startTime}-${i}`} className="hover:bg-gray-50/80 transition-colors">
+                    <tr key={r.id || `${r.deviceId}-${r.startTime}-${i}`} className="hover:bg-dji-page transition-colors">
                       <td className="px-4 py-2.5"><StatusBadge record={r} /></td>
                       <td className="px-4 py-2.5">
-                        <span className="font-medium text-gray-800 truncate max-w-[180px] block" title={getRecordDeviceName(r)}>
+                        <span className="font-medium text-dji-black truncate max-w-[180px] block" title={getRecordDeviceName(r)}>
                           {getRecordDeviceName(r)}
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap tabular-nums">{formatTime(r.startTime)}</td>
-                      <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap tabular-nums">{r.status === 'active' ? '--' : formatTime(r.endTime)}</td>
-                      <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap tabular-nums">{formatMileage(r.totalMileage || 0)}</td>
-                      <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap font-mono tabular-nums">{formatDuration(r.totalDuration || 0)}</td>
+                      <td className="px-4 py-2.5 text-dji-muted whitespace-nowrap tabular-nums">{formatTime(r.startTime)}</td>
+                      <td className="px-4 py-2.5 text-dji-muted whitespace-nowrap tabular-nums">{r.status === 'active' ? '--' : formatTime(r.endTime)}</td>
+                      <td className="px-4 py-2.5 text-right text-dji-ink whitespace-nowrap tabular-nums">{formatMileage(r.totalMileage || 0)}</td>
+                      <td className="px-4 py-2.5 text-right text-dji-ink whitespace-nowrap font-mono tabular-nums">{formatDuration(r.totalDuration || 0)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -483,14 +477,14 @@ export default function FlightDashboard() {
             </div>
 
             {records.length > PAGE_SIZE && (
-              <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50/50">
-                <span className="text-xs text-gray-600">
+              <div className="flex items-center justify-between px-4 py-3 border-t border-dji-border bg-dji-page/50">
+                <span className="text-xs text-dji-muted">
                   共 {records.length} 条，第 {page} / {Math.ceil(records.length / PAGE_SIZE)} 页
                 </span>
                 <div className="flex items-center gap-1">
                   <button type="button" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}
                     aria-label="上一页"
-                    className="p-1.5 rounded-md hover:bg-white disabled:opacity-30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">
+                    className="p-1.5 rounded-full hover:bg-dji-surface disabled:opacity-30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20">
                     <ChevronLeft size={16} />
                   </button>
                   {Array.from({ length: Math.ceil(records.length / PAGE_SIZE) }, (_, i) => i + 1)
@@ -501,17 +495,17 @@ export default function FlightDashboard() {
                       return acc
                     }, [])
                     .map((p, i) => p === '...' ? (
-                      <span key={`e${i}`} className="px-1 text-xs text-gray-400">...</span>
+                      <span key={`e${i}`} className="px-1 text-xs text-dji-subtle">...</span>
                     ) : (
                       <button key={p} type="button" onClick={() => setPage(p)} aria-current={page === p ? 'page' : undefined}
-                        className={`min-w-[1.75rem] h-7 text-xs rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 ${
-                          page === p ? 'bg-blue-600 text-white font-medium' : 'hover:bg-white text-gray-600'
+                        className={`min-w-[1.75rem] h-7 text-xs rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20 ${
+                          page === p ? 'bg-dji-black text-white font-medium' : 'hover:bg-dji-surface text-dji-muted'
                         }`}>{p}</button>
                     ))
                   }
                   <button type="button" onClick={() => setPage(p => Math.min(Math.ceil(records.length / PAGE_SIZE), p + 1))} disabled={page === Math.ceil(records.length / PAGE_SIZE)}
                     aria-label="下一页"
-                    className="p-1.5 rounded-md hover:bg-white disabled:opacity-30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">
+                    className="p-1.5 rounded-full hover:bg-dji-surface disabled:opacity-30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20">
                     <ChevronRight size={16} />
                   </button>
                 </div>
