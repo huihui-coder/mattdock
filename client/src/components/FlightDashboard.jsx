@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight, FlaskConical, Trophy, ArrowUpDown } from 'lucide-react'
+import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight, FlaskConical, Trophy, ArrowUpDown, Inbox } from 'lucide-react'
 import * as XLSX from 'xlsx'
 
 const pad = (n) => String(n).padStart(2, '0')
@@ -7,9 +7,9 @@ const toDatetimeLocal = (d) => {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 const toEndOfDay = (d) => {
-  const e = new Date(d);
-  e.setHours(23, 59, 59, 999);
-  return toDatetimeLocal(e);
+  const e = new Date(d)
+  e.setHours(23, 59, 59, 999)
+  return toDatetimeLocal(e)
 }
 const toDisplayStr = (dtStr) => {
   if (!dtStr) return ''
@@ -25,6 +25,78 @@ const SHORTCUTS = [
 ]
 
 const PAGE_SIZE = 20
+
+const STAT_ITEMS = [
+  { key: 'count', label: '飞行架次', suffix: '架次', icon: Plane, accent: 'text-blue-600', bg: 'bg-blue-50' },
+  { key: 'mileage', label: '飞行里程', icon: Navigation, accent: 'text-blue-600', bg: 'bg-blue-50', isMileage: true },
+  { key: 'duration', label: '累计时长', icon: Clock, accent: 'text-blue-600', bg: 'bg-blue-50', isDuration: true },
+]
+
+function StatCard({ item, stats, formatDuration }) {
+  const Icon = item.icon
+  let value = stats[item.key]
+  let suffix = item.suffix || ''
+  if (item.isMileage) {
+    value = stats.mileage > 1000 ? (stats.mileage / 1000).toFixed(2) : Math.round(stats.mileage)
+    suffix = stats.mileage > 1000 ? 'km' : 'm'
+  }
+  if (item.isDuration) {
+    return (
+      <div className="bg-white rounded-lg p-4 border border-gray-200">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-600">{item.label}</p>
+            <p className={`text-2xl font-bold ${item.accent} font-mono tracking-tight mt-0.5`}>{formatDuration(stats.duration)}</p>
+          </div>
+          <div className={`${item.bg} p-2.5 rounded-lg`}>
+            <Icon className={item.accent} size={28} strokeWidth={1.75} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="bg-white rounded-lg p-4 border border-gray-200">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-gray-600">{item.label}</p>
+          <p className={`text-2xl font-bold ${item.accent} mt-0.5`}>
+            {value}
+            {suffix && <span className="text-sm font-medium text-gray-500 ml-1">{suffix}</span>}
+          </p>
+        </div>
+        <div className={`${item.bg} p-2.5 rounded-lg`}>
+          <Icon className={`${item.accent} opacity-80`} size={28} strokeWidth={1.75} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function StatusBadge({ record }) {
+  if (record.status === 'active') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200/80">
+        <Loader2 size={10} className="animate-spin" aria-hidden />
+        进行中
+      </span>
+    )
+  }
+  if ((record.totalMileage || 0) <= 0 || (record.totalDuration || 0) <= 5) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-rose-50 text-rose-700 ring-1 ring-rose-200/80" title="里程为 0 或时长不超过 5 秒">
+        <span className="w-1.5 h-1.5 rounded-full bg-rose-500" aria-hidden />
+        无效
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-gray-100 text-gray-700 ring-1 ring-gray-200/80">
+      <CheckCircle2 size={10} aria-hidden />
+      已完成
+    </span>
+  )
+}
 
 export default function FlightDashboard() {
   const [activeTab, setActiveTab] = useState('airport')
@@ -52,7 +124,6 @@ export default function FlightDashboard() {
     setLoading(true)
     try {
       const startTime = dateRange[0] ? new Date(dateRange[0]).toISOString() : ''
-      // 结束时间若是“今天”，按实时当前时间查询，避免冻结在页面加载时刻而漏掉新记录
       let endTime = ''
       if (dateRange[1]) {
         const endDate = new Date(dateRange[1])
@@ -65,19 +136,14 @@ export default function FlightDashboard() {
       const res = await fetch(`/api/flight-records?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`)
       const data = await res.json()
       const history = data.history || []
-      const active = data.active || []
       const all = data.records || []
-      console.log('[飞行记录] records=', all.length, 'history=', history.length, 'active=', active.length, active)
-      // 过滤有效记录（里程>0 且 时长>5秒）
       const validHistory = history.filter(r => (r.totalMileage || 0) > 0 && (r.totalDuration || 0) > 5)
       const totalMileage = validHistory.reduce((acc, cur) => acc + (cur.totalMileage || 0), 0)
       const totalDuration = validHistory.reduce((acc, cur) => acc + (cur.totalDuration || 0), 0)
       setStats({ count: validHistory.length, mileage: totalMileage, duration: totalDuration })
       setRecords(all)
-      // 计算设备排名（仅 completed 记录，过滤掉里程=0或时长<=5秒的无意义记录）
       const deviceMap = new Map()
       for (const r of history) {
-        // 过滤无效记录：里程为0或时长<=5秒
         if ((r.totalMileage || 0) <= 0 || (r.totalDuration || 0) <= 5) continue
         const id = r.deviceId || r.deviceName
         const name = getRecordDeviceName(r)
@@ -130,10 +196,7 @@ export default function FlightDashboard() {
   }
 
   const exportRankingExcel = () => {
-    const sorted = [...ranking].sort((a, b) => {
-      const v = rankSort.key === 'count' ? b.count - a.count : rankSort.key === 'mileage' ? b.mileage - a.mileage : b.duration - a.duration
-      return rankSort.order === 'asc' ? -v : v
-    })
+    const sorted = sortedRanking()
     const rows = sorted.map((r, i) => ({
       '排名': i + 1,
       '设备名称': r.deviceName || r.deviceId,
@@ -188,274 +251,275 @@ export default function FlightDashboard() {
     { id: 'all', label: '全部设备' }
   ]
 
-  return (
-    <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4 mb-6">
-      {/* 顶部工具栏 */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-5">
-        <div className="flex bg-gray-100 p-1 rounded-lg">
-          {tabs.map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-1.5 text-sm font-medium rounded-md transition-all ${
-                activeTab === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3">
-          {/* 日期范围选择器 */}
-          <div className="relative" ref={pickerRef}>
-            <button
-              onClick={() => setPickerOpen(v => !v)}
-              className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:border-blue-400 transition-colors min-w-[210px]"
-            >
-              <CalendarRange size={14} className="text-gray-400 shrink-0" />
-              <span>{toDisplayStr(dateRange[0]) || '开始时间'}</span>
-              <span className="text-gray-400">至</span>
-              <span>{toDisplayStr(dateRange[1]) || '结束时间'}</span>
-              <ChevronDown size={13} className="text-gray-400 ml-auto" />
-            </button>
+  const toggleRankSort = (key) => {
+    setRankSort(s => ({ key, order: s.key === key && s.order === 'desc' ? 'asc' : 'desc' }))
+  }
 
-            {pickerOpen && (
-              <div className="absolute right-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-xl flex" style={{minWidth: 340}}>
-                {/* 快捷选项 */}
-                <div className="border-r border-gray-100 py-3 px-1 flex flex-col gap-0.5" style={{width: 96}}>
-                  {SHORTCUTS.map(s => (
-                    <button
-                      key={s.label}
-                      onClick={() => { setDateRange(s.getDates()); setPickerOpen(false) }}
-                      className="text-left px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
-                    >{s.label}</button>
-                  ))}
-                </div>
-                {/* 日期输入 */}
-                <div className="p-4 flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-400">开始时间</label>
-                      <input type="datetime-local" value={dateRange[0]} max={dateRange[1] || undefined}
-                        onChange={e => setDateRange([e.target.value, dateRange[1]])}
-                        className="border border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-                    </div>
-                    <span className="text-gray-400 mt-4">→</span>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-gray-400">结束时间</label>
-                      <input type="datetime-local" value={dateRange[1]} min={dateRange[0] || undefined}
-                        onChange={e => setDateRange([dateRange[0], e.target.value])}
-                        className="border border-gray-200 rounded-lg px-2 py-1 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20" />
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2">
-                    <button onClick={() => { setDateRange(['', '']); setPickerOpen(false) }}
-                      className="px-3 py-1 text-xs text-gray-500 hover:text-gray-700 border border-gray-200 rounded-lg">清空</button>
-                    <button onClick={() => setPickerOpen(false)}
-                      className="px-3 py-1 text-xs text-white bg-blue-600 hover:bg-blue-700 rounded-lg">确定</button>
-                  </div>
-                </div>
-              </div>
-            )}
+  const btnSecondary = 'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:opacity-40 disabled:cursor-not-allowed'
+
+  return (
+    <div className="space-y-5">
+      {/* 筛选工具栏 */}
+      <div className="bg-white rounded-xl border border-gray-200 p-4">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="flex bg-gray-100 p-1 rounded-lg w-fit" role="tablist" aria-label="设备类型">
+            {tabs.map(tab => (
+              <button
+                key={tab.id}
+                role="tab"
+                aria-selected={activeTab === tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-3.5 py-1.5 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 ${
+                  activeTab === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-          {activeTab === 'airport' && (
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative" ref={pickerRef}>
+              <button
+                type="button"
+                onClick={() => setPickerOpen(v => !v)}
+                aria-expanded={pickerOpen}
+                aria-haspopup="dialog"
+                className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 text-sm text-gray-700 hover:border-gray-300 transition-colors min-w-[220px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+              >
+                <CalendarRange size={15} className="text-gray-500 shrink-0" aria-hidden />
+                <span className="truncate">{toDisplayStr(dateRange[0]) || '开始时间'}</span>
+                <span className="text-gray-400 shrink-0">至</span>
+                <span className="truncate">{toDisplayStr(dateRange[1]) || '结束时间'}</span>
+                <ChevronDown size={14} className={`text-gray-400 ml-auto shrink-0 transition-transform ${pickerOpen ? 'rotate-180' : ''}`} aria-hidden />
+              </button>
+
+              {pickerOpen && (
+                <div className="absolute right-0 top-full mt-1.5 z-50 bg-white border border-gray-200 rounded-xl shadow-lg flex overflow-hidden" style={{ minWidth: 340 }}>
+                  <div className="border-r border-gray-100 py-2 px-1 flex flex-col gap-0.5 shrink-0" style={{ width: 96 }}>
+                    {SHORTCUTS.map(s => (
+                      <button
+                        key={s.label}
+                        type="button"
+                        onClick={() => { setDateRange(s.getDates()); setPickerOpen(false) }}
+                        className="text-left px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
+                      >{s.label}</button>
+                    ))}
+                  </div>
+                  <div className="p-4 flex flex-col gap-3 min-w-0">
+                    <div className="flex items-end gap-2">
+                      <div className="flex flex-col gap-1 flex-1 min-w-0">
+                        <label className="text-xs font-medium text-gray-600">开始时间</label>
+                        <input type="datetime-local" value={dateRange[0]} max={dateRange[1] || undefined}
+                          onChange={e => setDateRange([e.target.value, dateRange[1]])}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                      </div>
+                      <span className="text-gray-400 pb-2 shrink-0" aria-hidden>→</span>
+                      <div className="flex flex-col gap-1 flex-1 min-w-0">
+                        <label className="text-xs font-medium text-gray-600">结束时间</label>
+                        <input type="datetime-local" value={dateRange[1]} min={dateRange[0] || undefined}
+                          onChange={e => setDateRange([dateRange[0], e.target.value])}
+                          className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <button type="button" onClick={() => { setDateRange(['', '']); setPickerOpen(false) }}
+                        className="px-3 py-1.5 text-xs text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg hover:bg-gray-50">清空</button>
+                      <button type="button" onClick={() => setPickerOpen(false)}
+                        className="px-3 py-1.5 text-xs text-white bg-blue-600 hover:bg-blue-700 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40">确定</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {activeTab === 'airport' && (
+              <button
+                type="button"
+                onClick={simulateFlight}
+                disabled={simulating}
+                title="模拟一次飞行记录（调试用）"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-amber-800 border border-amber-200 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/30"
+              >
+                <FlaskConical size={13} aria-hidden />
+                {simulating ? '生成中...' : '模拟飞行'}
+              </button>
+            )}
+
             <button
-              onClick={simulateFlight}
-              disabled={simulating}
-              title="模拟一次飞行记录（调试用）"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-amber-600 border border-amber-200 bg-amber-50 hover:bg-amber-100 rounded-lg transition-colors disabled:opacity-50"
+              type="button"
+              onClick={() => fetchStats()}
+              disabled={loading}
+              aria-label="刷新数据"
+              className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-50 rounded-lg transition-colors disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30"
             >
-              <FlaskConical size={13} />
-              {simulating ? '生成中...' : '模拟飞行'}
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
             </button>
-          )}
-          <button onClick={fetchStats} className={`p-2 text-gray-400 hover:text-blue-600 transition-colors ${loading ? 'animate-spin' : ''}`}>
-            <RefreshCw size={16} />
-          </button>
+          </div>
         </div>
       </div>
 
-      {/* 统计卡片 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-blue-50/50 rounded-xl p-5 border border-blue-100 flex items-center gap-5">
-          <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-blue-600">
-            <Plane size={22} />
-          </div>
-          <div>
-            <p className="text-sm text-blue-600 font-medium opacity-80">飞行架次</p>
-            <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-bold text-blue-900">{stats.count}</span>
-              <span className="text-xs text-blue-700 font-medium">架次</span>
-            </div>
-          </div>
-        </div>
-        <div className="bg-indigo-50/50 rounded-xl p-5 border border-indigo-100 flex items-center gap-5">
-          <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-            <Navigation size={22} />
-          </div>
-          <div>
-            <p className="text-sm text-indigo-600 font-medium opacity-80">飞行里程</p>
-            <div className="flex items-baseline gap-1">
-              <span className="text-3xl font-bold text-indigo-900">
-                {stats.mileage > 1000 ? (stats.mileage / 1000).toFixed(2) : Math.round(stats.mileage)}
-              </span>
-              <span className="text-xs text-indigo-700 font-medium">{stats.mileage > 1000 ? 'km' : 'm'}</span>
-            </div>
-          </div>
-        </div>
-        <div className="bg-purple-50/50 rounded-xl p-5 border border-purple-100 flex items-center gap-5">
-          <div className="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
-            <Clock size={22} />
-          </div>
-          <div>
-            <p className="text-sm text-purple-600 font-medium opacity-80">累计时长</p>
-            <span className="text-2xl font-bold text-purple-900 tracking-tight">{formatDuration(stats.duration)}</span>
-          </div>
-        </div>
+      {/* 统计概览 */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        {STAT_ITEMS.map(item => (
+          <StatCard key={item.key} item={item} stats={stats} formatDuration={formatDuration} />
+        ))}
       </div>
 
       {/* 设备排名 */}
       {ranking.length > 0 && (
-        <div className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Trophy size={15} className="text-amber-500" />
-            <span className="text-sm font-medium text-gray-500">设备排名</span>
-            <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{ranking.length} 架</span>
-            <button onClick={exportRankingExcel}
-              className="ml-auto flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition-colors">
-              <Download size={12} />导出排名
+        <section className="bg-white rounded-xl border border-gray-200 overflow-hidden" aria-labelledby="ranking-heading">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
+            <Trophy size={16} className="text-amber-600" aria-hidden />
+            <h2 id="ranking-heading" className="text-sm font-semibold text-gray-800">设备排名</h2>
+            <span className="text-xs text-gray-500">{ranking.length} 架设备</span>
+            <button type="button" onClick={exportRankingExcel} className={`${btnSecondary} ml-auto`}>
+              <Download size={12} aria-hidden />导出排名
             </button>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-600">
                 <tr>
-                  <th className="px-3 py-2 text-left font-medium">排名</th>
-                  <th className="px-3 py-2 text-left font-medium">设备名称</th>
-                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-gray-100" onClick={() => setRankSort(s => ({ key: 'count', order: s.key === 'count' && s.order === 'desc' ? 'asc' : 'desc' }))}>
-                    <span className="flex items-center gap-1">架次 {rankSort.key === 'count' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}</span>
+                  <th className="px-4 py-2.5 text-left font-medium w-16">排名</th>
+                  <th className="px-4 py-2.5 text-left font-medium">设备名称</th>
+                  <th className="px-4 py-2.5 text-left font-medium">
+                    <button type="button" onClick={() => toggleRankSort('count')} className="inline-flex items-center gap-1 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 rounded px-1 -mx-1">
+                      架次 {rankSort.key === 'count' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}
+                    </button>
                   </th>
-                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-gray-100" onClick={() => setRankSort(s => ({ key: 'mileage', order: s.key === 'mileage' && s.order === 'desc' ? 'asc' : 'desc' }))}>
-                    <span className="flex items-center gap-1">里程 {rankSort.key === 'mileage' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}</span>
+                  <th className="px-4 py-2.5 text-left font-medium">
+                    <button type="button" onClick={() => toggleRankSort('mileage')} className="inline-flex items-center gap-1 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 rounded px-1 -mx-1">
+                      里程 {rankSort.key === 'mileage' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}
+                    </button>
                   </th>
-                  <th className="px-3 py-2 text-left font-medium cursor-pointer hover:bg-gray-100" onClick={() => setRankSort(s => ({ key: 'duration', order: s.key === 'duration' && s.order === 'desc' ? 'asc' : 'desc' }))}>
-                    <span className="flex items-center gap-1">时长 {rankSort.key === 'duration' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}</span>
+                  <th className="px-4 py-2.5 text-left font-medium">
+                    <button type="button" onClick={() => toggleRankSort('duration')} className="inline-flex items-center gap-1 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 rounded px-1 -mx-1">
+                      时长 {rankSort.key === 'duration' && <ArrowUpDown size={12} className={rankSort.order === 'asc' ? 'rotate-180' : ''} />}
+                    </button>
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {sortedRanking().map((r, i) => (
-                  <tr key={r.deviceId} className="hover:bg-gray-50">
-                    <td className="px-3 py-2">
-                      <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-xs font-bold ${i < 3 ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>{i + 1}</span>
+                  <tr key={r.deviceId} className="hover:bg-gray-50/80 transition-colors">
+                    <td className="px-4 py-2.5">
+                      <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${i < 3 ? 'bg-amber-100 text-amber-800' : 'bg-gray-100 text-gray-600'}`}>{i + 1}</span>
                     </td>
-                    <td className="px-3 py-2 text-gray-700">{r.deviceName || r.deviceId}</td>
-                    <td className="px-3 py-2 text-gray-700">{r.count} 架次</td>
-                    <td className="px-3 py-2 text-gray-700">{formatMileage(r.mileage)}</td>
-                    <td className="px-3 py-2 text-gray-700">{formatDuration(r.duration)}</td>
+                    <td className="px-4 py-2.5 text-gray-800 font-medium">{r.deviceName || r.deviceId}</td>
+                    <td className="px-4 py-2.5 text-gray-700 tabular-nums">{r.count}</td>
+                    <td className="px-4 py-2.5 text-gray-700 tabular-nums">{formatMileage(r.mileage)}</td>
+                    <td className="px-4 py-2.5 text-gray-700 font-mono tabular-nums">{formatDuration(r.duration)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       )}
 
       {/* 飞行记录列表 */}
-      <div>
-        <div className="flex items-center gap-2 mb-3">
-          <ListChecks size={15} className="text-gray-400" />
-          <span className="text-sm font-medium text-gray-500">飞行记录</span>
-          <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{records.length} 条</span>
-          <button onClick={exportExcel} disabled={records.length === 0}
-            className="ml-auto flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-            <Download size={12} />导出 Excel
+      <section className="bg-white rounded-xl border border-gray-200 overflow-hidden" aria-labelledby="records-heading">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
+          <ListChecks size={16} className="text-gray-500" aria-hidden />
+          <h2 id="records-heading" className="text-sm font-semibold text-gray-800">飞行记录</h2>
+          <span className="text-xs text-gray-500">{records.length} 条</span>
+          {loading && <Loader2 size={14} className="text-blue-600 animate-spin ml-1" aria-label="加载中" />}
+          <button type="button" onClick={exportExcel} disabled={records.length === 0} className={`${btnSecondary} ml-auto`}>
+            <Download size={12} aria-hidden />导出 Excel
           </button>
         </div>
 
-        {records.length === 0 ? (
-          <div className="text-center py-10 text-gray-400 text-sm">暂无飞行记录</div>
+        {records.length === 0 && !loading ? (
+          <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+            <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+              <Inbox size={22} className="text-gray-400" aria-hidden />
+            </div>
+            <p className="text-sm font-medium text-gray-700">当前时间范围内暂无飞行记录</p>
+            <p className="text-xs text-gray-500 mt-1 max-w-xs">调整日期范围或切换设备类型后重试，数据每 30 秒自动刷新</p>
+          </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  <th className="text-left py-2 px-3 text-xs font-medium text-gray-400">状态</th>
-                  <th className="text-left py-2 px-3 text-xs font-medium text-gray-400 w-1/4">设备</th>
-                  <th className="text-left py-2 px-3 text-xs font-medium text-gray-400">起飞时间</th>
-                  <th className="text-left py-2 px-3 text-xs font-medium text-gray-400">降落时间</th>
-                  <th className="text-right py-2 px-3 text-xs font-medium text-gray-400">里程</th>
-                  <th className="text-right py-2 px-3 text-xs font-medium text-gray-400">时长</th>
-                </tr>
-              </thead>
-              <tbody>
-                {records.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE).map((r, i) => (
-                  <tr key={i} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
-                    <td className="py-2.5 px-3">
-                      {r.status === 'active' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-50 text-green-600 border border-green-200">
-                          <Loader2 size={10} className="animate-spin" />进行中
-                        </span>
-                      ) : (r.totalMileage || 0) <= 0 || (r.totalDuration || 0) <= 5 ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-500 border border-red-200" title="里程为0或时长过短">
-                          <span className="w-2 h-2 rounded-full bg-red-400" />无效
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
-                          <CheckCircle2 size={10} />已完成
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3">
-                      <span className="font-medium text-gray-700 truncate max-w-[160px] block" title={getRecordDeviceName(r)}>
-                        {getRecordDeviceName(r)}
-                      </span>
-                    </td>
-                    <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{formatTime(r.startTime)}</td>
-                    <td className="py-2.5 px-3 text-gray-500 whitespace-nowrap">{r.status === 'active' ? '--' : formatTime(r.endTime)}</td>
-                    <td className="py-2.5 px-3 text-right text-gray-600 whitespace-nowrap">{formatMileage(r.totalMileage || 0)}</td>
-                    <td className="py-2.5 px-3 text-right text-gray-600 whitespace-nowrap font-mono">{formatDuration(r.totalDuration || 0)}</td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 text-gray-600">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-medium w-24">状态</th>
+                    <th className="px-4 py-2.5 text-left font-medium min-w-[140px]">设备</th>
+                    <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">起飞时间</th>
+                    <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">降落时间</th>
+                    <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">里程</th>
+                    <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">时长</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {/* 分页 */}
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {loading && records.length === 0 ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={`sk-${i}`} className="animate-pulse">
+                        <td className="px-4 py-3"><div className="h-5 w-16 bg-gray-100 rounded-md" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-32 bg-gray-100 rounded" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-24 bg-gray-100 rounded" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-24 bg-gray-100 rounded" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-16 bg-gray-100 rounded ml-auto" /></td>
+                        <td className="px-4 py-3"><div className="h-4 w-20 bg-gray-100 rounded ml-auto" /></td>
+                      </tr>
+                    ))
+                  ) : records.slice((page-1)*PAGE_SIZE, page*PAGE_SIZE).map((r, i) => (
+                    <tr key={r.id || `${r.deviceId}-${r.startTime}-${i}`} className="hover:bg-gray-50/80 transition-colors">
+                      <td className="px-4 py-2.5"><StatusBadge record={r} /></td>
+                      <td className="px-4 py-2.5">
+                        <span className="font-medium text-gray-800 truncate max-w-[180px] block" title={getRecordDeviceName(r)}>
+                          {getRecordDeviceName(r)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap tabular-nums">{formatTime(r.startTime)}</td>
+                      <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap tabular-nums">{r.status === 'active' ? '--' : formatTime(r.endTime)}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap tabular-nums">{formatMileage(r.totalMileage || 0)}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-700 whitespace-nowrap font-mono tabular-nums">{formatDuration(r.totalDuration || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
             {records.length > PAGE_SIZE && (
-              <div className="flex items-center justify-between px-3 py-3 border-t border-gray-100">
-                <span className="text-xs text-gray-400">
-                  共 {records.length} 条，第 {page}/{Math.ceil(records.length/PAGE_SIZE)} 页
+              <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50/50">
+                <span className="text-xs text-gray-600">
+                  共 {records.length} 条，第 {page} / {Math.ceil(records.length / PAGE_SIZE)} 页
                 </span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setPage(p => Math.max(1,p-1))} disabled={page===1}
-                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 transition-colors">
-                    <ChevronLeft size={14} />
+                  <button type="button" onClick={() => setPage(p => Math.max(1, p-1))} disabled={page === 1}
+                    aria-label="上一页"
+                    className="p-1.5 rounded-md hover:bg-white disabled:opacity-30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">
+                    <ChevronLeft size={16} />
                   </button>
-                  {Array.from({length: Math.ceil(records.length/PAGE_SIZE)}, (_,i)=>i+1)
-                    .filter(p => p===1 || p===Math.ceil(records.length/PAGE_SIZE) || Math.abs(p-page)<=1)
-                    .reduce((acc,p,idx,arr) => {
-                      if (idx>0 && p-arr[idx-1]>1) acc.push('...')
+                  {Array.from({ length: Math.ceil(records.length / PAGE_SIZE) }, (_, i) => i + 1)
+                    .filter(p => p === 1 || p === Math.ceil(records.length / PAGE_SIZE) || Math.abs(p - page) <= 1)
+                    .reduce((acc, p, idx, arr) => {
+                      if (idx > 0 && p - arr[idx - 1] > 1) acc.push('...')
                       acc.push(p)
                       return acc
                     }, [])
-                    .map((p,i) => p==='...' ? (
+                    .map((p, i) => p === '...' ? (
                       <span key={`e${i}`} className="px-1 text-xs text-gray-400">...</span>
                     ) : (
-                      <button key={p} onClick={() => setPage(p)}
-                        className={`w-7 h-7 text-xs rounded transition-colors ${
-                          page===p ? 'bg-blue-600 text-white' : 'hover:bg-gray-100 text-gray-600'
+                      <button key={p} type="button" onClick={() => setPage(p)} aria-current={page === p ? 'page' : undefined}
+                        className={`min-w-[1.75rem] h-7 text-xs rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 ${
+                          page === p ? 'bg-blue-600 text-white font-medium' : 'hover:bg-white text-gray-600'
                         }`}>{p}</button>
                     ))
                   }
-                  <button onClick={() => setPage(p => Math.min(Math.ceil(records.length/PAGE_SIZE),p+1))} disabled={page===Math.ceil(records.length/PAGE_SIZE)}
-                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 transition-colors">
-                    <ChevronRight size={14} />
+                  <button type="button" onClick={() => setPage(p => Math.min(Math.ceil(records.length / PAGE_SIZE), p + 1))} disabled={page === Math.ceil(records.length / PAGE_SIZE)}
+                    aria-label="下一页"
+                    className="p-1.5 rounded-md hover:bg-white disabled:opacity-30 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30">
+                    <ChevronRight size={16} />
                   </button>
                 </div>
               </div>
             )}
-          </div>
+          </>
         )}
-      </div>
+      </section>
     </div>
   )
 }
