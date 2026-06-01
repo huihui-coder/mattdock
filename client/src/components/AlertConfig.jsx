@@ -7,12 +7,12 @@ const API = ''
 const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded, onToggle }) {
   const enabled = cfg.enabled || false
   return (
-    <div className={enabled ? 'bg-dji-page' : ''}>
+    <div className={enabled ? 'bg-orange-50/60' : ''}>
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
           <button
             onClick={() => onUpdate(deviceId, 'enabled', !enabled)}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${enabled ? 'bg-dji-black' : 'bg-dji-border'}`}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${enabled ? 'bg-orange-500' : 'bg-slate-300'}`}
           >
             <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`} />
           </button>
@@ -23,7 +23,7 @@ const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded,
         </div>
         <div className="flex items-center gap-2">
           {enabled && (
-            <span className="ui-badge border border-dji-border text-dji-ink">
+            <span className="ui-badge bg-orange-100 text-orange-700 border border-orange-200">
               {cfg.thresholdMinutes || 30} 分钟
             </span>
           )}
@@ -46,7 +46,7 @@ const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded,
           <div className="flex items-center gap-3">
             <button
               onClick={() => onUpdate(deviceId, 'sendSnapshot', !(cfg.sendSnapshot !== false))}
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${cfg.sendSnapshot !== false ? 'bg-dji-black' : 'bg-dji-border'}`}
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${cfg.sendSnapshot !== false ? 'bg-blue-500' : 'bg-slate-300'}`}
             >
               <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${cfg.sendSnapshot !== false ? 'translate-x-5' : 'translate-x-1'}`} />
             </button>
@@ -72,12 +72,12 @@ const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded,
 const OfflineRow = memo(function OfflineRow({ deviceId, name, cfg, onUpdate, expanded, onToggle }) {
   const enabled = cfg.offlineAlertEnabled || false
   return (
-    <div className={enabled ? 'bg-dji-page' : ''}>
+    <div className={enabled ? 'bg-red-50/60' : ''}>
       <div className="flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-3">
           <button
             onClick={() => onUpdate(deviceId, 'offlineAlertEnabled', !enabled)}
-            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${enabled ? 'bg-dji-black' : 'bg-dji-border'}`}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${enabled ? 'bg-red-500' : 'bg-slate-300'}`}
           >
             <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`} />
           </button>
@@ -88,7 +88,7 @@ const OfflineRow = memo(function OfflineRow({ deviceId, name, cfg, onUpdate, exp
         </div>
         <div className="flex items-center gap-2">
           {enabled && (
-            <span className="ui-badge border border-dji-border text-dji-ink">
+            <span className="ui-badge bg-red-100 text-red-700 border border-red-200">
               {cfg.offlineRepeatMinutes ? `每 ${cfg.offlineRepeatMinutes} 分钟` : '单次'}
             </span>
           )}
@@ -259,17 +259,17 @@ export default function AlertConfig({ devices }) {
       {/* 告警类型 Tab */}
       <div className="ui-card overflow-hidden">
         {/* Tab 头 */}
-        <div className="flex border-b border-dji-border px-2 pt-2 gap-1">
+        <div className="flex border-b border-slate-100 px-2 pt-2 gap-1">
           <button
             onClick={() => setActiveTab('lost')}
-            className={`ui-tab ${activeTab === 'lost' ? 'ui-tab-active' : 'ui-tab-inactive'}`}
+            className={`ui-tab ${activeTab === 'lost' ? 'ui-tab-active !bg-orange-500' : 'ui-tab-inactive !hover:text-orange-600 !hover:bg-orange-50'}`}
           >
             <Bell size={14} />
             飞丢告警
           </button>
           <button
             onClick={() => setActiveTab('offline')}
-            className={`ui-tab ${activeTab === 'offline' ? 'ui-tab-active' : 'ui-tab-inactive'}`}
+            className={`ui-tab ${activeTab === 'offline' ? 'ui-tab-active !bg-red-500' : 'ui-tab-inactive !hover:text-red-600 !hover:bg-red-50'}`}
           >
             <WifiOff size={14} />
             机场离线告警

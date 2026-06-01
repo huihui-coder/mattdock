@@ -117,7 +117,7 @@ export default function AccountManager() {
           <button disabled={loading} className="ui-btn-primary disabled:opacity-50">{loading ? '创建中...' : '创建账号'}</button>
           <div className="md:col-span-3 flex flex-wrap gap-2">
             {permissions.map(p => (
-              <label key={p} className={`px-3 py-1.5 rounded-full border text-sm cursor-pointer transition-colors ${form.permissions.includes(p) ? 'bg-dji-black text-white border-dji-black' : 'border-dji-border text-dji-muted hover:border-dji-ink'}`}>
+              <label key={p} className={`px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition-colors ${form.permissions.includes(p) ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-500 hover:border-blue-200'}`}>
                 <input type="checkbox" checked={form.permissions.includes(p)} onChange={() => togglePermission(form, setForm, p)} className="mr-1.5 sr-only" />
                 {PERMISSION_LABELS[p] || p}
               </label>
@@ -236,7 +236,7 @@ export default function AccountManager() {
                 <div className="text-sm font-medium text-dji-ink mb-2">权限配置</div>
                 <div className="flex flex-wrap gap-2">
                   {permissions.map(p => (
-                    <label key={p} className={`px-3 py-1.5 rounded-full border text-sm cursor-pointer ${editForm.permissions.includes(p) ? 'bg-dji-black text-white border-dji-black' : 'border-dji-border text-dji-muted'}`}>
+                    <label key={p} className={`px-3 py-1.5 rounded-lg border text-sm cursor-pointer ${editForm.permissions.includes(p) ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-slate-200 text-slate-500'}`}>
                       <input
                         type="checkbox"
                         checked={editForm.permissions.includes(p)}

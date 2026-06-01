@@ -27,9 +27,9 @@ const SHORTCUTS = [
 const PAGE_SIZE = 20
 
 const STAT_ITEMS = [
-  { key: 'count', label: '飞行架次', suffix: '架次', icon: Plane },
-  { key: 'mileage', label: '飞行里程', icon: Navigation, isMileage: true },
-  { key: 'duration', label: '累计时长', icon: Clock, isDuration: true },
+  { key: 'count', label: '飞行架次', suffix: '架次', icon: Plane, text: 'text-blue-600', iconColor: 'text-blue-400', bg: 'bg-blue-50 border-blue-100' },
+  { key: 'mileage', label: '飞行里程', icon: Navigation, isMileage: true, text: 'text-indigo-600', iconColor: 'text-indigo-400', bg: 'bg-indigo-50 border-indigo-100' },
+  { key: 'duration', label: '累计时长', icon: Clock, isDuration: true, text: 'text-violet-600', iconColor: 'text-violet-400', bg: 'bg-violet-50 border-violet-100' },
 ]
 
 function StatCard({ item, stats, formatDuration }) {
@@ -40,30 +40,31 @@ function StatCard({ item, stats, formatDuration }) {
     value = stats.mileage > 1000 ? (stats.mileage / 1000).toFixed(2) : Math.round(stats.mileage)
     suffix = stats.mileage > 1000 ? 'km' : 'm'
   }
+  const cardClass = `${item.bg} border rounded-xl p-4`
   if (item.isDuration) {
     return (
-      <div className="ui-card p-4">
+      <div className={cardClass}>
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm text-dji-muted">{item.label}</p>
-            <p className="text-2xl font-bold text-dji-black font-mono tracking-tight mt-0.5 tabular-nums">{formatDuration(stats.duration)}</p>
+            <p className="text-sm text-slate-600">{item.label}</p>
+            <p className={`text-2xl font-bold ${item.text} font-mono tracking-tight mt-0.5 tabular-nums`}>{formatDuration(stats.duration)}</p>
           </div>
-          <Icon className="text-dji-subtle opacity-30" size={28} strokeWidth={1.5} />
+          <Icon className={`${item.iconColor} opacity-70`} size={28} strokeWidth={1.5} />
         </div>
       </div>
     )
   }
   return (
-    <div className="ui-card p-4">
+    <div className={cardClass}>
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm text-dji-muted">{item.label}</p>
-          <p className="text-2xl font-bold text-dji-black mt-0.5 tabular-nums">
+          <p className="text-sm text-slate-600">{item.label}</p>
+          <p className={`text-2xl font-bold ${item.text} mt-0.5 tabular-nums`}>
             {value}
-            {suffix && <span className="text-sm font-medium text-dji-subtle ml-1">{suffix}</span>}
+            {suffix && <span className="text-sm font-medium text-slate-500 ml-1">{suffix}</span>}
           </p>
         </div>
-        <Icon className="text-dji-subtle opacity-30" size={28} strokeWidth={1.5} />
+        <Icon className={`${item.iconColor} opacity-70`} size={28} strokeWidth={1.5} />
       </div>
     </div>
   )
@@ -72,23 +73,23 @@ function StatCard({ item, stats, formatDuration }) {
 function StatusBadge({ record }) {
   if (record.status === 'active') {
     return (
-      <span className="ui-badge border border-dji-border text-dji-ink bg-dji-page">
-        <Loader2 size={10} className="animate-spin text-emerald-600" aria-hidden />
+      <span className="ui-badge bg-emerald-100 text-emerald-700 border border-emerald-200">
+        <Loader2 size={10} className="animate-spin" aria-hidden />
         进行中
       </span>
     )
   }
   if ((record.totalMileage || 0) <= 0 || (record.totalDuration || 0) <= 5) {
     return (
-      <span className="ui-badge border border-dji-border text-dji-muted" title="里程为 0 或时长不超过 5 秒">
+      <span className="ui-badge bg-red-100 text-red-700 border border-red-200" title="里程为 0 或时长不超过 5 秒">
         <span className="w-1.5 h-1.5 rounded-full bg-red-500" aria-hidden />
         无效
       </span>
     )
   }
   return (
-    <span className="ui-badge border border-dji-border text-dji-ink">
-      <CheckCircle2 size={10} aria-hidden />
+    <span className="ui-badge bg-slate-100 text-slate-700 border border-slate-200">
+      <CheckCircle2 size={10} className="text-emerald-600" aria-hidden />
       已完成
     </span>
   )
@@ -258,7 +259,7 @@ export default function FlightDashboard() {
       {/* 筛选工具栏 */}
       <div className="ui-card p-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="ui-tab-group" role="tablist" aria-label="设备类型">
+          <div className="ui-nav-bar" role="tablist" aria-label="设备类型">
             {tabs.map(tab => (
               <button
                 key={tab.id}
@@ -364,7 +365,7 @@ export default function FlightDashboard() {
       {ranking.length > 0 && (
         <section className="ui-card overflow-hidden" aria-labelledby="ranking-heading">
           <div className="ui-card-header flex items-center gap-2">
-            <Trophy size={16} className="text-dji-black" aria-hidden />
+            <Trophy size={16} className="text-amber-500" aria-hidden />
             <h2 id="ranking-heading" className="ui-section-title text-sm">设备排名</h2>
             <span className="text-xs text-dji-muted">{ranking.length} 架设备</span>
             <button type="button" onClick={exportRankingExcel} className={`${btnSecondary} ml-auto`}>
@@ -373,7 +374,7 @@ export default function FlightDashboard() {
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-dji-page text-dji-muted">
+              <thead className="bg-slate-50 text-slate-600">
                 <tr>
                   <th className="px-4 py-2.5 text-left font-medium w-16">排名</th>
                   <th className="px-4 py-2.5 text-left font-medium">设备名称</th>
@@ -398,7 +399,7 @@ export default function FlightDashboard() {
                 {sortedRanking().map((r, i) => (
                   <tr key={r.deviceId} className="hover:bg-dji-page transition-colors">
                     <td className="px-4 py-2.5">
-                      <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${i < 3 ? 'bg-dji-black text-white' : 'bg-dji-page text-dji-muted border border-dji-border'}`}>{i + 1}</span>
+                      <span className={`inline-flex w-6 h-6 items-center justify-center rounded-full text-xs font-semibold tabular-nums ${i < 3 ? 'bg-amber-100 text-amber-800 border border-amber-200' : 'bg-slate-100 text-slate-600'}`}>{i + 1}</span>
                     </td>
                     <td className="px-4 py-2.5 text-dji-black font-medium">{r.deviceName || r.deviceId}</td>
                     <td className="px-4 py-2.5 text-dji-ink tabular-nums">{r.count}</td>
@@ -436,7 +437,7 @@ export default function FlightDashboard() {
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead className="bg-dji-page text-dji-muted">
+                <thead className="bg-slate-50 text-slate-600">
                   <tr>
                     <th className="px-4 py-2.5 text-left font-medium w-24">状态</th>
                     <th className="px-4 py-2.5 text-left font-medium min-w-[140px]">设备</th>
@@ -499,7 +500,7 @@ export default function FlightDashboard() {
                     ) : (
                       <button key={p} type="button" onClick={() => setPage(p)} aria-current={page === p ? 'page' : undefined}
                         className={`min-w-[1.75rem] h-7 text-xs rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20 ${
-                          page === p ? 'bg-dji-black text-white font-medium' : 'hover:bg-dji-surface text-dji-muted'
+                          page === p ? 'bg-blue-600 text-white font-medium' : 'hover:bg-white text-slate-600'
                         }`}>{p}</button>
                     ))
                   }

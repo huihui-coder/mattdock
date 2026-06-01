@@ -302,7 +302,7 @@ function App() {
       
       <main className="max-w-7xl mx-auto px-4 py-6">
         {/* Tab 切换 */}
-        <div className="ui-tab-group mb-5">
+        <div className="ui-nav-bar mb-5">
           {visibleTabs.map(tab => {
             const Icon = tab.icon
             return (

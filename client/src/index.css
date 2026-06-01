@@ -3,14 +3,14 @@
 @tailwind utilities;
 
 :root {
-  --color-page: #f5f5f5;
+  --color-page: #f1f5f9;
   --color-surface: #ffffff;
-  --color-ink: #1a1a1a;
-  --color-muted: #525252;
-  --color-subtle: #737373;
-  --color-border: #e5e5e5;
-  --color-dark: #0a0a0a;
-  --color-accent: #0080ff;
+  --color-ink: #1e293b;
+  --color-muted: #64748b;
+  --color-subtle: #94a3b8;
+  --color-border: #e2e8f0;
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
 }
 
 body {
@@ -24,55 +24,59 @@ body {
 
 @layer components {
   .ui-page {
-    @apply min-h-screen bg-dji-page;
+    @apply min-h-screen bg-slate-100;
   }
 
   .ui-card {
-    @apply bg-dji-surface border border-dji-border rounded-lg;
+    @apply bg-white border border-slate-200 rounded-xl shadow-sm;
   }
 
   .ui-card-header {
-    @apply px-4 py-3 border-b border-dji-border;
+    @apply px-4 py-3 border-b border-slate-100;
   }
 
   .ui-section-title {
-    @apply text-base font-semibold text-dji-black tracking-tight;
+    @apply text-base font-semibold text-slate-800 tracking-tight;
   }
 
   .ui-section-desc {
-    @apply text-sm text-dji-muted;
+    @apply text-sm text-slate-500;
   }
 
   .ui-btn-primary {
-    @apply inline-flex items-center justify-center gap-1.5 px-5 py-2 text-sm font-medium text-white bg-dji-black rounded-full hover:bg-dji-ink transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/30 disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-1.5 px-5 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .ui-btn-cockpit {
+    @apply inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40;
   }
 
   .ui-btn-secondary {
-    @apply inline-flex items-center justify-center gap-1.5 px-4 py-1.5 text-xs font-medium text-dji-ink bg-dji-surface border border-dji-border rounded-full hover:bg-dji-page transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20 disabled:opacity-40 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-1.5 px-4 py-1.5 text-xs font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30 disabled:opacity-40 disabled:cursor-not-allowed;
   }
 
   .ui-btn-ghost {
-    @apply inline-flex items-center justify-center gap-1.5 px-4 py-1.5 text-xs font-medium text-dji-ink border border-dji-ink rounded-full hover:bg-dji-black hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20;
+    @apply inline-flex items-center justify-center gap-1.5 px-4 py-1.5 text-xs font-medium text-slate-600 border border-slate-300 rounded-lg hover:border-blue-400 hover:text-blue-600 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30;
   }
 
-  .ui-tab-group {
-    @apply flex gap-0.5 bg-dji-surface rounded-full p-1 border border-dji-border w-fit;
+  .ui-nav-bar {
+    @apply flex flex-wrap gap-1 bg-white rounded-xl p-1.5 border border-slate-200 shadow-sm w-fit;
   }
 
   .ui-tab {
-    @apply flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dji-black/20;
+    @apply flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/30;
   }
 
   .ui-tab-active {
-    @apply bg-dji-black text-white;
+    @apply bg-blue-600 text-white shadow-sm;
   }
 
   .ui-tab-inactive {
-    @apply text-dji-muted hover:text-dji-black;
+    @apply text-slate-600 hover:text-blue-600 hover:bg-blue-50;
   }
 
   .ui-input {
-    @apply w-full border border-dji-border rounded-lg px-3 py-2 text-sm text-dji-ink placeholder:text-dji-subtle focus:outline-none focus:ring-2 focus:ring-dji-black/15 focus:border-dji-ink bg-dji-surface;
+    @apply w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/25 focus:border-blue-400 bg-white;
   }
 
   .ui-badge {
@@ -83,12 +87,12 @@ body {
 .status-normal { color: #059669; }
 .status-warning { color: #d97706; }
 .status-critical { color: #dc2626; }
-.status-unknown { color: #737373; }
+.status-unknown { color: #64748b; }
 
-.bg-normal { background-color: #f5f5f5; }
-.bg-warning { background-color: #fafafa; }
-.bg-critical { background-color: #fafafa; }
-.bg-unknown { background-color: #f5f5f5; }
+.bg-normal { background-color: #ecfdf5; }
+.bg-warning { background-color: #fffbeb; }
+.bg-critical { background-color: #fef2f2; }
+.bg-unknown { background-color: #f8fafc; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

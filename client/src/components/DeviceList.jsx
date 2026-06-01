@@ -10,12 +10,12 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
     }
   }
 
-  const getStatusLabel = (status) => {
+  const getStatusBadge = (status) => {
     switch (status) {
-      case 'normal': return 'text-dji-ink'
-      case 'warning': return 'text-amber-700'
-      case 'critical': return 'text-red-700'
-      default: return 'text-dji-muted'
+      case 'normal': return 'bg-emerald-100 text-emerald-700 border border-emerald-200'
+      case 'warning': return 'bg-amber-100 text-amber-800 border border-amber-200'
+      case 'critical': return 'bg-red-100 text-red-700 border border-red-200'
+      default: return 'bg-slate-100 text-slate-600 border border-slate-200'
     }
   }
 
@@ -31,7 +31,7 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
           <h2 className="ui-section-title">{title}</h2>
           <p className="ui-section-desc">
             共 {devices.length} 个设备
-            {filterActive && <span className="text-dji-black font-medium ml-1">· 已筛选</span>}
+            {filterActive && <span className="text-blue-600 font-medium ml-1">· 已筛选</span>}
           </p>
         </div>
         {filterActive && onClearFilter && (
@@ -57,8 +57,8 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
             <div
               key={device.deviceId}
               onClick={() => onSelect(device)}
-              className={`p-4 cursor-pointer transition-colors hover:bg-dji-page ${
-                selectedId === device.deviceId ? 'bg-dji-page ring-1 ring-inset ring-dji-black/10' : ''
+              className={`p-4 cursor-pointer transition-colors hover:bg-slate-50 ${
+                selectedId === device.deviceId ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : ''
               }`}
             >
               <div className="flex items-center justify-between mb-2 gap-2">
@@ -71,17 +71,17 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {device.metrics.modeCode && (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full border border-dji-border text-dji-muted font-medium">
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 font-medium">
                       {device.metrics.modeCode.statusText}
                     </span>
                   )}
-                  <span className={`text-xs font-medium ${getStatusLabel(device.status)}`}>
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${getStatusBadge(device.status)}`}>
                     {device.statusText}
                   </span>
                   {(device.deviceType === 'airport' || device.deviceType === 'remote') && onCockpit && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onCockpit(device) }}
-                      className="ui-btn-primary !px-2.5 !py-1 !text-[11px] !rounded-full"
+                      className="ui-btn-cockpit"
                       title="虚拟座舱"
                     >
                       <MonitorPlay size={11} />
@@ -91,15 +91,15 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-2 text-xs text-dji-muted">
+              <div className="grid grid-cols-4 gap-2 text-xs text-slate-600">
                 {device.metrics.batterySlots && (
-                  <div className="flex items-center gap-1">
-                    <Package size={12} className="text-dji-subtle" />
+                  <div className="flex items-center gap-1 text-violet-600">
+                    <Package size={12} />
                     <span>{device.metrics.batterySlots.value}</span>
                   </div>
                 )}
                 {device.metrics.windSpeed && (
-                  <div className="flex items-center gap-1 font-medium text-dji-ink">
+                  <div className="flex items-center gap-1 font-medium text-blue-600">
                     <Wind size={12} />
                     <span>{device.metrics.windSpeed.value} m/s</span>
                   </div>
@@ -123,20 +123,20 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
                   </div>
                 )}
                 {device.metrics.droneInDock !== undefined && (
-                  <div className="flex items-center gap-1 font-medium text-dji-ink">
+                  <div className={`flex items-center gap-1 font-medium ${device.metrics.droneInDock.value === 1 ? 'text-emerald-600' : 'text-orange-500'}`}>
                     <Home size={12} />
                     <span>{device.metrics.droneInDock.statusText}</span>
                   </div>
                 )}
                 {device.metrics.modeCode && (
-                  <div className="flex items-center gap-1 col-span-2">
+                  <div className="flex items-center gap-1 text-indigo-600 col-span-2">
                     <Activity size={12} />
                     <span>{device.metrics.modeCode.statusText}</span>
                   </div>
                 )}
               </div>
 
-              <div className="text-xs text-dji-subtle mt-2 flex items-center gap-2 flex-wrap">
+              <div className="text-xs text-slate-400 mt-2 flex items-center gap-2 flex-wrap">
                 <span>更新 {formatTime(device.lastUpdate)}</span>
                 {device.location && (
                   <span className="flex items-center gap-1">
@@ -147,19 +147,19 @@ export default function DeviceList({ devices, healthAlerts, onSelect, selectedId
               </div>
 
               {healthAlerts?.[device.deviceId]?.length > 0 && (
-                <div className="mt-2.5 p-2.5 border border-dji-border rounded-lg bg-dji-page text-xs">
-                  <div className="flex items-center gap-1 text-dji-ink font-medium mb-1">
+                <div className="mt-2.5 p-2.5 border border-amber-200 rounded-lg bg-amber-50 text-xs">
+                  <div className="flex items-center gap-1 text-amber-800 font-medium mb-1">
                     <AlertTriangle size={12} className="text-amber-600" />
                     <span>健康告警 ({healthAlerts[device.deviceId].length})</span>
                   </div>
                   {healthAlerts[device.deviceId].slice(0, 2).map((alert, idx) => (
-                    <div key={idx} className="text-dji-muted truncate flex items-center gap-1.5">
+                    <div key={idx} className="text-amber-900/80 truncate flex items-center gap-1.5">
                       <span className="w-1 h-1 rounded-full bg-amber-500 shrink-0" />
                       <span>{alert.message}</span>
                     </div>
                   ))}
                   {healthAlerts[device.deviceId].length > 2 && (
-                    <div className="text-dji-subtle mt-1">+{healthAlerts[device.deviceId].length - 2} 条</div>
+                    <div className="text-amber-700 mt-1">+{healthAlerts[device.deviceId].length - 2} 条</div>
                   )}
                 </div>
               )}

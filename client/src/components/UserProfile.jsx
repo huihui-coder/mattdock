@@ -115,7 +115,7 @@ export default function UserProfile({ user, onClose, onUserUpdate }) {
                 type="button"
                 disabled={avatarLoading}
                 onClick={() => fileRef.current?.click()}
-                className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-dji-black text-white flex items-center justify-center hover:bg-dji-ink disabled:opacity-50"
+                className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 disabled:opacity-50"
               >
                 {avatarLoading ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
               </button>
