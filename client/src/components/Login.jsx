@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Lock, User, Eye, EyeOff } from 'lucide-react'
+import LogoMark from './LogoMark'
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('')
@@ -39,11 +40,7 @@ export default function Login({ onLogin }) {
 
       <div className="bg-white/75 backdrop-blur-xl border border-white/50 shadow-[0_8px_32px_0_rgba(31,38,135,0.08)] rounded-[24px] p-9 w-full max-w-[390px] relative z-10 transition-all duration-300 hover:shadow-[0_8px_40px_0_rgba(31,38,135,0.12)]">
         <div className="flex flex-col items-start mb-8">
-          <div className="text-[#1c2d5a] mb-5">
-            <svg className="w-11 h-9" viewBox="0 0 100 60" fill="currentColor" aria-hidden>
-              <path d="M10,15 C25,15 40,25 48,42 L50,46 L52,42 C60,25 75,15 90,15 C75,20 63,32 58,45 L50,60 L42,45 C37,32 25,20 10,15 Z" />
-            </svg>
-          </div>
+          <LogoMark variant="login" className="w-11 h-9 text-[#1c2d5a] mb-5" title="无人机管理平台" />
           <h1 className="text-2xl font-semibold text-slate-800 tracking-wide">无人机管理平台</h1>
           <p className="text-[11px] text-slate-400 font-medium tracking-[0.2em] uppercase mt-2">安全 · 稳定 · 高效</p>
         </div>

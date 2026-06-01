@@ -1,4 +1,5 @@
 import { Wifi, WifiOff, Activity, LogOut, User } from 'lucide-react'
+import LogoMark from './LogoMark'
 
 function StatusChip({ label, ok, okText, failText, okIcon: OkIcon, failIcon: FailIcon }) {
   return (
@@ -39,17 +40,7 @@ export default function Header({ mqttConnected, wsConnected, user, onLogout, onO
         <div className="flex h-[3.25rem] items-center justify-between gap-3 sm:gap-4">
           {/* 品牌区 */}
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="relative h-9 w-9 shrink-0 rounded-lg bg-blue-600 p-px shadow-sm shadow-blue-600/25">
-              <div className="flex h-full w-full items-center justify-center rounded-[7px] bg-white">
-                <img
-                  src="/logos/platform-logo.png"
-                  alt=""
-                  className="h-6 w-6 object-contain"
-                  width={24}
-                  height={24}
-                />
-              </div>
-            </div>
+            <LogoMark variant="app" />
             <div className="min-w-0 leading-tight">
               <h1 className="text-[15px] sm:text-base font-semibold text-slate-900 tracking-tight truncate">
                 机场监测系统
