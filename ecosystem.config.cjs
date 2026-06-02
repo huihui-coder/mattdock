@@ -9,6 +9,7 @@ module.exports = {
       name: 'haizhu-monitor',
       script: 'server/index.js',
       cwd: __dirname,
+      exec_mode: 'fork',
       instances: 1,
       autorestart: true,
       max_memory_restart: '500M',
