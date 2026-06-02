@@ -330,8 +330,6 @@ class DeviceProcessor {
       const isCurrentlyFlying = FLIGHT_MODES.has(currentMode);
       const wasFlying = lastMode !== undefined && FLIGHT_MODES.has(lastMode);
 
-      this.logFlight(`[飞行统计] ${result.deviceName || deviceId} | mode=${currentMode} flying=${isCurrentlyFlying} wasFlying=${wasFlying} hasSession=${!!session} type=${result.deviceType}`);
-
       // 1. 架次开始判定：从非飞行态切换到飞行态
       if (isCurrentlyFlying && (!wasFlying || !session)) {
         this.logFlight(`[飞行统计] >>> 设备 ${result.deviceName || deviceId} 开始新架次，mode=${currentMode}`);
@@ -403,7 +401,6 @@ class DeviceProcessor {
       }
       const droneIsFlying = FLIGHT_MODES.has(droneMode);
       const droneWasFlying = droneLastMode !== undefined && FLIGHT_MODES.has(droneLastMode);
-      this.logFlight(`[飞行统计(子设备)] ${droneName} | mode=${droneMode} flying=${droneIsFlying} wasFlying=${droneWasFlying} hasSession=${!!droneSession}`);
       if (droneIsFlying && (!droneWasFlying || !droneSession)) {
         this.logFlight(`[飞行统计(子设备)] >>> ${droneName} 开始新架次 mode=${droneMode}`);
         droneSession = {
