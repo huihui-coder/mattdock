@@ -14,6 +14,8 @@ try {
   console.warn('[HMS] 加载告警码映射文件失败:', err.message);
 }
 
+const ALERT_LOG_INTERVAL_MS = 5 * 60 * 1000;
+
 class MQTTService {
   constructor(config, wsService, alertService) {
     this.config = config;
@@ -23,6 +25,21 @@ class MQTTService {
     this.processor = new DeviceProcessor();
     this.connected = false;
     this.reconnectAttempts = 0;
+    this._alertLogLast = new Map();
+  }
+
+  _shouldLogAlert(key) {
+    const now = Date.now();
+    const last = this._alertLogLast.get(key) || 0;
+    if (now - last < ALERT_LOG_INTERVAL_MS) return false;
+    this._alertLogLast.set(key, now);
+    if (this._alertLogLast.size > 500) {
+      const cutoff = now - ALERT_LOG_INTERVAL_MS;
+      for (const [k, t] of this._alertLogLast) {
+        if (t < cutoff) this._alertLogLast.delete(k);
+      }
+    }
+    return true;
   }
 
   connect() {
@@ -212,7 +229,10 @@ class MQTTService {
 
     // 广播健康告警
     if (healthAlerts.length > 0 && this.wsService) {
-      console.log(`[健康告警] 设备 ${deviceName}: ${healthAlerts.length} 条告警`);
+      const hmsKey = `hms:${deviceId}:${healthAlerts.length}`;
+      if (this._shouldLogAlert(hmsKey)) {
+        console.log(`[健康告警] 设备 ${deviceName}: ${healthAlerts.length} 条告警`);
+      }
       this.wsService.broadcast({
         type: 'health_alert',
         topic: topic,
@@ -264,8 +284,11 @@ class MQTTService {
 
   handleAlerts(topic, processedData) {
     processedData.alerts.forEach(alert => {
-      console.warn(`[告警] ${alert.level.toUpperCase()}: ${alert.message}`);
-      
+      const logKey = `${processedData.deviceId}:${alert.metric || alert.code || alert.message}:${alert.level}`;
+      if (this._shouldLogAlert(logKey)) {
+        console.warn(`[告警] ${processedData.deviceName || processedData.deviceId} ${alert.level.toUpperCase()}: ${alert.message}`);
+      }
+
       if (this.wsService) {
         this.wsService.broadcast({
           type: 'alert',
