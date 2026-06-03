@@ -1,5 +1,4 @@
 const multer = require('multer');
-const FormData = require('form-data');
 const { ASPECT_RATIOS, resolveImageSize, resolveEditSize } = require('../lib/image-size');
 
 const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.xomodel.com').replace(/\/$/, '');
@@ -67,6 +66,34 @@ function logUpstreamModelError(kind, model, payload, data) {
   );
 }
 
+/** 从 multer 解析结果中取参考图 */
+function pickUploadedImage(req) {
+  const list = Array.isArray(req.files) ? req.files : [];
+  return (
+    list.find((f) => f.fieldname === 'image[]') ||
+    list.find((f) => f.fieldname === 'image') ||
+    list.find((f) => (f.mimetype || '').startsWith('image/')) ||
+    req.files?.['image[]']?.[0] ||
+    req.files?.image?.[0] ||
+    req.file ||
+    null
+  );
+}
+
+/** 构建上游图生图 multipart（与 curl 示例字段顺序一致，使用 Node 原生 FormData） */
+function buildUpstreamEditForm({ model, file, prompt, size, quality, outputFormat, count }) {
+  const form = new FormData();
+  form.append('model', model);
+  const blob = new Blob([file.buffer], { type: file.mimetype || 'image/png' });
+  form.append('image[]', blob, file.originalname || 'input.png');
+  form.append('prompt', prompt);
+  form.append('size', size);
+  form.append('quality', quality);
+  form.append('output_format', outputFormat);
+  if (count > 1) form.append('n', String(count));
+  return form;
+}
+
 function registerImageRoutes(app, { requireImageStudio }) {
   app.get('/api/image/config', requireImageStudio, (_req, res) => {
     const model = getImageModel();
@@ -128,10 +155,7 @@ function registerImageRoutes(app, { requireImageStudio }) {
   });
 
   app.post('/api/image/edit', requireImageStudio, (req, res, next) => {
-    upload.fields([
-      { name: 'image', maxCount: 1 },
-      { name: 'image[]', maxCount: 1 },
-    ])(req, res, (err) => {
+    upload.any()(req, res, (err) => {
       if (err) return res.status(400).json({ error: err.message });
       next();
     });
@@ -142,10 +166,7 @@ function registerImageRoutes(app, { requireImageStudio }) {
     if (!prompt) {
       return res.status(400).json({ error: '请输入编辑提示词 prompt' });
     }
-    const file =
-      req.files?.['image[]']?.[0] ||
-      req.files?.image?.[0] ||
-      req.file;
+    const file = pickUploadedImage(req);
     if (!file) {
       return res.status(400).json({ error: '请上传参考图片' });
     }
@@ -159,23 +180,27 @@ function registerImageRoutes(app, { requireImageStudio }) {
     const count = clampCount(req.body?.n);
 
     try {
-      const form = new FormData();
-      form.append('model', String(model));
-      form.append('image[]', file.buffer, {
-        filename: file.originalname || 'input.png',
-        contentType: file.mimetype || 'image/png',
+      const form = buildUpstreamEditForm({
+        model,
+        file,
+        prompt,
+        size,
+        quality,
+        outputFormat,
+        count,
       });
-      form.append('prompt', prompt);
-      form.append('size', size);
-      form.append('quality', quality);
-      form.append('output_format', outputFormat);
-      if (count > 1) form.append('n', String(count));
+
+      console.log('[ImageAPI] 图生图 upstream', {
+        model,
+        size,
+        promptLen: prompt.length,
+        fileKb: Math.round(file.buffer.length / 1024),
+      });
 
       const resp = await fetch(`${XOMODEL_API_BASE}/v1/images/edits`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${getApiKey()}`,
-          ...form.getHeaders(),
         },
         body: form,
       });
