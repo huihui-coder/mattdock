@@ -40,13 +40,13 @@ export default function Header({ mqttConnected, wsConnected, user, onLogout, onO
         <div className="flex h-[3.25rem] items-center justify-between gap-3 sm:gap-4">
           {/* 品牌区 */}
           <div className="flex items-center gap-2.5 min-w-0">
-            <LogoMark variant="app" />
+            <LogoMark variant="app" title="无人机管理平台" />
             <div className="min-w-0 leading-tight">
               <h1 className="text-[15px] sm:text-base font-semibold text-slate-900 tracking-tight truncate">
-                机场监测系统
+                无人机管理平台
               </h1>
-              <p className="text-[11px] text-slate-500 truncate hidden sm:block">
-                MQTT 实时设备监控
+              <p className="text-[11px] text-slate-400 font-medium tracking-[0.2em] uppercase truncate hidden sm:block">
+                安全 · 稳定 · 高效
               </p>
             </div>
           </div>

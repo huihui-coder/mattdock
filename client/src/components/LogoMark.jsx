@@ -8,7 +8,7 @@ const VARIANTS = {
 }
 
 /** 平台品牌标识：透明底翼形 mark，与 favicon 同源 */
-export default function LogoMark({ variant = 'app', className = '', title = '机场监测系统' }) {
+export default function LogoMark({ variant = 'app', className = '', title = '无人机管理平台' }) {
   const preset = VARIANTS[variant] || VARIANTS.app
 
   return (
