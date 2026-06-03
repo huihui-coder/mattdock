@@ -3,8 +3,17 @@ const FormData = require('form-data');
 const { ASPECT_RATIOS, resolveImageSize, resolveEditSize } = require('../lib/image-size');
 
 const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.xomodel.com').replace(/\/$/, '');
-const XOMODEL_API_KEY = process.env.XOMODEL_API_KEY || '';
-const IMAGE_MODEL = process.env.XOMODEL_IMAGE_MODEL || 'gpt-image-2';
+const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
+
+function getImageModel(override) {
+  const raw = override ?? process.env.XOMODEL_IMAGE_MODEL ?? DEFAULT_IMAGE_MODEL;
+  const model = String(raw).trim();
+  return model || DEFAULT_IMAGE_MODEL;
+}
+
+function getApiKey() {
+  return (process.env.XOMODEL_API_KEY || '').trim();
+}
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -17,9 +26,15 @@ const upload = multer({
   },
 });
 
-function ensureApiKey(res) {
-  if (!XOMODEL_API_KEY) {
+function ensureApiReady(res, model) {
+  if (!getApiKey()) {
     res.status(503).json({ error: '未配置 XOMODEL_API_KEY，请在服务器 .env 中设置' });
+    return false;
+  }
+  if (!model) {
+    res.status(503).json({
+      error: '未配置生图模型名，请在 .env 设置 XOMODEL_IMAGE_MODEL（如 gpt-image-2 或 nova-g-image-2）',
+    });
     return false;
   }
   return true;
@@ -42,9 +57,10 @@ function clampCount(n) {
 
 function registerImageRoutes(app, { requireImageStudio }) {
   app.get('/api/image/config', requireImageStudio, (_req, res) => {
+    const model = getImageModel();
     res.json({
-      configured: !!XOMODEL_API_KEY,
-      model: IMAGE_MODEL,
+      configured: !!getApiKey() && !!model,
+      model,
       apiBase: XOMODEL_API_BASE,
       resolutions: ['1k', '2k', '4k'],
       aspectRatios: ASPECT_RATIOS,
@@ -54,7 +70,8 @@ function registerImageRoutes(app, { requireImageStudio }) {
   });
 
   app.post('/api/image/generate', requireImageStudio, async (req, res) => {
-    if (!ensureApiKey(res)) return;
+    const model = getImageModel(req.body?.model);
+    if (!ensureApiReady(res, model)) return;
     const {
       prompt,
       n = 1,
@@ -70,25 +87,22 @@ function registerImageRoutes(app, { requireImageStudio }) {
     const count = clampCount(n);
     try {
       const body = {
-        model: IMAGE_MODEL,
+        model,
         prompt: prompt.trim(),
         n: count,
         size,
       };
-      if (['low', 'medium', 'high', 'auto'].includes(quality)) {
-        body.quality = quality;
-      }
       const resp = await fetch(`${XOMODEL_API_BASE}/v1/images/generations`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${XOMODEL_API_KEY}`,
+          Authorization: `Bearer ${getApiKey()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
       });
       const { ok, status, data } = await parseUpstreamResponse(resp);
       if (!ok) return res.status(status).json(data);
-      res.json({ ...data, meta: { size, resolution, aspectRatio, n: count, quality } });
+      res.json({ ...data, meta: { model, size, resolution, aspectRatio, n: count, quality } });
     } catch (e) {
       console.error('[ImageAPI] 文生图失败:', e.message);
       res.status(502).json({ error: e.message || '上游请求失败' });
@@ -101,7 +115,8 @@ function registerImageRoutes(app, { requireImageStudio }) {
       next();
     });
   }, async (req, res) => {
-    if (!ensureApiKey(res)) return;
+    const model = getImageModel(req.body?.model);
+    if (!ensureApiReady(res, model)) return;
     const prompt = (req.body?.prompt || '').trim();
     if (!prompt) {
       return res.status(400).json({ error: '请输入编辑提示词 prompt' });
@@ -118,12 +133,12 @@ function registerImageRoutes(app, { requireImageStudio }) {
 
     try {
       const form = new FormData();
-      form.append('model', IMAGE_MODEL);
+      form.append('model', model);
+      form.append('prompt', prompt);
       form.append('image[]', req.file.buffer, {
         filename: req.file.originalname || 'input.png',
         contentType: req.file.mimetype,
       });
-      form.append('prompt', prompt);
       form.append('size', size);
       form.append('quality', quality);
       form.append('output_format', outputFormat);
@@ -132,14 +147,14 @@ function registerImageRoutes(app, { requireImageStudio }) {
       const resp = await fetch(`${XOMODEL_API_BASE}/v1/images/edits`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${XOMODEL_API_KEY}`,
+          Authorization: `Bearer ${getApiKey()}`,
           ...form.getHeaders(),
         },
         body: form,
       });
       const { ok, status, data } = await parseUpstreamResponse(resp);
       if (!ok) return res.status(status).json(data);
-      res.json({ ...data, meta: { size, resolution, aspectRatio, quality, n: count } });
+      res.json({ ...data, meta: { model, size, resolution, aspectRatio, quality, n: count } });
     } catch (e) {
       console.error('[ImageAPI] 图生图失败:', e.message);
       res.status(502).json({ error: e.message || '上游请求失败' });

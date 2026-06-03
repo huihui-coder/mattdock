@@ -15,6 +15,7 @@ module.exports = {
       max_memory_restart: '500M',
       merge_logs: true,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      env_file: '.env',
     },
   ],
 };
