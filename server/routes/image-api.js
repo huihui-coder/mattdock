@@ -1,5 +1,6 @@
 const multer = require('multer');
 const FormData = require('form-data');
+const { ASPECT_RATIOS, resolveImageSize, resolveEditSize } = require('../lib/image-size');
 
 const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.xomodel.com').replace(/\/$/, '');
 const XOMODEL_API_KEY = process.env.XOMODEL_API_KEY || '';
@@ -35,30 +36,59 @@ async function parseUpstreamResponse(resp) {
   return { ok: resp.ok, status: resp.status, data };
 }
 
+function clampCount(n) {
+  return Math.min(Math.max(Number(n) || 1, 1), 4);
+}
+
 function registerImageRoutes(app, { requireImageStudio }) {
+  app.get('/api/image/config', requireImageStudio, (_req, res) => {
+    res.json({
+      configured: !!XOMODEL_API_KEY,
+      model: IMAGE_MODEL,
+      apiBase: XOMODEL_API_BASE,
+      resolutions: ['1k', '2k', '4k'],
+      aspectRatios: ASPECT_RATIOS,
+      counts: [1, 2, 3, 4],
+      qualities: ['low', 'medium', 'high'],
+    });
+  });
+
   app.post('/api/image/generate', requireImageStudio, async (req, res) => {
     if (!ensureApiKey(res)) return;
-    const { prompt, n = 1, size = '1024x1024' } = req.body || {};
+    const {
+      prompt,
+      n = 1,
+      resolution = '1k',
+      aspectRatio = '1:1',
+      quality = 'high',
+      size: sizeOverride,
+    } = req.body || {};
     if (!prompt?.trim()) {
       return res.status(400).json({ error: '请输入提示词 prompt' });
     }
+    const size = sizeOverride || resolveImageSize(resolution, aspectRatio);
+    const count = clampCount(n);
     try {
+      const body = {
+        model: IMAGE_MODEL,
+        prompt: prompt.trim(),
+        n: count,
+        size,
+      };
+      if (['low', 'medium', 'high', 'auto'].includes(quality)) {
+        body.quality = quality;
+      }
       const resp = await fetch(`${XOMODEL_API_BASE}/v1/images/generations`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${XOMODEL_API_KEY}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model: IMAGE_MODEL,
-          prompt: prompt.trim(),
-          n: Math.min(Math.max(Number(n) || 1, 1), 4),
-          size,
-        }),
+        body: JSON.stringify(body),
       });
       const { ok, status, data } = await parseUpstreamResponse(resp);
       if (!ok) return res.status(status).json(data);
-      res.json(data);
+      res.json({ ...data, meta: { size, resolution, aspectRatio, n: count, quality } });
     } catch (e) {
       console.error('[ImageAPI] 文生图失败:', e.message);
       res.status(502).json({ error: e.message || '上游请求失败' });
@@ -79,9 +109,12 @@ function registerImageRoutes(app, { requireImageStudio }) {
     if (!req.file) {
       return res.status(400).json({ error: '请上传参考图片' });
     }
-    const size = req.body?.size || 'auto';
+    const resolution = req.body?.resolution || '1k';
+    const aspectRatio = req.body?.aspectRatio || 'auto';
+    const size = req.body?.size || resolveEditSize(resolution, aspectRatio);
     const quality = req.body?.quality || 'high';
     const outputFormat = req.body?.output_format || 'png';
+    const count = clampCount(req.body?.n);
 
     try {
       const form = new FormData();
@@ -94,6 +127,7 @@ function registerImageRoutes(app, { requireImageStudio }) {
       form.append('size', size);
       form.append('quality', quality);
       form.append('output_format', outputFormat);
+      if (count > 1) form.append('n', String(count));
 
       const resp = await fetch(`${XOMODEL_API_BASE}/v1/images/edits`, {
         method: 'POST',
@@ -105,19 +139,11 @@ function registerImageRoutes(app, { requireImageStudio }) {
       });
       const { ok, status, data } = await parseUpstreamResponse(resp);
       if (!ok) return res.status(status).json(data);
-      res.json(data);
+      res.json({ ...data, meta: { size, resolution, aspectRatio, quality, n: count } });
     } catch (e) {
       console.error('[ImageAPI] 图生图失败:', e.message);
       res.status(502).json({ error: e.message || '上游请求失败' });
     }
-  });
-
-  app.get('/api/image/config', requireImageStudio, (_req, res) => {
-    res.json({
-      configured: !!XOMODEL_API_KEY,
-      model: IMAGE_MODEL,
-      apiBase: XOMODEL_API_BASE,
-    });
   });
 }
 
