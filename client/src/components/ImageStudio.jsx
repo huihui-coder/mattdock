@@ -227,6 +227,57 @@ function downloadUrl(url, id) {
   a.click()
 }
 
+function ImagePreviewModal({ url, onClose }) {
+  useEffect(() => {
+    if (!url) return undefined
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose()
+    }
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = prevOverflow
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [url, onClose])
+
+  if (!url) return null
+
+  return (
+    <div
+      id="task-image-preview-modal"
+      className="asset-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="图片预览"
+    >
+      <div
+        className="asset-modal-backdrop"
+        data-close-task-preview="true"
+        onClick={onClose}
+        aria-hidden
+      />
+      <div className="task-image-preview-dialog">
+        <img
+          id="task-image-preview-image"
+          className="task-image-preview-image"
+          src={url}
+          alt="image preview"
+        />
+        <video
+          id="task-image-preview-video"
+          className="task-image-preview-video"
+          controls
+          playsInline
+          preload="none"
+          hidden
+        />
+      </div>
+    </div>
+  )
+}
+
 export default function ImageStudio() {
   const [configured, setConfigured] = useState(null)
   const [configHint, setConfigHint] = useState('')
@@ -245,6 +296,7 @@ export default function ImageStudio() {
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState('')
   const [userInitial, setUserInitial] = useState('U')
+  const [previewUrl, setPreviewUrl] = useState(null)
 
   const fileRef = useRef(null)
   const feedRef = useRef(null)
@@ -525,9 +577,8 @@ export default function ImageStudio() {
     }
   }
 
-  const handlePreview = (url) => {
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }
+  const handlePreview = (url) => setPreviewUrl(url)
+  const closePreview = useCallback(() => setPreviewUrl(null), [])
 
   const onPaste = (e) => {
     const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'))
@@ -545,6 +596,7 @@ export default function ImageStudio() {
 
   return (
     <div className="image-studio">
+      <ImagePreviewModal url={previewUrl} onClose={closePreview} />
       {configured === false && configHint && (
         <div className="ui-card p-3 mb-3 flex items-start gap-2 border-amber-200 bg-amber-50" role="alert">
           <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={16} />
