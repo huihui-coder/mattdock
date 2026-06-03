@@ -6,6 +6,22 @@ const path = require('path');
 
 const execFileAsync = promisify(execFile);
 
+/** 图生图清晰度：xomodel 控制台成功记录多为 standard */
+const DEFAULT_EDIT_QUALITY = (process.env.IMAGE_EDIT_QUALITY || 'standard').trim() || 'standard';
+
+/**
+ * 图生图输出尺寸：官方示例与控制台成功记录均为 auto
+ * 非 auto 的 2k/16:9 会得到 4096x2304，易触发上游 502
+ */
+function resolveUpstreamEditSize(resolution, aspectRatio, explicit) {
+  if (explicit && String(explicit).trim()) return String(explicit).trim();
+  if (process.env.IMAGE_EDIT_FORCE_AUTO_SIZE === '0') {
+    const { resolveEditSize } = require('./image-size');
+    return resolveEditSize(resolution, aspectRatio);
+  }
+  return 'auto';
+}
+
 /**
  * 经 curl 转发图生图（与官方示例一致，避免 Node fetch multipart 丢失 model 字段）
  */
@@ -32,7 +48,6 @@ async function upstreamImageEditViaCurl({
 
     const args = [
       '-s',
-      '-S',
       '-X',
       'POST',
       `${apiBase}/v1/images/edits`,
@@ -57,18 +72,30 @@ async function upstreamImageEditViaCurl({
     ];
     if (count > 1) args.push('-F', `n=${String(count)}`);
 
-    const { stdout } = await execFileAsync('curl', args, {
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: 300000,
-    });
+    let stdout;
+    let stderr;
+    try {
+      const out = await execFileAsync('curl', args, {
+        maxBuffer: 64 * 1024 * 1024,
+        timeout: 300000,
+      });
+      stdout = out.stdout;
+      stderr = out.stderr;
+    } catch (e) {
+      stderr = e.stderr || e.message;
+      throw new Error(stderr ? String(stderr).trim() : e.message);
+    }
 
     const httpCode = Number(String(stdout).trim()) || 500;
     const raw = fs.existsSync(outPath) ? fs.readFileSync(outPath, 'utf8') : '';
     let data;
     try {
-      data = raw ? JSON.parse(raw) : { error: 'empty response' };
+      data = raw ? JSON.parse(raw) : { error: stderr || 'empty response' };
     } catch {
-      data = { error: raw || 'invalid json' };
+      data = { error: raw || stderr || 'invalid json' };
+    }
+    if (!data.error && httpCode >= 400) {
+      data = { error: { message: raw || `HTTP ${httpCode}` } };
     }
     return { ok: httpCode >= 200 && httpCode < 300, status: httpCode, data };
   } finally {
@@ -134,4 +161,9 @@ async function upstreamImageEdit(opts) {
   return result;
 }
 
-module.exports = { upstreamImageEdit, upstreamImageEditViaCurl };
+module.exports = {
+  upstreamImageEdit,
+  upstreamImageEditViaCurl,
+  DEFAULT_EDIT_QUALITY,
+  resolveUpstreamEditSize,
+};

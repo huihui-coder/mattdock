@@ -307,7 +307,7 @@ export default function ImageStudio() {
 
   const fileRef = useRef(null)
   const feedRef = useRef(null)
-  const quality = 'high'
+  const quality = 'standard'
 
   const refPreviews = useMemo(
     () => refFiles.map((f) => ({ file: f, url: URL.createObjectURL(f) })),
@@ -778,7 +778,9 @@ export default function ImageStudio() {
               <p className="text-xs text-red-600 m-0" role="alert">{formError}</p>
             )}
             {isEditMode && (
-              <p className="text-xs text-violet-600 m-0">已附加参考图 · 图生图（多张时仅用第一张）</p>
+              <p className="text-xs text-violet-600 m-0">
+                已附加参考图 · 图生图（输出尺寸由参考图自动匹配，建议宽高比选 Auto）
+              </p>
             )}
           </form>
         </section>

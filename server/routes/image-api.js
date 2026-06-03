@@ -1,6 +1,10 @@
 const multer = require('multer');
-const { ASPECT_RATIOS, resolveImageSize, resolveEditSize } = require('../lib/image-size');
-const { upstreamImageEdit } = require('../lib/image-edit-upstream');
+const { ASPECT_RATIOS, resolveImageSize } = require('../lib/image-size');
+const {
+  upstreamImageEdit,
+  DEFAULT_EDIT_QUALITY,
+  resolveUpstreamEditSize,
+} = require('../lib/image-edit-upstream');
 
 const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.xomodel.com').replace(/\/$/, '');
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
@@ -159,10 +163,12 @@ function registerImageRoutes(app, { requireImageStudio }) {
     }
     const resolution = req.body?.resolution || '1k';
     const aspectRatio = req.body?.aspectRatio || 'auto';
-    const size =
-      (req.body?.size && String(req.body.size).trim()) ||
-      resolveEditSize(resolution, aspectRatio);
-    const quality = req.body?.quality || 'high';
+    const size = resolveUpstreamEditSize(
+      resolution,
+      aspectRatio,
+      req.body?.size,
+    );
+    const quality = req.body?.quality || DEFAULT_EDIT_QUALITY;
     const outputFormat = req.body?.output_format || 'png';
     const count = clampCount(req.body?.n);
 
@@ -192,7 +198,10 @@ function registerImageRoutes(app, { requireImageStudio }) {
       res.json({ ...data, meta: { model, size, resolution, aspectRatio, quality, n: count } });
     } catch (e) {
       console.error('[ImageAPI] 图生图失败:', e.message);
-      res.status(502).json({ error: e.message || '上游请求失败' });
+      res.status(502).json({
+        error: e.message || '图生图请求失败',
+        hint: '图生图建议使用宽高比 Auto；若仍失败请查看 pm2 logs',
+      });
     }
   });
 }
