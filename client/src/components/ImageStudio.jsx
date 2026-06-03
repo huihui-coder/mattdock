@@ -1,5 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, Trash2 } from 'lucide-react'
+import {
+  loadImageStudioTasks,
+  saveImageStudioTasks,
+  clearImageStudioTasks,
+  buildStoredReferences,
+} from '../lib/image-studio-storage'
 
 function getToken() {
   return localStorage.getItem('auth_token') || ''
@@ -287,7 +293,8 @@ export default function ImageStudio() {
     counts: [1, 2, 3, 4],
     model: 'gpt-image-2',
   })
-  const [tasks, setTasks] = useState([])
+  const [tasks, setTasks] = useState(() => loadImageStudioTasks())
+  const [storageNote, setStorageNote] = useState('')
   const [prompt, setPrompt] = useState('')
   const [refFiles, setRefFiles] = useState([])
   const [resolution, setResolution] = useState('1k')
@@ -370,6 +377,14 @@ export default function ImageStudio() {
     scrollFeedToBottom()
   }, [tasks.length, submitting, scrollFeedToBottom])
 
+  useEffect(() => {
+    const tid = setTimeout(() => {
+      const ok = saveImageStudioTasks(tasks)
+      setStorageNote(ok ? '' : '本地存储空间不足，已自动裁剪较早记录')
+    }, 500)
+    return () => clearTimeout(tid)
+  }, [tasks])
+
   const runningCount = tasks.filter((t) => t.status === 'RUNNING').length
   useEffect(() => {
     if (runningCount === 0) return undefined
@@ -426,12 +441,20 @@ export default function ImageStudio() {
       url: URL.createObjectURL(f),
       name: f.name,
     }))
+    let storedRefs = refsSnapshot
+    if (refs?.length > 0) {
+      try {
+        storedRefs = await buildStoredReferences(refs)
+      } catch {
+        storedRefs = refsSnapshot
+      }
+    }
 
     const pending = {
       id: taskId,
       status: 'RUNNING',
       prompt: taskPrompt,
-      references: refsSnapshot,
+      references: storedRefs,
       model: modelName,
       modelLabel: modelLabel(modelName),
       resolution: res,
@@ -451,15 +474,21 @@ export default function ImageStudio() {
       let resHttp
       if (refs?.length > 0) {
         const form = new FormData()
+        const editSize = ar === 'auto' ? 'auto' : undefined
         form.append('model', modelName)
+        form.append('image[]', refs[0], refs[0].name || 'input.png')
         form.append('prompt', taskPrompt)
-        form.append('image', refs[0])
+        if (editSize) form.append('size', editSize)
         form.append('resolution', res)
         form.append('aspectRatio', ar)
         form.append('quality', quality)
-        form.append('n', String(n))
         form.append('output_format', 'png')
-        resHttp = await apiFetch('/api/image/edit', { method: 'POST', body: form })
+        if (n > 1) form.append('n', String(n))
+        resHttp = await apiFetch('/api/image/edit', {
+          method: 'POST',
+          headers: { 'x-image-model': modelName },
+          body: form,
+        })
       } else {
         resHttp = await apiFetch('/api/image/generate', {
           method: 'POST',
@@ -594,9 +623,35 @@ export default function ImageStudio() {
     if (files.length) addRefFiles(files)
   }
 
+  const handleClearHistory = () => {
+    if (!tasks.length) return
+    if (!window.confirm('确定清空本机所有 AI 生图记录？生成图片将无法从历史中找回。')) return
+    clearImageStudioTasks()
+    setTasks([])
+    setStorageNote('')
+  }
+
+  const persistedCount = tasks.filter((t) => t.status !== 'RUNNING').length
+
   return (
     <div className="image-studio">
       <ImagePreviewModal url={previewUrl} onClose={closePreview} />
+      <div className="image-studio-toolbar flex items-center justify-between gap-2 mb-2 shrink-0">
+        <p className="text-xs text-slate-500 m-0">
+          记录保存在本浏览器（{persistedCount} 条）
+          {storageNote && <span className="text-amber-600"> · {storageNote}</span>}
+        </p>
+        {tasks.length > 0 && (
+          <button
+            type="button"
+            className="ui-btn-ghost text-xs py-1 px-2 inline-flex items-center gap-1"
+            onClick={handleClearHistory}
+          >
+            <Trash2 size={14} aria-hidden />
+            清空记录
+          </button>
+        )}
+      </div>
       {configured === false && configHint && (
         <div className="ui-card p-3 mb-3 flex items-start gap-2 border-amber-200 bg-amber-50" role="alert">
           <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={16} />

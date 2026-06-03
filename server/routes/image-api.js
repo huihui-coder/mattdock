@@ -128,35 +128,44 @@ function registerImageRoutes(app, { requireImageStudio }) {
   });
 
   app.post('/api/image/edit', requireImageStudio, (req, res, next) => {
-    upload.single('image')(req, res, (err) => {
+    upload.fields([
+      { name: 'image', maxCount: 1 },
+      { name: 'image[]', maxCount: 1 },
+    ])(req, res, (err) => {
       if (err) return res.status(400).json({ error: err.message });
       next();
     });
   }, async (req, res) => {
-    const model = getImageModel(req.body?.model);
+    const model = getImageModel(req.body?.model || req.headers['x-image-model']);
     if (!ensureApiReady(res, model)) return;
     const prompt = (req.body?.prompt || '').trim();
     if (!prompt) {
       return res.status(400).json({ error: '请输入编辑提示词 prompt' });
     }
-    if (!req.file) {
+    const file =
+      req.files?.['image[]']?.[0] ||
+      req.files?.image?.[0] ||
+      req.file;
+    if (!file) {
       return res.status(400).json({ error: '请上传参考图片' });
     }
     const resolution = req.body?.resolution || '1k';
     const aspectRatio = req.body?.aspectRatio || 'auto';
-    const size = req.body?.size || resolveEditSize(resolution, aspectRatio);
+    const size =
+      (req.body?.size && String(req.body.size).trim()) ||
+      resolveEditSize(resolution, aspectRatio);
     const quality = req.body?.quality || 'high';
     const outputFormat = req.body?.output_format || 'png';
     const count = clampCount(req.body?.n);
 
     try {
       const form = new FormData();
-      form.append('model', model);
-      form.append('prompt', prompt);
-      form.append('image[]', req.file.buffer, {
-        filename: req.file.originalname || 'input.png',
-        contentType: req.file.mimetype,
+      form.append('model', String(model));
+      form.append('image[]', file.buffer, {
+        filename: file.originalname || 'input.png',
+        contentType: file.mimetype || 'image/png',
       });
+      form.append('prompt', prompt);
       form.append('size', size);
       form.append('quality', quality);
       form.append('output_format', outputFormat);
