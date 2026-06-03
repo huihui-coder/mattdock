@@ -48,6 +48,10 @@ async function upstreamImageEditViaCurl({
 
     const args = [
       '-s',
+      '--connect-timeout',
+      '30',
+      '--max-time',
+      '300',
       '-X',
       'POST',
       `${apiBase}/v1/images/edits`,
@@ -97,6 +101,10 @@ async function upstreamImageEditViaCurl({
     if (!data.error && httpCode >= 400) {
       data = { error: { message: raw || `HTTP ${httpCode}` } };
     }
+    if (httpCode >= 400) {
+      const preview = raw ? raw.slice(0, 800) : '(empty body)';
+      console.error('[ImageAPI] curl 上游响应', { httpCode, preview });
+    }
     return { ok: httpCode >= 200 && httpCode < 300, status: httpCode, data };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -143,22 +151,37 @@ async function upstreamImageEditViaFetch({ apiBase, apiKey, model, file, prompt,
 }
 
 /**
- * 图生图上游请求：默认 curl，失败时回退 fetch
+ * 图生图上游请求：默认 curl，502/503/429 自动重试一次
  */
 async function upstreamImageEdit(opts) {
   const useCurl = process.env.IMAGE_EDIT_USE_CURL !== '0';
-  if (useCurl) {
-    try {
-      const result = await upstreamImageEditViaCurl(opts);
-      console.log('[ImageAPI] 图生图 via curl', { model: opts.model, status: result.status });
-      return result;
-    } catch (e) {
-      console.warn('[ImageAPI] curl 不可用，回退 fetch:', e.message);
+  const maxAttempts = Math.min(Math.max(Number(process.env.IMAGE_EDIT_RETRY || 2), 1), 3);
+  const retryStatuses = new Set([502, 503, 429]);
+
+  const runOnce = async () => {
+    if (useCurl) {
+      try {
+        return await upstreamImageEditViaCurl(opts);
+      } catch (e) {
+        console.warn('[ImageAPI] curl 执行异常:', e.message);
+        if (process.env.IMAGE_EDIT_USE_CURL === '1') throw e;
+      }
     }
+    return upstreamImageEditViaFetch(opts);
+  };
+
+  let last;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (attempt > 0) {
+      console.warn(`[ImageAPI] 图生图第 ${attempt + 1} 次重试…`);
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+    last = await runOnce();
+    const via = useCurl ? 'curl' : 'fetch';
+    console.log(`[ImageAPI] 图生图 via ${via}`, { model: opts.model, status: last.status, attempt: attempt + 1 });
+    if (last.ok || !retryStatuses.has(last.status)) return last;
   }
-  const result = await upstreamImageEditViaFetch(opts);
-  console.log('[ImageAPI] 图生图 via fetch', { model: opts.model, status: result.status });
-  return result;
+  return last;
 }
 
 module.exports = {
