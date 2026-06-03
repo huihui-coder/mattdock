@@ -102,16 +102,19 @@ body {
 .bg-critical { background-color: #fef2f2; }
 .bg-unknown { background-color: #f8fafc; }
 
-/* AI 生图 — 对话式任务流 */
+/* AI 生图 — 对话式任务流（仅中间滚动，底部 Composer 固定） */
 .image-studio {
-  --composer-space: 280px;
+  --composer-space: 300px;
   display: flex;
   flex-direction: column;
-  min-height: calc(100vh - 11.5rem);
-  max-height: calc(100vh - 11.5rem);
+  height: calc(100dvh - 11.5rem);
+  max-height: calc(100dvh - 11.5rem);
+  min-height: 24rem;
+  overflow: hidden;
 }
 
 .image-studio .chat-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -123,18 +126,31 @@ body {
   box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
 }
 
+.image-studio .chat-panel.is-composer-docked {
+  --dashboard-composer-space: var(--composer-space);
+}
+
 .image-studio .task-stream {
   flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 1rem 1.25rem var(--composer-space);
   scroll-padding-bottom: var(--composer-space);
 }
 
 .image-studio .composer.is-docked {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
   flex-shrink: 0;
   border-top: 1px solid var(--color-border);
   background: #fafbfc;
   padding: 0.75rem 1rem 1rem;
+  box-shadow: 0 -6px 16px rgb(15 23 42 / 0.06);
 }
 
 .image-studio .composer-form {

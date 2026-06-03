@@ -604,7 +604,7 @@ export default function ImageStudio() {
         </div>
       )}
 
-      <section className="chat-panel">
+      <section className="chat-panel is-composer-docked">
         <div ref={feedRef} className="task-stream">
           {tasks.length === 0 && (
             <div className="feed-empty">
