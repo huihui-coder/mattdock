@@ -32,9 +32,23 @@ function pickImageUrls(data) {
 function formatApiError(data, fallback) {
   if (!data) return fallback
   if (typeof data.error === 'string') return data.error
-  if (data.error?.message) return data.error.message
+  if (data.error?.message) {
+    const hint = data.hint ? `（${data.hint}）` : ''
+    return `${data.error.message}${hint}`
+  }
   if (data.message) return data.message
+  if (data.hint) return `${fallback}：${data.hint}`
   return fallback
+}
+
+function httpErrorMessage(res, data, fallback) {
+  if (res.status === 401) {
+    return '登录已过期，请退出后重新登录（服务器重启后需重新登录一次）'
+  }
+  if (res.status === 403) {
+    return '无「AI 生图」权限，请联系管理员'
+  }
+  return formatApiError(data, fallback)
 }
 
 const DEFAULT_ASPECT_RATIOS = [
@@ -503,8 +517,10 @@ export default function ImageStudio() {
           }),
         })
       }
-      const data = await resHttp.json()
-      if (!resHttp.ok) throw new Error(formatApiError(data, refs?.length ? '编辑失败' : '生成失败'))
+      const data = await resHttp.json().catch(() => ({}))
+      if (!resHttp.ok) {
+        throw new Error(httpErrorMessage(resHttp, data, refs?.length ? '图生图失败' : '文生图失败'))
+      }
       const urls = pickImageUrls(data)
       if (!urls.length) throw new Error('响应中无图片数据')
 

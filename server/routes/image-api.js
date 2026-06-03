@@ -193,7 +193,12 @@ function registerImageRoutes(app, { requireImageStudio }) {
       });
       if (!ok) {
         logUpstreamModelError('图生图', model, { model, prompt, size, quality }, data);
-        return res.status(status).json(data);
+        const errMsg =
+          data?.error?.message || data?.error || data?.message || '上游图生图失败';
+        return res.status(status >= 400 && status < 600 ? status : 502).json({
+          error: typeof errMsg === 'string' ? { message: errMsg } : errMsg,
+          hint: status === 502 ? '上游暂时不可用，请稍后重试或选宽高比 Auto' : undefined,
+        });
       }
       res.json({ ...data, meta: { model, size, resolution, aspectRatio, quality, n: count } });
     } catch (e) {

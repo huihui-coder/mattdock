@@ -24,9 +24,39 @@ const AUTH_USER = process.env.AUTH_USER || 'admin';
 const AUTH_PASS = process.env.AUTH_PASS || 'admin123';
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const USER_FILE = path.join(__dirname, '../haizhuDB/users.json');
+const SESSION_FILE = path.join(__dirname, '../haizhuDB/sessions.json');
 const AVATAR_DIR = path.join(__dirname, '../haizhuDB/avatars');
 const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records', 'image-studio'];
 const sessions = new Map();
+
+function loadSessions() {
+  try {
+    if (!fs.existsSync(SESSION_FILE)) return;
+    const raw = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+    const now = Date.now();
+    let n = 0;
+    for (const [token, session] of Object.entries(raw || {})) {
+      if (session?.expireAt > now) {
+        sessions.set(token, session);
+        n += 1;
+      }
+    }
+    if (n) console.log(`[Auth] 已恢复 ${n} 个登录会话`);
+  } catch (e) {
+    console.warn('[Auth] 读取会话文件失败:', e.message);
+  }
+}
+
+function persistSessions() {
+  try {
+    fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(Object.fromEntries(sessions)), 'utf8');
+  } catch (e) {
+    console.warn('[Auth] 保存会话失败:', e.message);
+  }
+}
+
+loadSessions();
 
 function sanitizeUser(user, { includePassword = false } = {}) {
   if (!user) return null;
@@ -92,8 +122,9 @@ function signToken(user) {
   sessions.set(token, {
     expireAt: Date.now() + TOKEN_TTL_MS,
     user: sanitizeUser(user),
-    lastActiveAt: Date.now()
+    lastActiveAt: Date.now(),
   });
+  persistSessions();
   return token;
 }
 
@@ -101,7 +132,10 @@ function getSession(req) {
   const token = req.headers['x-auth-token'] || req.query.token;
   const session = sessions.get(token);
   if (!token || !session || Date.now() > session.expireAt) {
-    if (token) sessions.delete(token);
+    if (token) {
+      sessions.delete(token);
+      persistSessions();
+    }
     return null;
   }
   session.lastActiveAt = Date.now();
@@ -247,6 +281,7 @@ app.post('/api/login', (req, res) => {
 
 app.post('/api/logout', requireLogin, (req, res) => {
   sessions.delete(req.token);
+  persistSessions();
   res.json({ success: true });
 });
 
@@ -337,6 +372,7 @@ app.delete('/api/users/:username', requireAdmin, (req, res) => {
   for (const [token, session] of sessions.entries()) {
     if (session.user?.username === target) sessions.delete(token);
   }
+  persistSessions();
 
   try {
     const avatarFiles = fs.readdirSync(AVATAR_DIR).filter(f => f.startsWith(`${target}.`));
