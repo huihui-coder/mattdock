@@ -116,7 +116,13 @@ export default function ImageStudio() {
         } else {
           setConfigHint('服务端未配置生图模型名 XOMODEL_IMAGE_MODEL，请检查 .env 后重启。')
         }
-        if (d.resolutions) setApiOptions(prev => ({ ...prev, ...d }))
+        if (d.resolutions) {
+          setApiOptions(prev => ({
+            ...prev,
+            ...d,
+            model: (d.model && String(d.model).trim()) || prev.model || 'gpt-image-2',
+          }))
+        }
       })
       .catch(() => {
         setConfigured(false)
@@ -180,10 +186,12 @@ export default function ImageStudio() {
     setResultMeta(null)
     try {
       let res
+      const modelName = (apiOptions.model && String(apiOptions.model).trim()) || 'gpt-image-2'
       if (isEditMode) {
         const form = new FormData()
-        form.append('image', imageFile)
+        form.append('model', modelName)
         form.append('prompt', prompt.trim())
+        form.append('image', imageFile)
         form.append('resolution', resolution)
         form.append('aspectRatio', aspectRatio)
         form.append('quality', quality)
@@ -195,6 +203,7 @@ export default function ImageStudio() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            model: modelName,
             prompt: prompt.trim(),
             n: count,
             resolution,

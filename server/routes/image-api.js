@@ -6,9 +6,10 @@ const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.xomodel.co
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 
 function getImageModel(override) {
-  const raw = override ?? process.env.XOMODEL_IMAGE_MODEL ?? DEFAULT_IMAGE_MODEL;
-  const model = String(raw).trim();
-  return model || DEFAULT_IMAGE_MODEL;
+  const trimmed =
+    override != null && String(override).trim() ? String(override).trim() : null;
+  const fromEnv = (process.env.XOMODEL_IMAGE_MODEL || '').trim();
+  return trimmed || fromEnv || DEFAULT_IMAGE_MODEL;
 }
 
 function getApiKey() {
@@ -53,6 +54,17 @@ async function parseUpstreamResponse(resp) {
 
 function clampCount(n) {
   return Math.min(Math.max(Number(n) || 1, 1), 4);
+}
+
+function logUpstreamModelError(kind, model, payload, data) {
+  const msg = JSON.stringify(data?.error || data || '');
+  if (!/model.*empty|model.*not specified/i.test(msg)) return;
+  console.error(
+    `[ImageAPI] ${kind} 上游报 model 为空 — 实际发送 model="${model}", env MODEL="${(process.env.XOMODEL_IMAGE_MODEL || '').trim()}"`,
+    typeof payload === 'object' && !Buffer.isBuffer(payload?.image)
+      ? { ...payload, prompt: payload.prompt ? '(set)' : '(empty)' }
+      : '(multipart)',
+  );
 }
 
 function registerImageRoutes(app, { requireImageStudio }) {
@@ -104,7 +116,10 @@ function registerImageRoutes(app, { requireImageStudio }) {
         body: JSON.stringify(body),
       });
       const { ok, status, data } = await parseUpstreamResponse(resp);
-      if (!ok) return res.status(status).json(data);
+      if (!ok) {
+        logUpstreamModelError('文生图', model, body, data);
+        return res.status(status).json(data);
+      }
       res.json({ ...data, meta: { model, size, resolution, aspectRatio, n: count, quality } });
     } catch (e) {
       console.error('[ImageAPI] 文生图失败:', e.message);
@@ -156,7 +171,10 @@ function registerImageRoutes(app, { requireImageStudio }) {
         body: form,
       });
       const { ok, status, data } = await parseUpstreamResponse(resp);
-      if (!ok) return res.status(status).json(data);
+      if (!ok) {
+        logUpstreamModelError('图生图', model, { model, prompt, size, quality }, data);
+        return res.status(status).json(data);
+      }
       res.json({ ...data, meta: { model, size, resolution, aspectRatio, quality, n: count } });
     } catch (e) {
       console.error('[ImageAPI] 图生图失败:', e.message);
