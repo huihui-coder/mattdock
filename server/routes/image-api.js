@@ -35,8 +35,8 @@ async function parseUpstreamResponse(resp) {
   return { ok: resp.ok, status: resp.status, data };
 }
 
-function registerImageRoutes(app, { requireLogin }) {
-  app.post('/api/image/generate', requireLogin, async (req, res) => {
+function registerImageRoutes(app, { requireImageStudio }) {
+  app.post('/api/image/generate', requireImageStudio, async (req, res) => {
     if (!ensureApiKey(res)) return;
     const { prompt, n = 1, size = '1024x1024' } = req.body || {};
     if (!prompt?.trim()) {
@@ -65,7 +65,7 @@ function registerImageRoutes(app, { requireLogin }) {
     }
   });
 
-  app.post('/api/image/edit', requireLogin, (req, res, next) => {
+  app.post('/api/image/edit', requireImageStudio, (req, res, next) => {
     upload.single('image')(req, res, (err) => {
       if (err) return res.status(400).json({ error: err.message });
       next();
@@ -112,7 +112,7 @@ function registerImageRoutes(app, { requireLogin }) {
     }
   });
 
-  app.get('/api/image/config', requireLogin, (_req, res) => {
+  app.get('/api/image/config', requireImageStudio, (_req, res) => {
     res.json({
       configured: !!XOMODEL_API_KEY,
       model: IMAGE_MODEL,

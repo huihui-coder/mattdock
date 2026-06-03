@@ -25,7 +25,7 @@ const AUTH_PASS = process.env.AUTH_PASS || 'admin123';
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const USER_FILE = path.join(__dirname, '../haizhuDB/users.json');
 const AVATAR_DIR = path.join(__dirname, '../haizhuDB/avatars');
-const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records'];
+const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records', 'image-studio'];
 const sessions = new Map();
 
 function sanitizeUser(user, { includePassword = false } = {}) {
@@ -141,6 +141,21 @@ function requireAdmin(req, res, next) {
     if (req.user?.role !== 'admin') return res.status(403).json({ error: '仅管理员可操作' });
     next();
   });
+}
+
+function hasPermission(user, permission) {
+  return user?.role === 'admin' || (user?.permissions || []).includes(permission);
+}
+
+function requirePermission(permission) {
+  return (req, res, next) => {
+    requireLogin(req, res, () => {
+      if (!hasPermission(req.user, permission)) {
+        return res.status(403).json({ error: '无权限访问该功能' });
+      }
+      next();
+    });
+  };
 }
 
 // 中间件
@@ -445,7 +460,7 @@ mqttService.connect();
 setInterval(() => alertService.checkAirportOffline(), 60 * 1000);
 
 // API路由
-registerImageRoutes(app, { requireLogin });
+registerImageRoutes(app, { requireImageStudio: requirePermission('image-studio') });
 
 // 获取离巢告警配置
 app.get('/api/alert-config', (req, res) => {

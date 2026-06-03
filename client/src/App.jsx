@@ -256,7 +256,7 @@ function App() {
     hasPermission('alert-config') && { key: 'alert-config', label: '离巢告警配置', icon: Bell },
     hasPermission('flight-records') && { key: 'flight-records', label: '飞行记录', icon: History },
     user?.role === 'admin' && { key: 'accounts', label: '账号管理', icon: Users },
-    (!IS_PROD || user) && { key: 'image-studio', label: 'AI 生图', icon: Sparkles },
+    hasPermission('image-studio') && { key: 'image-studio', label: 'AI 生图', icon: Sparkles },
   ].filter(Boolean)
 
   useEffect(() => {
@@ -413,7 +413,7 @@ function App() {
           <AccountManager />
         )}
 
-        {activeTab === 'image-studio' && (!IS_PROD || user) && (
+        {activeTab === 'image-studio' && hasPermission('image-studio') && (
           <ImageStudio />
         )}
 

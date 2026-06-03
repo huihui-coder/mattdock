@@ -4,7 +4,8 @@ import { UserPlus, ShieldCheck, Pencil, Trash2, Eye, EyeOff, X, Save } from 'luc
 const PERMISSION_LABELS = {
   monitor: '实时监控',
   'alert-config': '离巢告警配置',
-  'flight-records': '飞行记录'
+  'flight-records': '飞行记录',
+  'image-studio': 'AI 生图',
 }
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
