@@ -56,11 +56,9 @@ async function upstreamImageEditViaCurl({
     const mime = mimeFromFile(file);
     const ext = path.extname(file.originalname || '') || extFromMime(mime);
     const imgPath = path.join(tmpDir, `input${ext}`);
-    const promptPath = path.join(tmpDir, 'prompt.txt');
     const outPath = path.join(tmpDir, 'out.json');
 
     fs.writeFileSync(imgPath, file.buffer);
-    fs.writeFileSync(promptPath, prompt, 'utf8');
 
     const imageField = `image[]=@${imgPath};type=${mime}`;
 
@@ -79,8 +77,8 @@ async function upstreamImageEditViaCurl({
       `model=${model}`,
       '-F',
       imageField,
-      '-F',
-      `prompt=@${promptPath}`,
+      '--form-string',
+      `prompt=${prompt}`,
       '-F',
       `size=${size}`,
       '-F',
