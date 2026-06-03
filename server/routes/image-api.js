@@ -1,10 +1,7 @@
 const multer = require('multer');
 const { ASPECT_RATIOS, resolveImageSize } = require('../lib/image-size');
-const {
-  upstreamImageEdit,
-  DEFAULT_EDIT_QUALITY,
-  resolveUpstreamEditSize,
-} = require('../lib/image-edit-upstream');
+const { upstreamImageEdit, DEFAULT_EDIT_QUALITY, resolveUpstreamEditSize } = require('../lib/image-edit-upstream');
+const { normalizeEditImage } = require('../lib/normalize-edit-image');
 
 const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.xomodel.com').replace(/\/$/, '');
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
@@ -161,6 +158,12 @@ function registerImageRoutes(app, { requireImageStudio }) {
     if (!file) {
       return res.status(400).json({ error: '请上传参考图片' });
     }
+    const normalized = await normalizeEditImage(file);
+    const uploadFile = {
+      buffer: normalized.buffer,
+      mimetype: normalized.mimetype,
+      originalname: normalized.originalname,
+    };
     const resolution = req.body?.resolution || '1k';
     const aspectRatio = req.body?.aspectRatio || 'auto';
     const size = resolveUpstreamEditSize(
@@ -177,16 +180,17 @@ function registerImageRoutes(app, { requireImageStudio }) {
         model,
         size,
         promptLen: prompt.length,
-        fileKb: Math.round(file.buffer.length / 1024),
-        mime: file.mimetype || 'unknown',
-        name: file.originalname || '',
+        fileKb: Math.round(uploadFile.buffer.length / 1024),
+        mime: uploadFile.mimetype || 'unknown',
+        name: uploadFile.originalname || '',
+        ...(normalized.meta || {}),
       });
 
       const { ok, status, data } = await upstreamImageEdit({
         apiBase: XOMODEL_API_BASE,
         apiKey: getApiKey(),
         model,
-        file,
+        file: uploadFile,
         prompt,
         size,
         quality,
