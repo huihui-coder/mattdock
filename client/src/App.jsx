@@ -10,7 +10,8 @@ import Login from './components/Login'
 import VirtualCockpit from './components/VirtualCockpit'
 import AccountManager from './components/AccountManager'
 import UserProfile from './components/UserProfile'
-import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users } from 'lucide-react'
+import ImageStudio from './components/ImageStudio'
+import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users, Sparkles } from 'lucide-react'
 
 const IS_PROD = import.meta.env.PROD
 
@@ -254,7 +255,8 @@ function App() {
     hasPermission('monitor') && { key: 'monitor', label: '实时监控', icon: LayoutDashboard },
     hasPermission('alert-config') && { key: 'alert-config', label: '离巢告警配置', icon: Bell },
     hasPermission('flight-records') && { key: 'flight-records', label: '飞行记录', icon: History },
-    user?.role === 'admin' && { key: 'accounts', label: '账号管理', icon: Users }
+    user?.role === 'admin' && { key: 'accounts', label: '账号管理', icon: Users },
+    (!IS_PROD || user) && { key: 'image-studio', label: 'AI 生图', icon: Sparkles },
   ].filter(Boolean)
 
   useEffect(() => {
@@ -409,6 +411,10 @@ function App() {
 
         {activeTab === 'accounts' && user?.role === 'admin' && (
           <AccountManager />
+        )}
+
+        {activeTab === 'image-studio' && (!IS_PROD || user) && (
+          <ImageStudio />
         )}
 
         {/* 设备详情弹窗 */}

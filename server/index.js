@@ -12,6 +12,7 @@ const MQTTService = require('./mqtt-service');
 const WebSocketService = require('./ws-service');
 const DeviceProcessor = require('./device-processor');
 const AlertService = require('./alert-service');
+const { registerImageRoutes } = require('./routes/image-api');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -444,6 +445,7 @@ mqttService.connect();
 setInterval(() => alertService.checkAirportOffline(), 60 * 1000);
 
 // API路由
+registerImageRoutes(app, { requireLogin });
 
 // 获取离巢告警配置
 app.get('/api/alert-config', (req, res) => {
