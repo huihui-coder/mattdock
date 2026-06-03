@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { Sparkles, ImagePlus, Upload, Loader2, Download, AlertCircle } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Sparkles, Loader2, Download, AlertCircle, X, ImagePlus } from 'lucide-react'
 
 function getToken() {
   return localStorage.getItem('auth_token') || ''
@@ -30,8 +30,11 @@ function formatApiError(data, fallback) {
 
 const SIZES = ['1024x1024', '1024x1536', '1536x1024']
 
+function acceptImageFile(file) {
+  return file && file.type.startsWith('image/')
+}
+
 export default function ImageStudio() {
-  const [mode, setMode] = useState('generate')
   const [configured, setConfigured] = useState(null)
   const [prompt, setPrompt] = useState('')
   const [size, setSize] = useState('1024x1024')
@@ -41,7 +44,11 @@ export default function ImageStudio() {
   const [resultUrl, setResultUrl] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
   const fileRef = useRef(null)
+  const dropRef = useRef(null)
+
+  const isEditMode = !!imageFile
 
   useEffect(() => {
     apiFetch('/api/image/config')
@@ -60,13 +67,38 @@ export default function ImageStudio() {
     return () => URL.revokeObjectURL(url)
   }, [imageFile])
 
-  const onFileChange = (e) => {
-    const f = e.target.files?.[0]
-    setImageFile(f || null)
+  const setImage = useCallback((file) => {
+    if (!acceptImageFile(file)) return
+    setImageFile(file)
     setError('')
+  }, [])
+
+  const clearImage = () => {
+    setImageFile(null)
+    if (fileRef.current) fileRef.current.value = ''
   }
 
-  const handleGenerate = async () => {
+  const onFileChange = (e) => {
+    const f = e.target.files?.[0]
+    if (f) setImage(f)
+  }
+
+  const onDrop = (e) => {
+    e.preventDefault()
+    setDragOver(false)
+    const f = e.dataTransfer.files?.[0]
+    if (f) setImage(f)
+  }
+
+  const onPaste = (e) => {
+    const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'))
+    if (!item) return
+    e.preventDefault()
+    const file = item.getAsFile()
+    if (file) setImage(file)
+  }
+
+  const handleSubmit = async () => {
     if (!prompt.trim()) {
       setError('请输入提示词')
       return
@@ -75,46 +107,24 @@ export default function ImageStudio() {
     setError('')
     setResultUrl(null)
     try {
-      const res = await apiFetch('/api/image/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim(), n: 1, size }),
-      })
+      let res
+      if (isEditMode) {
+        const form = new FormData()
+        form.append('image', imageFile)
+        form.append('prompt', prompt.trim())
+        form.append('size', 'auto')
+        form.append('quality', quality)
+        form.append('output_format', 'png')
+        res = await apiFetch('/api/image/edit', { method: 'POST', body: form })
+      } else {
+        res = await apiFetch('/api/image/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: prompt.trim(), n: 1, size }),
+        })
+      }
       const data = await res.json()
-      if (!res.ok) throw new Error(formatApiError(data, '生成失败'))
-      const url = pickImageUrl(data)
-      if (!url) throw new Error('响应中无图片数据')
-      setResultUrl(url)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleEdit = async () => {
-    if (!prompt.trim()) {
-      setError('请输入编辑提示词')
-      return
-    }
-    if (!imageFile) {
-      setError('请上传参考图')
-      return
-    }
-    setLoading(true)
-    setError('')
-    setResultUrl(null)
-    try {
-      const form = new FormData()
-      form.append('image', imageFile)
-      form.append('prompt', prompt.trim())
-      form.append('size', 'auto')
-      form.append('quality', quality)
-      form.append('output_format', 'png')
-
-      const res = await apiFetch('/api/image/edit', { method: 'POST', body: form })
-      const data = await res.json()
-      if (!res.ok) throw new Error(formatApiError(data, '编辑失败'))
+      if (!res.ok) throw new Error(formatApiError(data, isEditMode ? '编辑失败' : '生成失败'))
       const url = pickImageUrl(data)
       if (!url) throw new Error('响应中无图片数据')
       setResultUrl(url)
@@ -142,116 +152,103 @@ export default function ImageStudio() {
           <Sparkles size={22} className="text-violet-600" aria-hidden />
           AI 生图
         </h2>
-        <p className="text-sm text-slate-500 mt-1">GPT Image 2 · 文生图 / 图生图</p>
+        <p className="text-sm text-slate-500 mt-1">
+          GPT Image 2 · 输入提示词生成；拖入或粘贴图片则自动图生图编辑
+        </p>
       </div>
 
       {configured === false && (
         <div className="ui-card p-4 flex items-start gap-3 border-amber-200 bg-amber-50" role="alert">
           <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={18} />
           <p className="text-sm text-amber-900">
-            服务端未配置 <code className="text-xs bg-amber-100 px-1 rounded">XOMODEL_API_KEY</code>，请在服务器 .env 中填写后重启。
+            服务端未配置 <code className="text-xs bg-amber-100 px-1 rounded">XOMODEL_API_KEY</code>，请在 .env 中填写后重启。
           </p>
         </div>
       )}
 
-      <div className="ui-card p-4">
-        <div className="ui-nav-bar mb-4" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'generate'}
-            onClick={() => { setMode('generate'); setError('') }}
-            className={`ui-tab ${mode === 'generate' ? 'ui-tab-active' : 'ui-tab-inactive'}`}
-          >
-            <ImagePlus size={15} aria-hidden />
-            文生图
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'edit'}
-            onClick={() => { setMode('edit'); setError('') }}
-            className={`ui-tab ${mode === 'edit' ? 'ui-tab-active' : 'ui-tab-inactive'}`}
-          >
-            <Upload size={15} aria-hidden />
-            图生图
-          </button>
-        </div>
+      <div className="ui-card overflow-hidden">
+        <div
+          ref={dropRef}
+          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          className={`relative p-4 transition-colors ${dragOver ? 'bg-violet-50/80 ring-2 ring-violet-300 ring-inset' : ''}`}
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={onFileChange}
+          />
 
-        <div className="space-y-4">
-          {mode === 'edit' && (
-            <div>
-              <label className="text-xs font-medium text-slate-600 block mb-2">参考图片</label>
-              <input
-                ref={fileRef}
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className="hidden"
-                onChange={onFileChange}
-              />
-              <div className="flex flex-wrap items-center gap-3">
+          <div className="flex gap-3 min-h-[140px]">
+            {previewUrl && (
+              <div className="relative shrink-0 w-24 h-24 rounded-lg overflow-hidden border border-slate-200 bg-slate-50 shadow-sm">
+                <img src={previewUrl} alt="参考图" className="w-full h-full object-cover" />
                 <button
                   type="button"
-                  onClick={() => fileRef.current?.click()}
-                  className="ui-btn-secondary"
+                  onClick={clearImage}
+                  className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80 transition-colors"
+                  aria-label="移除图片"
                 >
-                  <Upload size={14} aria-hidden />
-                  选择图片
+                  <X size={12} />
                 </button>
-                {imageFile && (
-                  <span className="text-xs text-slate-500 truncate max-w-[200px]">{imageFile.name}</span>
-                )}
               </div>
-              {previewUrl && (
-                <img
-                  src={previewUrl}
-                  alt="参考图预览"
-                  className="mt-3 max-h-48 rounded-lg border border-slate-200 object-contain"
-                />
-              )}
-            </div>
-          )}
-
-          <div>
-            <label className="text-xs font-medium text-slate-600 block mb-2">
-              {mode === 'generate' ? '提示词' : '编辑说明'}
-            </label>
+            )}
             <textarea
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
-              rows={4}
-              placeholder={mode === 'generate'
-                ? '描述你想生成的画面，例如：清晨机场上的无人机巡检场景，写实风格'
-                : '描述要如何修改图片，例如：保留构图，只让天空更晴朗'}
-              className="ui-input w-full py-2 resize-y min-h-[96px]"
+              onPaste={onPaste}
+              rows={5}
+              placeholder={isEditMode
+                ? '描述要如何修改图片，例如：保留构图，只让天空更晴朗'
+                : '在这里输入提示词；也可拖入、粘贴或点击添加图片进行图生图'}
+              className="ui-input flex-1 py-3 resize-none min-h-[120px] border-0 focus:ring-0 bg-transparent"
             />
           </div>
 
-          <div className="flex flex-wrap gap-4">
-            {mode === 'generate' && (
-              <div>
-                <label className="text-xs font-medium text-slate-600 block mb-1">尺寸</label>
-                <select value={size} onChange={e => setSize(e.target.value)} className="ui-input py-2">
-                  {SIZES.map(s => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {mode === 'edit' && (
-              <div>
-                <label className="text-xs font-medium text-slate-600 block mb-1">质量</label>
-                <select value={quality} onChange={e => setQuality(e.target.value)} className="ui-input py-2">
-                  <option value="high">high</option>
-                  <option value="medium">medium</option>
-                  <option value="low">low</option>
-                </select>
-              </div>
-            )}
-          </div>
+          {!previewUrl && (
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="mt-2 text-xs text-slate-500 hover:text-violet-600 inline-flex items-center gap-1 transition-colors"
+            >
+              <ImagePlus size={14} />
+              添加图片
+            </button>
+          )}
+
+          {isEditMode && (
+            <p className="mt-2 text-xs text-violet-600 font-medium">已附加参考图 · 将使用图生图编辑</p>
+          )}
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/80">
+          {isEditMode ? (
+            <div>
+              <label className="text-[11px] font-medium text-slate-500 block mb-1">质量</label>
+              <select value={quality} onChange={e => setQuality(e.target.value)} className="ui-input py-1.5 text-sm min-w-[100px]">
+                <option value="high">high</option>
+                <option value="medium">medium</option>
+                <option value="low">low</option>
+              </select>
+            </div>
+          ) : (
+            <div>
+              <label className="text-[11px] font-medium text-slate-500 block mb-1">尺寸</label>
+              <select value={size} onChange={e => setSize(e.target.value)} className="ui-input py-1.5 text-sm min-w-[130px]">
+                {SIZES.map(s => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <div className="flex-1" />
 
           {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2" role="alert">
+            <p className="text-xs text-red-600 w-full order-first sm:order-none sm:w-auto sm:flex-1" role="alert">
               {error}
             </p>
           )}
@@ -259,11 +256,11 @@ export default function ImageStudio() {
           <button
             type="button"
             disabled={loading || configured === false}
-            onClick={mode === 'generate' ? handleGenerate : handleEdit}
-            className="ui-btn-primary inline-flex items-center gap-2 disabled:opacity-50"
+            onClick={handleSubmit}
+            className="ui-btn-primary inline-flex items-center gap-2 px-6 disabled:opacity-50 shrink-0"
           >
             {loading ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-            {loading ? '生成中…' : mode === 'generate' ? '生成图片' : '编辑图片'}
+            {loading ? '生成中…' : '生成'}
           </button>
         </div>
       </div>
