@@ -1,5 +1,6 @@
 const multer = require('multer');
 const { ASPECT_RATIOS, resolveImageSize, resolveEditSize } = require('../lib/image-size');
+const { upstreamImageEdit } = require('../lib/image-edit-upstream');
 
 const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.xomodel.com').replace(/\/$/, '');
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
@@ -78,20 +79,6 @@ function pickUploadedImage(req) {
     req.file ||
     null
   );
-}
-
-/** 构建上游图生图 multipart（与 curl 示例字段顺序一致，使用 Node 原生 FormData） */
-function buildUpstreamEditForm({ model, file, prompt, size, quality, outputFormat, count }) {
-  const form = new FormData();
-  form.append('model', model);
-  const blob = new Blob([file.buffer], { type: file.mimetype || 'image/png' });
-  form.append('image[]', blob, file.originalname || 'input.png');
-  form.append('prompt', prompt);
-  form.append('size', size);
-  form.append('quality', quality);
-  form.append('output_format', outputFormat);
-  if (count > 1) form.append('n', String(count));
-  return form;
 }
 
 function registerImageRoutes(app, { requireImageStudio }) {
@@ -180,7 +167,16 @@ function registerImageRoutes(app, { requireImageStudio }) {
     const count = clampCount(req.body?.n);
 
     try {
-      const form = buildUpstreamEditForm({
+      console.log('[ImageAPI] 图生图 upstream', {
+        model,
+        size,
+        promptLen: prompt.length,
+        fileKb: Math.round(file.buffer.length / 1024),
+      });
+
+      const { ok, status, data } = await upstreamImageEdit({
+        apiBase: XOMODEL_API_BASE,
+        apiKey: getApiKey(),
         model,
         file,
         prompt,
@@ -189,22 +185,6 @@ function registerImageRoutes(app, { requireImageStudio }) {
         outputFormat,
         count,
       });
-
-      console.log('[ImageAPI] 图生图 upstream', {
-        model,
-        size,
-        promptLen: prompt.length,
-        fileKb: Math.round(file.buffer.length / 1024),
-      });
-
-      const resp = await fetch(`${XOMODEL_API_BASE}/v1/images/edits`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${getApiKey()}`,
-        },
-        body: form,
-      });
-      const { ok, status, data } = await parseUpstreamResponse(resp);
       if (!ok) {
         logUpstreamModelError('图生图', model, { model, prompt, size, quality }, data);
         return res.status(status).json(data);
