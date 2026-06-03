@@ -762,6 +762,9 @@ app.get('*', (req, res) => {
 // 启动服务器
 const server = app.listen(PORT, () => {
   console.log(`[Express] HTTP服务已启动: http://localhost:${PORT}`);
+  const xoKey = (process.env.XOMODEL_API_KEY || '').trim();
+  const xoModel = (process.env.XOMODEL_IMAGE_MODEL || 'gpt-image-2').trim();
+  console.log(`[ImageAPI] XOMODEL: key=${xoKey ? '已配置' : '未配置'}, model=${xoModel || '(空)'}`);
   if (IS_PROD) {
     wsService.attachToServer(server);
     console.log(`[Express] WebSocket已合并到同一端口 /ws`);

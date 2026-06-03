@@ -67,6 +67,7 @@ function MiniField({ label, hint, children }) {
 
 export default function ImageStudio() {
   const [configured, setConfigured] = useState(null)
+  const [configHint, setConfigHint] = useState('')
   const [apiOptions, setApiOptions] = useState({
     resolutions: ['1k', '2k', '4k'],
     aspectRatios: DEFAULT_ASPECT_RATIOS,
@@ -92,12 +93,37 @@ export default function ImageStudio() {
 
   useEffect(() => {
     apiFetch('/api/image/config')
-      .then(r => r.json())
-      .then(d => {
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok) {
+          setConfigured(false)
+          setConfigHint(
+            r.status === 401
+              ? '请先登录后再使用 AI 生图。'
+              : r.status === 403
+                ? '当前账号无「AI 生图」权限，请联系管理员开通。'
+                : (d.error || `无法读取配置（HTTP ${r.status}）`),
+          )
+          return
+        }
         setConfigured(!!d.configured)
+        if (d.configured) {
+          setConfigHint('')
+        } else if (d.hasApiKey === false) {
+          setConfigHint(
+            '当前运行的服务端未读取到 XOMODEL_API_KEY。若在本地已写入 .env，请确认已启动 npm run server 并重启；若访问的是线上地址，请在服务器项目目录的 .env 中配置后执行 pm2 restart haizhu-monitor。',
+          )
+        } else {
+          setConfigHint('服务端未配置生图模型名 XOMODEL_IMAGE_MODEL，请检查 .env 后重启。')
+        }
         if (d.resolutions) setApiOptions(prev => ({ ...prev, ...d }))
       })
-      .catch(() => setConfigured(false))
+      .catch(() => {
+        setConfigured(false)
+        setConfigHint(
+          '无法连接后端（请确认 Node 服务已启动：本地开发需 npm run server，端口 3001）。',
+        )
+      })
   }, [])
 
   useEffect(() => {
@@ -215,12 +241,10 @@ export default function ImageStudio() {
         </p>
       </div>
 
-      {configured === false && (
+      {configured === false && configHint && (
         <div className="ui-card p-4 flex items-start gap-3 border-amber-200 bg-amber-50" role="alert">
           <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={18} />
-          <p className="text-sm text-amber-900">
-            服务端未配置 <code className="text-xs bg-amber-100 px-1 rounded">XOMODEL_API_KEY</code>，请在 .env 中填写后重启。
-          </p>
+          <p className="text-sm text-amber-900">{configHint}</p>
         </div>
       )}
 

@@ -58,8 +58,11 @@ function clampCount(n) {
 function registerImageRoutes(app, { requireImageStudio }) {
   app.get('/api/image/config', requireImageStudio, (_req, res) => {
     const model = getImageModel();
+    const hasApiKey = !!getApiKey();
     res.json({
-      configured: !!getApiKey() && !!model,
+      configured: hasApiKey && !!model,
+      hasApiKey,
+      hasModel: !!model,
       model,
       apiBase: XOMODEL_API_BASE,
       resolutions: ['1k', '2k', '4k'],
