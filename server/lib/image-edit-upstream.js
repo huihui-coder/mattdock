@@ -6,6 +6,21 @@ const path = require('path');
 
 const execFileAsync = promisify(execFile);
 
+function extFromMime(mime) {
+  const map = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/webp': '.webp',
+    'image/gif': '.gif',
+  };
+  return map[mime] || '.png';
+}
+
+function mimeFromFile(file) {
+  return file.mimetype || 'image/png';
+}
+
 /** 图生图清晰度：xomodel 控制台成功记录多为 standard */
 const DEFAULT_EDIT_QUALITY = (process.env.IMAGE_EDIT_QUALITY || 'standard').trim() || 'standard';
 
@@ -38,13 +53,16 @@ async function upstreamImageEditViaCurl({
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hz-img-edit-'));
   try {
-    const ext = path.extname(file.originalname || '') || '.png';
+    const mime = mimeFromFile(file);
+    const ext = path.extname(file.originalname || '') || extFromMime(mime);
     const imgPath = path.join(tmpDir, `input${ext}`);
     const promptPath = path.join(tmpDir, 'prompt.txt');
     const outPath = path.join(tmpDir, 'out.json');
 
     fs.writeFileSync(imgPath, file.buffer);
     fs.writeFileSync(promptPath, prompt, 'utf8');
+
+    const imageField = `image[]=@${imgPath};type=${mime}`;
 
     const args = [
       '-s',
@@ -60,7 +78,7 @@ async function upstreamImageEditViaCurl({
       '-F',
       `model=${model}`,
       '-F',
-      `image[]=@${imgPath}`,
+      imageField,
       '-F',
       `prompt=@${promptPath}`,
       '-F',
@@ -102,8 +120,8 @@ async function upstreamImageEditViaCurl({
       data = { error: { message: raw || `HTTP ${httpCode}` } };
     }
     if (httpCode >= 400) {
-      const preview = raw ? raw.slice(0, 800) : '(empty body)';
-      console.error('[ImageAPI] curl 上游响应', { httpCode, preview });
+      const preview = raw ? raw.slice(0, 800).replace(/\s+/g, ' ') : '(empty body)';
+      console.error(`[ImageAPI] curl 上游响应 http=${httpCode} mime=${mime} fileKb=${Math.round(file.buffer.length / 1024)} body=${preview}`);
     }
     return { ok: httpCode >= 200 && httpCode < 300, status: httpCode, data };
   } finally {

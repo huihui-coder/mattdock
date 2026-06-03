@@ -178,6 +178,8 @@ function registerImageRoutes(app, { requireImageStudio }) {
         size,
         promptLen: prompt.length,
         fileKb: Math.round(file.buffer.length / 1024),
+        mime: file.mimetype || 'unknown',
+        name: file.originalname || '',
       });
 
       const { ok, status, data } = await upstreamImageEdit({
