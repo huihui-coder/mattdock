@@ -28,7 +28,6 @@ const ROBOT = {
 
 const IDLE_VIDEO = {
   webm: '/videos/robot-idle-new.webm',
-  mp4: '/videos/robot-idle-new.mp4',
 }
 
 /** 每次播完待机动画后静止间隔（毫秒） */
@@ -177,7 +176,6 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
       onError={() => setFallback(true)}
     >
       <source src={IDLE_VIDEO.webm} type="video/webm" />
-      <source src={IDLE_VIDEO.mp4} type="video/mp4" />
     </video>
   )
 
