@@ -116,7 +116,7 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
       />
       <video
         ref={videoRef}
-        className={`floating-assistant__robot floating-assistant__robot-video floating-assistant__robot-video--keyed ${className}`}
+        className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
         poster={ROBOT.idle}
         autoPlay
         muted
@@ -130,8 +130,8 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
         }}
         onError={() => setFallback(true)}
       >
+        {/* VP9 + Alpha 透明底（由 ffmpeg colorkey 生成），勿用黑底 mp4 以免出现方框 */}
         <source src={IDLE_VIDEO.webm} type="video/webm" />
-        <source src={IDLE_VIDEO.mp4} type="video/mp4" />
       </video>
     </>
   )

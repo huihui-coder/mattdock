@@ -681,8 +681,6 @@ body {
 .floating-assistant__fab-media .floating-assistant__robot-video,
 .floating-assistant__mascot-media .floating-assistant__robot-video {
   z-index: 1;
-  /* 视频素材为黑底，在浅色 UI 上用 screen 去掉黑底 */
-  mix-blend-mode: screen;
 }
 
 .floating-assistant__fab:active {
@@ -764,22 +762,12 @@ body {
 
 .floating-assistant__robot-video {
   display: block;
-  background: transparent !important;
-  mix-blend-mode: screen;
-}
-
-.floating-assistant__fab-media .floating-assistant__robot-video,
-.floating-assistant__mascot-media .floating-assistant__robot-video {
-  background: transparent !important;
+  background: transparent;
 }
 
 .floating-assistant__header-mascot .floating-assistant__mascot-media,
 .floating-assistant__welcome .floating-assistant__mascot-media,
 .floating-assistant__fab-media {
-  background: transparent;
-}
-
-.floating-assistant__robot-poster {
   background: transparent;
 }
 
