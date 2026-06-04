@@ -20,8 +20,14 @@ export default function Login({ onLogin }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || '登录失败')
+      const text = await res.text()
+      let data = {}
+      try {
+        data = text ? JSON.parse(text) : {}
+      } catch {
+        throw new Error(res.ok ? '登录响应异常' : `登录失败 (${res.status})，请确认后端已启动在 3001 端口`)
+      }
+      if (!res.ok) throw new Error(data.error || `登录失败 (${res.status})`)
       localStorage.setItem('auth_token', data.token)
       localStorage.setItem('auth_user', JSON.stringify(data.user))
       onLogin(data.token, data.user)

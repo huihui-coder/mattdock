@@ -47,11 +47,13 @@ function App() {
 
   // WebSocket连接（含自动重连）
   const reconnectTimerRef = useRef(null)
+  const reconnectDelayRef = useRef(3000)
   const destroyedRef = useRef(false)
 
   useEffect(() => {
     if (!token) return undefined
     destroyedRef.current = false
+    reconnectDelayRef.current = 3000
 
     function connect() {
       if (destroyedRef.current) return
@@ -59,15 +61,18 @@ function App() {
 
       websocket.onopen = () => {
         console.log('[WS] 已连接')
+        reconnectDelayRef.current = 3000
         setWsConnected(true)
       }
 
       websocket.onclose = () => {
-        console.log('[WS] 已断开，3秒后重连...')
+        console.log('[WS] 已断开，稍后重连...')
         setWsConnected(false)
         wsRef.current = null
         if (!destroyedRef.current) {
-          reconnectTimerRef.current = setTimeout(connect, 3000)
+          const delay = reconnectDelayRef.current
+          reconnectDelayRef.current = Math.min(delay * 2, 30000)
+          reconnectTimerRef.current = setTimeout(connect, delay)
         }
       }
 

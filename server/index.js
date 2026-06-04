@@ -266,18 +266,25 @@ app.get('/api/proxy-video', (req, res) => {
   });
 });
 
-// 静态文件服务（生产环境）
-app.use(express.static(path.join(__dirname, '../client/dist')));
+// 静态文件服务（仅生产构建后）
+if (IS_PROD) {
+  app.use(express.static(path.join(__dirname, '../client/dist')));
+}
 
 // 登录接口
 app.post('/api/login', (req, res) => {
-  const { username, password } = req.body;
-  const user = readUsers().find(u => u.username === username);
-  if (user && verifyPassword(password, user.passwordHash)) {
-    const token = signToken(user);
-    return res.json({ token, user: sanitizeUser(user), expiresIn: TOKEN_TTL_MS });
+  try {
+    const { username, password } = req.body || {};
+    const user = readUsers().find((u) => u.username === username);
+    if (user && verifyPassword(password, user.passwordHash)) {
+      const token = signToken(user);
+      return res.json({ token, user: sanitizeUser(user), expiresIn: TOKEN_TTL_MS });
+    }
+    return res.status(401).json({ error: '用户名或密码错误' });
+  } catch (e) {
+    console.error('[Auth] 登录失败:', e.message);
+    return res.status(500).json({ error: '登录服务异常，请稍后重试' });
   }
-  res.status(401).json({ error: '用户名或密码错误' });
 });
 
 app.post('/api/logout', requireLogin, (req, res) => {
@@ -443,11 +450,8 @@ app.get('/api/avatars/:filename', (req, res) => {
   res.sendFile(filePath);
 });
 
-// 初始化服务
+// 初始化服务（开发与生产均挂载到 HTTP /ws，供 Vite 代理与线上同源访问）
 const wsService = new WebSocketService(WS_PORT);
-if (!IS_PROD) {
-  wsService.start();
-}
 
 // 从.env读取阈值配置
 // 支持多区间格式，用分号分隔，如: 0,20;30,70
@@ -799,10 +803,12 @@ app.post('/api/simulate-flight', (req, res) => {
   res.json({ ok: true, record });
 });
 
-// SPA回退路由
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../client/dist/index.html'));
-});
+// SPA 回退（仅生产）
+if (IS_PROD) {
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/dist/index.html'));
+  });
+}
 
 // 启动服务器
 const server = app.listen(PORT, () => {
@@ -810,12 +816,8 @@ const server = app.listen(PORT, () => {
   const xoKey = (process.env.XOMODEL_API_KEY || '').trim();
   const xoModel = (process.env.XOMODEL_IMAGE_MODEL || 'gpt-image-2').trim();
   console.log(`[ImageAPI] XOMODEL: key=${xoKey ? '已配置' : '未配置'}, model=${xoModel || '(空)'}`);
-  if (IS_PROD) {
-    wsService.attachToServer(server);
-    console.log(`[Express] WebSocket已合并到同一端口 /ws`);
-  } else {
-    console.log(`[Express] WebSocket端口: ${WS_PORT}`);
-  }
+  wsService.attachToServer(server);
+  console.log(`[Express] WebSocket 已挂载: /ws（${IS_PROD ? '生产' : '开发'}）`);
 });
 
 // 优雅关闭
