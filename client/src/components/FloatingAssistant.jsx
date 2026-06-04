@@ -9,6 +9,13 @@ import {
   AssistantRichText,
   stripAssistantNoise,
 } from '../lib/assistant-message-format'
+import {
+  loadFabPosition,
+  saveFabPosition,
+  defaultFabPosition,
+  snapFabToRightEdge,
+  FAB_EDGE_MARGIN,
+} from '../lib/assistant-fab-position'
 
 const ROBOT = {
   idle: '/images/robot/空闲.png',
@@ -59,16 +66,37 @@ function RobotAvatar({ state, className = '', alt = '飞行助手' }) {
   )
 }
 
-function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
+function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause = false }) {
   const videoRef = useRef(null)
   const gapTimerRef = useRef(null)
+  const cycleLockRef = useRef(false)
   const [fallback, setFallback] = useState(false)
+  const [idlePause, setIdlePause] = useState(false)
+  const [pauseAnimKey, setPauseAnimKey] = useState(0)
   const isFab = className.includes('is-fab')
+
+  const enterIdlePause = () => {
+    if (floatWhilePause) {
+      setIdlePause(true)
+      setPauseAnimKey((k) => k + 1)
+    }
+  }
+
+  const leaveIdlePause = () => {
+    if (floatWhilePause) setIdlePause(false)
+  }
 
   useEffect(() => {
     if (fallback) return undefined
     const video = videoRef.current
     if (!video) return undefined
+
+    const clearGapTimer = () => {
+      if (gapTimerRef.current) {
+        window.clearTimeout(gapTimerRef.current)
+        gapTimerRef.current = null
+      }
+    }
 
     const pauseAtFirstFrame = () => {
       video.currentTime = 0
@@ -76,21 +104,39 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
     }
 
     const playCycle = () => {
+      clearGapTimer()
+      cycleLockRef.current = false
+      leaveIdlePause()
       video.currentTime = 0
-      video.play().catch(() => {})
+      const p = video.play()
+      if (p?.catch) p.catch(() => {})
     }
 
-    const onEnded = () => {
+    const scheduleNextCycle = () => {
+      if (cycleLockRef.current) return
+      cycleLockRef.current = true
       pauseAtFirstFrame()
+      enterIdlePause()
+      clearGapTimer()
       gapTimerRef.current = window.setTimeout(playCycle, IDLE_PLAY_GAP_MS)
+    }
+
+    const onEnded = () => scheduleNextCycle()
+
+    const onTimeUpdate = () => {
+      const d = video.duration
+      if (!d || Number.isNaN(d) || video.paused) return
+      if (video.currentTime >= d - 0.12) scheduleNextCycle()
     }
 
     const onLoadedData = () => {
       pauseAtFirstFrame()
-      gapTimerRef.current = window.setTimeout(playCycle, 80)
+      clearGapTimer()
+      gapTimerRef.current = window.setTimeout(playCycle, 120)
     }
 
     video.addEventListener('ended', onEnded)
+    video.addEventListener('timeupdate', onTimeUpdate)
     if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
       onLoadedData()
     } else {
@@ -105,10 +151,13 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
 
     return () => {
       video.removeEventListener('ended', onEnded)
+      video.removeEventListener('timeupdate', onTimeUpdate)
       window.clearTimeout(failTimer)
-      if (gapTimerRef.current) window.clearTimeout(gapTimerRef.current)
+      clearGapTimer()
+      cycleLockRef.current = false
+      setIdlePause(false)
     }
-  }, [fallback])
+  }, [fallback, floatWhilePause])
 
   if (fallback) {
     return <RobotAvatar state="idle" className={className} alt={alt} />
@@ -128,13 +177,25 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
     </video>
   )
 
+  const mediaClass = `floating-assistant__mascot-media${idlePause && floatWhilePause ? ' is-idle-pause' : ''}`
+
   if (isFab) {
     return <span className="floating-assistant__fab-media">{videoEl}</span>
   }
-  return <span className="floating-assistant__mascot-media">{videoEl}</span>
+  return (
+    <span key={floatWhilePause ? pauseAnimKey : undefined} className={mediaClass}>
+      {videoEl}
+    </span>
+  )
 }
 
-function RobotMascot({ state = 'idle', className = '', alt = '飞行助手', useIdleVideo = true }) {
+function RobotMascot({
+  state = 'idle',
+  className = '',
+  alt = '飞行助手',
+  useIdleVideo = true,
+  floatWhilePause = false,
+}) {
   const [reduceMotion, setReduceMotion] = useState(false)
 
   useEffect(() => {
@@ -146,7 +207,9 @@ function RobotMascot({ state = 'idle', className = '', alt = '飞行助手', use
   }, [])
 
   if (useIdleVideo && state === 'idle' && !reduceMotion) {
-    return <RobotIdleVideo className={className} alt={alt} />
+    return (
+      <RobotIdleVideo className={className} alt={alt} floatWhilePause={floatWhilePause} />
+    )
   }
   return <RobotAvatar state={state} className={className} alt={alt} />
 }
@@ -163,6 +226,10 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
   const [mascotState, setMascotState] = useState('idle')
   const feedRef = useRef(null)
   const fileRef = useRef(null)
+  const rootRef = useRef(null)
+  const fabDragRef = useRef(null)
+  const [fabPos, setFabPos] = useState(() => loadFabPosition())
+  const [fabDragging, setFabDragging] = useState(false)
 
   useEffect(() => {
     saveAssistantMessages(messages)
@@ -190,7 +257,79 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
   }, [])
 
   const badge = alertCount > 0 ? Math.min(alertCount, 99) : 0
-  const fabMascot = badge > 0 ? 'alert' : mascotState === 'thinking' ? 'thinking' : 'idle'
+  const fabMascot = mascotState === 'thinking' ? 'thinking' : 'idle'
+
+  useEffect(() => {
+    if (fabPos) return
+    setFabPos(defaultFabPosition())
+  }, [fabPos])
+
+  useEffect(() => {
+    const onResize = () => {
+      setFabPos((prev) => {
+        if (!prev) return defaultFabPosition()
+        const el = rootRef.current
+        const w = el?.offsetWidth || 59
+        const h = el?.offsetHeight || 59
+        return snapFabToRightEdge(prev.top, w, h)
+      })
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const onFabPointerDown = (e) => {
+    if (e.button !== 0) return
+    const root = rootRef.current
+    if (!root) return
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const rect = root.getBoundingClientRect()
+    fabDragRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      originLeft: rect.left,
+      originTop: rect.top,
+      moved: false,
+    }
+  }
+
+  const onFabPointerMove = (e) => {
+    const drag = fabDragRef.current
+    if (!drag || drag.pointerId !== e.pointerId) return
+    const dx = e.clientX - drag.startX
+    const dy = e.clientY - drag.startY
+    if (Math.abs(dx) + Math.abs(dy) > 5) {
+      drag.moved = true
+      setFabDragging(true)
+    }
+    setFabPos({ left: drag.originLeft + dx, top: drag.originTop + dy })
+  }
+
+  const finishFabPointer = (e, toggleIfClick) => {
+    const drag = fabDragRef.current
+    if (!drag || drag.pointerId !== e.pointerId) return
+    fabDragRef.current = null
+    setFabDragging(false)
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    } catch {
+      /* ignore */
+    }
+    const el = rootRef.current
+    const w = el?.offsetWidth || 59
+    const h = el?.offsetHeight || 59
+    setFabPos((prev) => {
+      const base = prev || defaultFabPosition(w, h)
+      const snapped = snapFabToRightEdge(base.top, w, h)
+      saveFabPosition(snapped)
+      return snapped
+    })
+    if (toggleIfClick && !drag.moved) setOpen((v) => !v)
+  }
+
+  const onFabPointerUp = (e) => finishFabPointer(e, true)
+  const onFabPointerCancel = (e) => finishFabPointer(e, false)
 
   const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
 
@@ -378,8 +517,18 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
 
   if (configured === null) return null
 
+  const rootStyle =
+    fabPos != null
+      ? { left: fabPos.left, top: fabPos.top, right: 'auto', bottom: 'auto' }
+      : { right: `${FAB_EDGE_MARGIN}px`, bottom: `${FAB_EDGE_MARGIN}px`, left: 'auto', top: 'auto' }
+
   return (
-    <div className="floating-assistant" aria-live="polite">
+    <div
+      ref={rootRef}
+      className="floating-assistant"
+      style={rootStyle}
+      aria-live="polite"
+    >
       {open && (
         <div className="floating-assistant__scrim" onClick={() => setOpen(false)} aria-hidden />
       )}
@@ -392,7 +541,11 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
         >
           <header className="floating-assistant__header">
             <div className="floating-assistant__header-mascot">
-              <RobotMascot state={streaming ? 'thinking' : 'idle'} useIdleVideo={!streaming} />
+              <RobotMascot
+                state={streaming ? 'thinking' : 'idle'}
+                useIdleVideo={!streaming}
+                floatWhilePause
+              />
             </div>
             <div className="floating-assistant__header-text">
               <h2 className="floating-assistant__title">飞行助手</h2>
@@ -573,15 +726,18 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
 
       <button
         type="button"
-        className={`floating-assistant__fab${fabMascot === 'idle' ? ' floating-assistant__fab--idle' : ''}`}
-        onClick={() => setOpen((v) => !v)}
+        className={`floating-assistant__fab floating-assistant__fab--idle${fabDragging ? ' is-dragging' : ''}`}
+        onPointerDown={onFabPointerDown}
+        onPointerMove={onFabPointerMove}
+        onPointerUp={onFabPointerUp}
+        onPointerCancel={onFabPointerCancel}
         aria-expanded={open}
-        aria-label={open ? '收起飞行助手' : '打开飞行助手'}
+        aria-label={open ? '收起飞行助手' : '打开飞行助手，可拖动'}
       >
-        {fabMascot === 'idle' ? (
-          <RobotIdleVideo className="is-fab" alt="" />
+        {fabMascot === 'thinking' ? (
+          <RobotAvatar state="thinking" className="is-fab" alt="" />
         ) : (
-          <RobotAvatar state={fabMascot} className="is-fab" alt="" />
+          <RobotIdleVideo className="is-fab" alt="" />
         )}
         {badge > 0 && (
           <span className="floating-assistant__badge" aria-label={`${badge} 条告警`}>
