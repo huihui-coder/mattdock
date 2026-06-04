@@ -13,6 +13,7 @@ const WebSocketService = require('./ws-service');
 const DeviceProcessor = require('./device-processor');
 const AlertService = require('./alert-service');
 const { registerImageRoutes } = require('./routes/image-api');
+const { registerAssistantRoutes } = require('./routes/assistant-api');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -26,7 +27,7 @@ const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const USER_FILE = path.join(__dirname, '../haizhuDB/users.json');
 const SESSION_FILE = path.join(__dirname, '../haizhuDB/sessions.json');
 const AVATAR_DIR = path.join(__dirname, '../haizhuDB/avatars');
-const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records', 'image-studio'];
+const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records', 'image-studio', 'ai-assistant'];
 const sessions = new Map();
 
 function loadSessions() {
@@ -497,6 +498,14 @@ setInterval(() => alertService.checkAirportOffline(), 60 * 1000);
 
 // API路由
 registerImageRoutes(app, { requireImageStudio: requirePermission('image-studio') });
+registerAssistantRoutes(app, {
+  requireAssistant: requirePermission('ai-assistant'),
+  updateTokenUsage,
+});
+
+const zhipuKey = (process.env.ZHIPU_API_KEY || '').trim();
+const zhipuModel = (process.env.ZHIPU_MODEL || 'glm-4.6v-flash').trim();
+console.log(`[Assistant] Zhipu: key=${zhipuKey ? '已配置' : '未配置'}, model=${zhipuModel || '(空)'}`);
 
 // 获取离巢告警配置
 app.get('/api/alert-config', (req, res) => {

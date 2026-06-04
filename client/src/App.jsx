@@ -11,6 +11,7 @@ import VirtualCockpit from './components/VirtualCockpit'
 import AccountManager from './components/AccountManager'
 import UserProfile from './components/UserProfile'
 import ImageStudio from './components/ImageStudio'
+import FloatingAssistant from './components/FloatingAssistant'
 import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users, Sparkles } from 'lucide-react'
 
 const IS_PROD = import.meta.env.PROD
@@ -441,6 +442,33 @@ function App() {
           />
         )}
       </main>
+
+      {hasPermission('ai-assistant') && user && (
+        <FloatingAssistant
+          alertCount={alerts.length}
+          context={{
+            stats,
+            mqttConnected,
+            wsConnected,
+            alerts: alerts.slice(0, 12).map((a) => ({
+              deviceId: a.deviceId,
+              deviceName: a.deviceName,
+              type: a.type,
+              level: a.level,
+              message: a.message,
+            })),
+            selectedDevice: selectedDevice
+              ? {
+                  deviceId: selectedDevice.deviceId,
+                  name: selectedDevice.name,
+                  status: selectedDevice.status,
+                  windSpeed: selectedDevice.windSpeed,
+                  battery: selectedDevice.battery,
+                }
+              : null,
+          }}
+        />
+      )}
     </div>
   )
 }

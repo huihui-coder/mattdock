@@ -6,6 +6,7 @@ const PERMISSION_LABELS = {
   'alert-config': '离巢告警配置',
   'flight-records': '飞行记录',
   'image-studio': 'AI 生图',
+  'ai-assistant': '飞行助手',
 }
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
