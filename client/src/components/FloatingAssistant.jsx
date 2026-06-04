@@ -16,6 +16,7 @@ import {
   snapFabToRightEdge,
   FAB_EDGE_MARGIN,
 } from '../lib/assistant-fab-position'
+import { applyGreenScreenKey } from '../lib/video-chroma-key'
 
 const ROBOT = {
   idle: '/images/robot/空闲.png',
@@ -26,9 +27,8 @@ const ROBOT = {
   listen: '/images/robot/倾听.png',
 }
 
-const IDLE_VIDEO = {
-  webm: '/videos/robot-idle-new.webm',
-}
+/** 待机动画（使用你提供的源文件，仓库不覆盖） */
+const IDLE_VIDEO_SRC = '/videos/robot-idle-new.mp4'
 
 /** 每次播完待机动画后静止间隔（毫秒） */
 const IDLE_PLAY_GAP_MS = 5000
@@ -70,12 +70,52 @@ function RobotAvatar({ state, className = '', alt = '飞行助手' }) {
 
 function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause = false }) {
   const videoRef = useRef(null)
+  const canvasRef = useRef(null)
+  const rafRef = useRef(null)
   const gapTimerRef = useRef(null)
   const cycleLockRef = useRef(false)
   const [fallback, setFallback] = useState(false)
   const [idlePause, setIdlePause] = useState(false)
   const [pauseAnimKey, setPauseAnimKey] = useState(0)
   const isFab = className.includes('is-fab')
+
+  const drawChromaFrame = useCallback(() => {
+    const video = videoRef.current
+    const canvas = canvasRef.current
+    if (!video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return
+
+    const w = video.videoWidth
+    const h = video.videoHeight
+    if (!w || !h) return
+
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w
+      canvas.height = h
+    }
+
+    const ctx = canvas.getContext('2d', { alpha: true })
+    if (!ctx) return
+
+    ctx.clearRect(0, 0, w, h)
+    ctx.drawImage(video, 0, 0, w, h)
+    const frame = ctx.getImageData(0, 0, w, h)
+    applyGreenScreenKey(frame)
+    ctx.putImageData(frame, 0, 0)
+  }, [])
+
+  useEffect(() => {
+    if (fallback) return undefined
+
+    const tick = () => {
+      drawChromaFrame()
+      rafRef.current = requestAnimationFrame(tick)
+    }
+    tick()
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
+  }, [fallback, drawChromaFrame])
 
   const enterIdlePause = () => {
     if (floatWhilePause) {
@@ -165,24 +205,30 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
     return <RobotAvatar state="idle" className={className} alt={alt} />
   }
 
-  const videoEl = (
-    <video
-      ref={videoRef}
-      className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
-      muted
-      playsInline
-      preload="auto"
-      aria-label={alt || undefined}
-      onError={() => setFallback(true)}
-    >
-      <source src={IDLE_VIDEO.webm} type="video/webm" />
-    </video>
+  const mediaInner = (
+    <>
+      <video
+        ref={videoRef}
+        src={IDLE_VIDEO_SRC}
+        className="floating-assistant__robot-video--source"
+        muted
+        playsInline
+        preload="auto"
+        aria-hidden
+        onError={() => setFallback(true)}
+      />
+      <canvas
+        ref={canvasRef}
+        className={`floating-assistant__robot floating-assistant__robot-canvas ${className}`}
+        aria-label={alt || undefined}
+      />
+    </>
   )
 
   const mediaClass = `floating-assistant__mascot-media${idlePause && floatWhilePause ? ' is-idle-pause' : ''}`
 
   if (isFab) {
-    return <span className="floating-assistant__fab-media">{videoEl}</span>
+    return <span className="floating-assistant__fab-media">{mediaInner}</span>
   }
   return (
     <span
@@ -194,7 +240,7 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
           : undefined
       }
     >
-      {videoEl}
+      {mediaInner}
     </span>
   )
 }

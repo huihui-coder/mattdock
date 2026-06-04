@@ -677,8 +677,8 @@ body {
   object-fit: contain;
 }
 
-.floating-assistant__fab-media .floating-assistant__robot-video,
-.floating-assistant__mascot-media .floating-assistant__robot-video {
+.floating-assistant__fab-media .floating-assistant__robot-canvas,
+.floating-assistant__mascot-media .floating-assistant__robot-canvas {
   z-index: 1;
 }
 
@@ -783,7 +783,7 @@ body {
 }
 
 .floating-assistant__header-mascot .floating-assistant__robot,
-.floating-assistant__header-mascot .floating-assistant__robot-video {
+.floating-assistant__header-mascot .floating-assistant__robot-canvas {
   width: 100%;
   height: 100%;
   object-fit: contain;
@@ -793,6 +793,30 @@ body {
 .floating-assistant__robot-video {
   display: block;
   background: transparent;
+}
+
+.floating-assistant__robot-video--source {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.floating-assistant__robot-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: transparent;
+}
+
+.floating-assistant__fab-media .floating-assistant__robot-canvas,
+.floating-assistant__mascot-media .floating-assistant__robot-canvas {
+  position: absolute;
+  inset: 0;
 }
 
 .floating-assistant__header-mascot .floating-assistant__mascot-media,
