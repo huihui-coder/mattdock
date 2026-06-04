@@ -485,7 +485,13 @@ const thresholdConfig = {
 };
 
 const processor = new DeviceProcessor(thresholdConfig);
-const alertService = new AlertService();
+const { createAlertAiAnalyzer } = require('./lib/alert-ai-analyzer');
+const alertAiAnalyzer = createAlertAiAnalyzer({ updateTokenUsage });
+const alertService = new AlertService({
+  aiAnalyzer: alertAiAnalyzer,
+  getDeviceState: (deviceId) => processor.getDeviceState(deviceId),
+  aiAnalysisEnabled: process.env.ALERT_AI_ENABLED !== '0',
+});
 
 const mqttService = new MQTTService({
   brokerUrl: process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
@@ -509,7 +515,9 @@ registerAssistantRoutes(app, {
 
 const zhipuKey = (process.env.ZHIPU_API_KEY || '').trim();
 const zhipuModel = (process.env.ZHIPU_MODEL || 'glm-4.6v-flash').trim();
+const alertAiOn = process.env.ALERT_AI_ENABLED !== '0' && !!zhipuKey;
 console.log(`[Assistant] Zhipu: key=${zhipuKey ? '已配置' : '未配置'}, model=${zhipuModel || '(空)'}`);
+console.log(`[AlertAI] 告警多模态分析: ${alertAiOn ? '已启用' : '未启用'}`);
 
 // 获取离巢告警配置
 app.get('/api/alert-config', (req, res) => {

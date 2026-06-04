@@ -2,14 +2,13 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
 const crypto = require('crypto');
-const os = require('os');
 
 const CONFIG_FILE = path.join(__dirname, '../haizhuDB/alert-config.json');
+const { captureStreamSnapshot } = require('./lib/stream-snapshot');
 
 class AlertService {
-  constructor() {
+  constructor(options = {}) {
     // deviceId -> { enabled, thresholdMinutes, webhookUrl, lastOutTime, lastAlertTime,
     //              offlineAlertEnabled, offlineAlertImmediate, offlineRepeatMinutes,
     //              lastOfflineTime, lastOfflineAlertTime }
@@ -22,6 +21,10 @@ class AlertService {
     this.globalWebhookUrl = '';
     // deviceId(机场) -> { latitude, longitude, height }
     this._droneLocationCache = {};
+
+    this.aiAnalyzer = options.aiAnalyzer || null;
+    this.getDeviceState = options.getDeviceState || (() => null);
+    this.aiAnalysisEnabled = options.aiAnalysisEnabled !== false;
 
     this._loadConfig();
   }
@@ -141,6 +144,13 @@ class AlertService {
             if (webhookUrl) {
               this._sendWecomWebhook(webhookUrl, deviceName, deviceId, 0, 'offline_first');
               this.deviceConfigs[deviceId].lastOfflineAlertTime = now;
+              this._runAiAnalysis({
+                alertKind: 'offline_first',
+                webhookUrl,
+                deviceId,
+                deviceName,
+                elapsedMin: 0,
+              });
             }
           }
         }
@@ -165,6 +175,13 @@ class AlertService {
       if (webhookUrl) {
         this._sendWecomWebhook(webhookUrl, deviceName, deviceId, offlineMin, 'offline_repeat');
         this.deviceConfigs[deviceId].lastOfflineAlertTime = now;
+        this._runAiAnalysis({
+          alertKind: 'offline_repeat',
+          webhookUrl,
+          deviceId,
+          deviceName,
+          elapsedMin: offlineMin,
+        });
       }
     });
   }
@@ -267,6 +284,13 @@ class AlertService {
           this._sendStreamSnapshot(webhookUrl, deviceId, '_in');
           this._sendStreamSnapshot(webhookUrl, deviceId, '_flight');
         }
+        this._runAiAnalysis({
+          alertKind: 'lost',
+          webhookUrl,
+          deviceId,
+          deviceName,
+          elapsedMin,
+        });
       }
     }
   }
@@ -315,44 +339,75 @@ class AlertService {
   }
 
   _sendStreamSnapshot(webhookUrl, deviceId, suffix = '_out') {
-    const streamUrl = `https://www.hzdkjw.com:1443/live/${deviceId}${suffix}.live.flv`;
-    const tmpFile = path.join(os.tmpdir(), `snapshot_${crypto.randomBytes(6).toString('hex')}.jpg`);
-    const args = ['-y', '-i', streamUrl, '-frames:v', '1', '-q:v', '2', '-t', '10', tmpFile];
-    execFile('ffmpeg', args, { timeout: 15000 }, (err) => {
-      if (err || !fs.existsSync(tmpFile)) {
-        console.warn(`[AlertService] 截图失败 ${deviceId}${suffix}:`, err?.message);
+    captureStreamSnapshot(deviceId, suffix).then((shot) => {
+      if (!shot) {
+        console.warn(`[AlertService] 截图失败 ${deviceId}${suffix}`);
         return;
       }
       try {
-        const imgBuf = fs.readFileSync(tmpFile);
-        const base64 = imgBuf.toString('base64');
-        const md5 = crypto.createHash('md5').update(imgBuf).digest('hex');
-        fs.unlinkSync(tmpFile);
-        this._postWebhook(webhookUrl, JSON.stringify({ msgtype: 'image', image: { base64, md5 } }));
+        const md5 = crypto.createHash('md5').update(shot.buffer).digest('hex');
+        this._postWebhook(
+          webhookUrl,
+          JSON.stringify({ msgtype: 'image', image: { base64: shot.base64, md5 } }),
+        );
         console.log(`[AlertService] 截图已发送 ${deviceId}${suffix}`);
       } catch (e) {
-        console.warn(`[AlertService] 截图发送失败:`, e.message);
+        console.warn('[AlertService] 截图发送失败:', e.message);
       }
     });
   }
 
-  _sendFlightSnapshot(webhookUrl, deviceId, deviceName) {
-    const streamUrl = `https://www.hzdkjw.com:1443/live/${deviceId}_flight.live.flv`;
-    const tmpFile = path.join(os.tmpdir(), `snapshot_${crypto.randomBytes(6).toString('hex')}.jpg`);
-    const args = ['-y', '-i', streamUrl, '-frames:v', '1', '-q:v', '2', '-t', '10', tmpFile];
+  _sendAiAnalysisWebhook(webhookUrl, deviceName, deviceId, analysis) {
+    if (!analysis) return;
+    const trimmed = String(analysis).slice(0, 3200);
+    const time = new Date().toLocaleString('zh-CN');
+    const content = `🤖 **AI 告警分析**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 时间：${time}\n\n${trimmed}`;
+    this._postWebhook(webhookUrl, JSON.stringify({ msgtype: 'markdown', markdown: { content } }));
+  }
 
-    execFile('ffmpeg', args, { timeout: 15000 }, (err) => {
-      if (err || !fs.existsSync(tmpFile)) {
-        console.warn(`[AlertService] ${deviceName} 无人机截图失败:`, err?.message);
+  _runAiAnalysis({ alertKind, webhookUrl, deviceId, deviceName, elapsedMin }) {
+    if (!this.aiAnalysisEnabled || !this.aiAnalyzer || !webhookUrl) return;
+
+    const cfg = this.deviceConfigs[deviceId] || {};
+    if (cfg.aiAnalysisEnabled === false) return;
+
+    const deviceState = this.getDeviceState(deviceId);
+    const location = this._droneLocationCache[deviceId];
+    const subDeviceOnline = cfg._subDeviceOnline;
+
+    this.aiAnalyzer
+      .analyzeAlert({
+        alertKind,
+        deviceId,
+        deviceName,
+        elapsedMin,
+        offlineType: alertKind,
+        location,
+        subDeviceOnline,
+        deviceState,
+      })
+      .then((result) => {
+        if (!result?.analysis) return;
+        console.log(`[AlertService] AI 分析完成 ${deviceName} (${alertKind})`);
+        this._sendAiAnalysisWebhook(webhookUrl, deviceName, deviceId, result.analysis);
+      })
+      .catch((e) => {
+        console.error(`[AlertService] AI 分析失败 ${deviceName}:`, e.message);
+      });
+  }
+
+  _sendFlightSnapshot(webhookUrl, deviceId, deviceName) {
+    captureStreamSnapshot(deviceId, '_flight').then((shot) => {
+      if (!shot) {
+        console.warn(`[AlertService] ${deviceName} 无人机截图失败`);
         return;
       }
       try {
-        const imgBuf = fs.readFileSync(tmpFile);
-        const base64 = imgBuf.toString('base64');
-        const md5 = crypto.createHash('md5').update(imgBuf).digest('hex');
-        fs.unlinkSync(tmpFile);
-        const body = JSON.stringify({ msgtype: 'image', image: { base64, md5 } });
-        this._postWebhook(webhookUrl, body);
+        const md5 = crypto.createHash('md5').update(shot.buffer).digest('hex');
+        this._postWebhook(
+          webhookUrl,
+          JSON.stringify({ msgtype: 'image', image: { base64: shot.base64, md5 } }),
+        );
         console.log(`[AlertService] ${deviceName} 无人机截图已发送`);
       } catch (e) {
         console.warn(`[AlertService] ${deviceName} 截图发送失败:`, e.message);

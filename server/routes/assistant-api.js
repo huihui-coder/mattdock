@@ -1,15 +1,12 @@
 const { buildAssistantContext } = require('../lib/build-assistant-context');
+const {
+  ZHIPU_API_BASE,
+  ZHIPU_MODEL,
+  getApiKey,
+  fetchZhipuWithRetry,
+} = require('../lib/zhipu-client');
 
-const ZHIPU_API_BASE = (process.env.ZHIPU_API_URL || 'https://open.bigmodel.cn/api/paas/v4').replace(
-  /\/$/,
-  '',
-);
-const ZHIPU_MODEL = (process.env.ZHIPU_MODEL || 'glm-4.6v-flash').trim();
 const MAX_HISTORY = 20;
-
-function getApiKey() {
-  return (process.env.ZHIPU_API_KEY || '').trim();
-}
 
 const SYSTEM_PROMPT = `你是「飞行助手」，海珠无人机管理平台的 AI 运维助手。你帮助值班员理解 MQTT 实时数据、设备状态与告警，给出简洁、可执行的处置建议。
 语气：专业、友好、简短，不用卖萌称呼。
@@ -86,7 +83,7 @@ function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage }) {
     const thinkingEnabled = process.env.ZHIPU_THINKING === '1';
 
     try {
-      const upstream = await fetch(`${ZHIPU_API_BASE}/chat/completions`, {
+      const upstream = await fetchZhipuWithRetry(`${ZHIPU_API_BASE}/chat/completions`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
