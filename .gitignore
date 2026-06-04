@@ -8,6 +8,10 @@ client/public/videos/
 .DS_Store
 client/dist/
 
+# Pencil 设计稿（体积大，仅本地保留）
+pencil-new.pen
+*.pen
+
 # 保留额度记录
 !haizhuDB/
 haizhuDB/avatars/
