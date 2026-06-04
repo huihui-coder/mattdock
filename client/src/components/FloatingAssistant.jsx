@@ -24,6 +24,9 @@ const IDLE_VIDEO = {
   mp4: '/videos/robot-idle.mp4',
 }
 
+/** 每次播完待机动画后静止间隔（毫秒） */
+const IDLE_PLAY_GAP_MS = 5000
+
 const QUICK_PROMPTS = [
   { label: '解读告警', text: '请根据当前近期告警，逐条用通俗语言解读原因和建议操作。' },
   { label: '今日摘要', text: '根据当前设备与告警快照，生成一段简短的值班摘要（概况、风险点、待办）。' },
@@ -58,19 +61,32 @@ function RobotAvatar({ state, className = '', alt = '飞行助手' }) {
 
 function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
   const videoRef = useRef(null)
+  const gapTimerRef = useRef(null)
   const [fallback, setFallback] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
+  const [inLoopPause, setInLoopPause] = useState(false)
   const isFab = className.includes('is-fab')
+  const showPoster = !videoReady || inLoopPause
 
   useEffect(() => {
     if (fallback) return undefined
     const video = videoRef.current
     if (!video) return undefined
 
-    const play = () => {
+    const playFromStart = () => {
+      setInLoopPause(false)
+      video.currentTime = 0
       video.play().catch(() => {})
     }
-    play()
+
+    const onEnded = () => {
+      video.pause()
+      setInLoopPause(true)
+      gapTimerRef.current = window.setTimeout(playFromStart, IDLE_PLAY_GAP_MS)
+    }
+
+    video.addEventListener('ended', onEnded)
+    playFromStart()
 
     const failTimer = window.setTimeout(() => {
       if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -78,7 +94,11 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
       }
     }, 3000)
 
-    return () => window.clearTimeout(failTimer)
+    return () => {
+      video.removeEventListener('ended', onEnded)
+      window.clearTimeout(failTimer)
+      if (gapTimerRef.current) window.clearTimeout(gapTimerRef.current)
+    }
   }, [fallback])
 
   if (fallback) {
@@ -90,7 +110,7 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
       <img
         src={ROBOT.idle}
         alt=""
-        className={`floating-assistant__robot floating-assistant__robot-poster ${className}${videoReady ? ' is-hidden' : ''}`}
+        className={`floating-assistant__robot floating-assistant__robot-poster ${className}${showPoster ? '' : ' is-hidden'}`}
         aria-hidden
         draggable={false}
       />
@@ -99,13 +119,15 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
         className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
         poster={ROBOT.idle}
         autoPlay
-        loop
         muted
         playsInline
         preload="auto"
         aria-label={alt || undefined}
         onLoadedData={() => setVideoReady(true)}
-        onPlaying={() => setVideoReady(true)}
+        onPlaying={() => {
+          setVideoReady(true)
+          setInLoopPause(false)
+        }}
         onError={() => setFallback(true)}
       >
         <source src={IDLE_VIDEO.webm} type="video/webm" />
@@ -559,7 +581,7 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
 
       <button
         type="button"
-        className="floating-assistant__fab"
+        className={`floating-assistant__fab${fabMascot === 'idle' ? ' floating-assistant__fab--idle' : ''}`}
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
         aria-label={open ? '收起飞行助手' : '打开飞行助手'}
