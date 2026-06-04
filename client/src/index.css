@@ -760,28 +760,6 @@ body {
   overflow: visible;
 }
 
-/* 首帧停留时 1s 完成一小圈上下浮动，首尾对齐视频第 0 帧 */
-@keyframes assistant-header-idle-bob {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-
-  50% {
-    transform: translateY(-0.35rem);
-  }
-}
-
-.floating-assistant__header-mascot .floating-assistant__mascot-media.is-idle-pause {
-  animation: assistant-header-idle-bob 1s ease-in-out;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .floating-assistant__header-mascot .floating-assistant__mascot-media.is-idle-pause {
-    animation: none;
-  }
-}
-
 .floating-assistant__header-mascot .floating-assistant__robot,
 .floating-assistant__header-mascot .floating-assistant__robot-canvas {
   width: 100%;

@@ -33,9 +33,6 @@ const IDLE_VIDEO_SRC = '/videos/robot-idle-new.mp4'
 /** 每次播完待机动画后静止间隔（毫秒） */
 const IDLE_PLAY_GAP_MS = 5000
 
-/** 顶栏首帧停留时上下浮动一圈的时长（毫秒） */
-const IDLE_FLOAT_MS = 1000
-
 const QUICK_PROMPTS = [
   { label: '解读告警', text: '请根据当前近期告警，逐条用通俗语言解读原因和建议操作。' },
   { label: '今日摘要', text: '根据当前设备与告警快照，生成一段简短的值班摘要（概况、风险点、待办）。' },
@@ -68,15 +65,13 @@ function RobotAvatar({ state, className = '', alt = '飞行助手' }) {
   )
 }
 
-function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause = false }) {
+function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const rafRef = useRef(null)
   const gapTimerRef = useRef(null)
   const cycleLockRef = useRef(false)
   const [fallback, setFallback] = useState(false)
-  const [idlePause, setIdlePause] = useState(false)
-  const [pauseAnimKey, setPauseAnimKey] = useState(0)
   const isFab = className.includes('is-fab')
 
   const drawChromaFrame = useCallback(() => {
@@ -117,17 +112,6 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
     }
   }, [fallback, drawChromaFrame])
 
-  const enterIdlePause = () => {
-    if (floatWhilePause) {
-      setIdlePause(true)
-      setPauseAnimKey((k) => k + 1)
-    }
-  }
-
-  const leaveIdlePause = () => {
-    if (floatWhilePause) setIdlePause(false)
-  }
-
   useEffect(() => {
     if (fallback) return undefined
     const video = videoRef.current
@@ -148,7 +132,6 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
     const playCycle = () => {
       clearGapTimer()
       cycleLockRef.current = false
-      leaveIdlePause()
       video.currentTime = 0
       const p = video.play()
       if (p?.catch) p.catch(() => {})
@@ -158,7 +141,6 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
       if (cycleLockRef.current) return
       cycleLockRef.current = true
       pauseAtFirstFrame()
-      enterIdlePause()
       clearGapTimer()
       gapTimerRef.current = window.setTimeout(playCycle, IDLE_PLAY_GAP_MS)
     }
@@ -197,9 +179,8 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
       window.clearTimeout(failTimer)
       clearGapTimer()
       cycleLockRef.current = false
-      setIdlePause(false)
     }
-  }, [fallback, floatWhilePause])
+  }, [fallback])
 
   if (fallback) {
     return <RobotAvatar state="idle" className={className} alt={alt} />
@@ -225,24 +206,10 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
     </>
   )
 
-  const mediaClass = `floating-assistant__mascot-media${idlePause && floatWhilePause ? ' is-idle-pause' : ''}`
-
   if (isFab) {
     return <span className="floating-assistant__fab-media">{mediaInner}</span>
   }
-  return (
-    <span
-      key={floatWhilePause ? pauseAnimKey : undefined}
-      className={mediaClass}
-      style={
-        idlePause && floatWhilePause
-          ? { animationDuration: `${IDLE_FLOAT_MS}ms` }
-          : undefined
-      }
-    >
-      {mediaInner}
-    </span>
-  )
+  return <span className="floating-assistant__mascot-media">{mediaInner}</span>
 }
 
 function RobotMascot({
@@ -250,7 +217,6 @@ function RobotMascot({
   className = '',
   alt = '飞行助手',
   useIdleVideo = true,
-  floatWhilePause = false,
 }) {
   const [reduceMotion, setReduceMotion] = useState(false)
 
@@ -264,7 +230,7 @@ function RobotMascot({
 
   if (useIdleVideo && state === 'idle' && !reduceMotion) {
     return (
-      <RobotIdleVideo className={className} alt={alt} floatWhilePause={floatWhilePause} />
+      <RobotIdleVideo className={className} alt={alt} />
     )
   }
   return <RobotAvatar state={state} className={className} alt={alt} />
@@ -597,11 +563,7 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
         >
           <header className="floating-assistant__header">
             <div className="floating-assistant__header-mascot">
-              <RobotMascot
-                state={streaming ? 'thinking' : 'idle'}
-                useIdleVideo={!streaming}
-                floatWhilePause
-              />
+              <RobotMascot state={streaming ? 'thinking' : 'idle'} useIdleVideo={!streaming} />
             </div>
             <div className="floating-assistant__header-text">
               <h2 className="floating-assistant__title">飞行助手</h2>
