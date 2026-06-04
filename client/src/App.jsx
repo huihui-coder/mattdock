@@ -14,8 +14,6 @@ import ImageStudio from './components/ImageStudio'
 import FloatingAssistant from './components/FloatingAssistant'
 import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users, Sparkles } from 'lucide-react'
 
-const IS_PROD = import.meta.env.PROD
-
 function getToken() { return localStorage.getItem('auth_token') || '' }
 function getStoredUser() {
   try { return JSON.parse(localStorage.getItem('auth_user') || 'null') } catch { return null }
@@ -52,6 +50,7 @@ function App() {
   const destroyedRef = useRef(false)
 
   useEffect(() => {
+    if (!token) return undefined
     destroyedRef.current = false
 
     function connect() {
@@ -91,7 +90,7 @@ function App() {
       clearTimeout(reconnectTimerRef.current)
       if (wsRef.current) { wsRef.current.close(); wsRef.current = null }
     }
-  }, [])
+  }, [token])
 
   // 告警列表定期更新（每5秒）
   useEffect(() => {
@@ -201,7 +200,9 @@ function App() {
 
   // 获取初始设备列表
   useEffect(() => {
-    if (IS_PROD && token && !user) {
+    if (!token) return
+
+    if (!user) {
       apiFetch('/api/me')
         .then(async res => {
           if (!res.ok) throw new Error('会话已过期')
@@ -219,6 +220,7 @@ function App() {
         })
       return
     }
+
     apiFetch('/api/devices')
       .then(res => { if (res.status === 401) { setToken(''); setUser(null); localStorage.removeItem('auth_token'); localStorage.removeItem('auth_user') } return res.json() })
       .then(data => setDevices(data.devices || []))
@@ -279,12 +281,11 @@ function App() {
     setUser(nextUser)
   }
 
-  // 未登录（生产模式）显示登录页
-  if (IS_PROD && !token) {
+  if (!token) {
     return <Login onLogin={(t, u) => { setToken(t); setUser(u) }} />
   }
 
-  if (IS_PROD && token && !user) {
+  if (token && !user) {
     return (
       <div className="ui-page">
         <Header mqttConnected={mqttConnected} wsConnected={wsConnected} />
