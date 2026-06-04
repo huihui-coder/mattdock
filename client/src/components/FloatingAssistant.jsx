@@ -5,6 +5,10 @@ import {
   saveAssistantMessages,
   clearAssistantMessages,
 } from '../lib/assistant-storage'
+import {
+  AssistantRichText,
+  stripAssistantNoise,
+} from '../lib/assistant-message-format'
 
 const ROBOT = {
   idle: '/images/robot/空闲.png',
@@ -13,6 +17,11 @@ const ROBOT = {
   success: '/images/robot/成功.png',
   error: '/images/robot/失败.png',
   listen: '/images/robot/倾听.png',
+}
+
+const IDLE_VIDEO = {
+  webm: '/videos/待机动画.webm',
+  mp4: '/videos/待机动画.mp4',
 }
 
 const QUICK_PROMPTS = [
@@ -47,6 +56,44 @@ function RobotAvatar({ state, className = '', alt = '飞行助手' }) {
   )
 }
 
+function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
+  const [fallback, setFallback] = useState(false)
+  if (fallback) {
+    return <RobotAvatar state="idle" className={className} alt={alt} />
+  }
+  return (
+    <video
+      className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
+      autoPlay
+      loop
+      muted
+      playsInline
+      aria-label={alt}
+      onError={() => setFallback(true)}
+    >
+      <source src={IDLE_VIDEO.webm} type="video/webm" />
+      <source src={IDLE_VIDEO.mp4} type="video/mp4" />
+    </video>
+  )
+}
+
+function RobotMascot({ state = 'idle', className = '', alt = '飞行助手', useIdleVideo = true }) {
+  const [reduceMotion, setReduceMotion] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => setReduceMotion(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  if (useIdleVideo && state === 'idle' && !reduceMotion) {
+    return <RobotIdleVideo className={className} alt={alt} />
+  }
+  return <RobotAvatar state={state} className={className} alt={alt} />
+}
+
 export default function FloatingAssistant({ context, alertCount = 0 }) {
   const [open, setOpen] = useState(false)
   const [configured, setConfigured] = useState(null)
@@ -59,11 +106,6 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
   const [mascotState, setMascotState] = useState('idle')
   const feedRef = useRef(null)
   const fileRef = useRef(null)
-  const reduceMotion = useRef(false)
-
-  useEffect(() => {
-    reduceMotion.current = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  }, [])
 
   useEffect(() => {
     saveAssistantMessages(messages)
@@ -92,6 +134,8 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
 
   const badge = alertCount > 0 ? Math.min(alertCount, 99) : 0
   const fabMascot = badge > 0 ? 'alert' : mascotState === 'thinking' ? 'thinking' : 'idle'
+
+  const lastAssistantId = [...messages].reverse().find((m) => m.role === 'assistant')?.id
 
   useEffect(() => {
     const onKey = (e) => {
@@ -195,8 +239,9 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
               const delta = json.choices?.[0]?.delta
               if (delta?.content) {
                 acc += delta.content
+                const display = stripAssistantNoise(acc)
                 setMessages((prev) =>
-                  prev.map((m) => (m.id === assistantId ? { ...m, content: acc } : m)),
+                  prev.map((m) => (m.id === assistantId ? { ...m, content: display } : m)),
                 )
               }
             } catch {
@@ -205,9 +250,13 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
           }
         }
 
-        if (!acc.trim()) {
+        const finalText = stripAssistantNoise(acc)
+        if (!finalText) {
           throw new Error('模型未返回内容')
         }
+        setMessages((prev) =>
+          prev.map((m) => (m.id === assistantId ? { ...m, content: finalText } : m)),
+        )
         setMascotState('success')
       } catch (e) {
         setMascotState('error')
@@ -259,7 +308,7 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
         >
           <header className="floating-assistant__header">
             <div className="floating-assistant__header-mascot">
-              <RobotAvatar state={streaming ? 'thinking' : 'idle'} />
+              <RobotMascot state={streaming ? 'thinking' : 'idle'} useIdleVideo={!streaming} />
             </div>
             <div className="floating-assistant__header-text">
               <h2 className="floating-assistant__title">飞行助手</h2>
@@ -310,7 +359,11 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
           <div className="floating-assistant__feed" ref={feedRef}>
             {messages.length === 0 && (
               <div className="floating-assistant__welcome">
-                <RobotAvatar state={badge > 0 ? 'alert' : 'idle'} className="is-lg" />
+                <RobotMascot
+                  state={badge > 0 ? 'alert' : 'idle'}
+                  className="is-lg"
+                  useIdleVideo={badge === 0}
+                />
                 <p>
                   你好，我是飞行助手。
                   {badge > 0
@@ -326,7 +379,13 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
               >
                 {m.role === 'assistant' && (
                   <RobotAvatar
-                    state={m.failed ? 'error' : streaming && !m.content ? 'thinking' : 'success'}
+                    state={
+                      m.failed
+                        ? 'error'
+                        : streaming && m.id === lastAssistantId && !stripAssistantNoise(m.content)
+                          ? 'thinking'
+                          : 'success'
+                    }
                     className="is-sm"
                   />
                 )}
@@ -334,14 +393,24 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
                   {m.imagePreview && (
                     <img src={m.imagePreview} alt="" className="floating-assistant__thumb" />
                   )}
-                  <p className="whitespace-pre-wrap">{m.content || (streaming ? '…' : '')}</p>
+                  {m.role === 'assistant' ? (
+                    m.failed ? (
+                      <p className="whitespace-pre-wrap">{m.content}</p>
+                    ) : m.content ? (
+                      <AssistantRichText content={m.content} />
+                    ) : streaming && m.id === lastAssistantId ? (
+                      <span className="floating-assistant__typing">正在回复…</span>
+                    ) : null
+                  ) : (
+                    <p className="whitespace-pre-wrap">{m.content}</p>
+                  )}
                 </div>
               </div>
             ))}
             {streaming && messages[messages.length - 1]?.role !== 'assistant' && (
               <div className="floating-assistant__msg floating-assistant__msg--assistant">
                 <RobotAvatar state="thinking" className="is-sm" />
-                <span className="text-sm text-slate-500">正在思考…</span>
+                <span className="floating-assistant__typing">正在思考…</span>
               </div>
             )}
           </div>
@@ -421,20 +490,10 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
         aria-expanded={open}
         aria-label={open ? '收起飞行助手' : '打开飞行助手'}
       >
-        {reduceMotion.current ? (
-          <RobotAvatar state={fabMascot} className="is-fab" />
+        {fabMascot === 'idle' ? (
+          <RobotIdleVideo className="is-fab" alt="" />
         ) : (
-          <video
-            className="floating-assistant__fab-video"
-            autoPlay
-            loop
-            muted
-            playsInline
-            aria-hidden
-          >
-            <source src="/videos/待机动画.webm" type="video/webm" />
-            <source src="/videos/待机动画.mp4" type="video/mp4" />
-          </video>
+          <RobotAvatar state={fabMascot} className="is-fab" alt="" />
         )}
         {badge > 0 && (
           <span className="floating-assistant__badge" aria-label={`${badge} 条告警`}>
