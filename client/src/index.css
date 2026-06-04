@@ -673,11 +673,6 @@ body {
   object-fit: contain;
 }
 
-.floating-assistant__robot-poster.is-hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-
 .floating-assistant__fab-media .floating-assistant__robot-video,
 .floating-assistant__mascot-media .floating-assistant__robot-video {
   z-index: 1;
@@ -730,7 +725,7 @@ body {
   border: 1px solid #e2e8f0;
   border-radius: 1rem;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .floating-assistant__header {
@@ -741,16 +736,24 @@ body {
   padding: 0.5rem 0.75rem 0.375rem;
   background: #eff6ff;
   border-bottom: 1px solid #e2e8f0;
+  border-radius: 1rem 1rem 0 0;
   overflow: visible;
 }
 
 .floating-assistant__header-mascot {
   position: absolute;
-  left: 0.625rem;
-  top: -2.25rem;
-  width: 4.75rem;
-  height: 4.75rem;
+  left: 0.5rem;
+  top: -3rem;
+  width: 5.25rem;
+  height: 5.25rem;
   pointer-events: none;
+  overflow: visible;
+}
+
+.floating-assistant__header-mascot .floating-assistant__mascot-media {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
 }
 
 .floating-assistant__header-mascot .floating-assistant__robot,
@@ -758,6 +761,7 @@ body {
   width: 100%;
   height: 100%;
   object-fit: contain;
+  object-position: center bottom;
 }
 
 .floating-assistant__robot-video {
@@ -826,7 +830,7 @@ body {
 .floating-assistant__header-text {
   flex: 1;
   min-width: 0;
-  margin-left: 5rem;
+  margin-left: 5.5rem;
   padding-bottom: 0.25rem;
 }
 
@@ -879,6 +883,7 @@ body {
   gap: 0.375rem;
   padding: 0.625rem 0.75rem;
   border-bottom: 1px solid #e2e8f0;
+  background: #fff;
 }
 
 .floating-assistant__chip {
@@ -909,12 +914,14 @@ body {
 .floating-assistant__feed {
   flex: 1;
   min-height: 8rem;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 0.75rem;
   background: #f1f5f9;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  border-radius: 0 0 1rem 1rem;
 }
 
 .floating-assistant__welcome {

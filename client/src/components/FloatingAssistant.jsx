@@ -63,30 +63,39 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
   const videoRef = useRef(null)
   const gapTimerRef = useRef(null)
   const [fallback, setFallback] = useState(false)
-  const [videoReady, setVideoReady] = useState(false)
-  const [inLoopPause, setInLoopPause] = useState(false)
   const isFab = className.includes('is-fab')
-  const showPoster = !videoReady || inLoopPause
 
   useEffect(() => {
     if (fallback) return undefined
     const video = videoRef.current
     if (!video) return undefined
 
-    const playFromStart = () => {
-      setInLoopPause(false)
+    const pauseAtFirstFrame = () => {
+      video.currentTime = 0
+      video.pause()
+    }
+
+    const playCycle = () => {
       video.currentTime = 0
       video.play().catch(() => {})
     }
 
     const onEnded = () => {
-      video.pause()
-      setInLoopPause(true)
-      gapTimerRef.current = window.setTimeout(playFromStart, IDLE_PLAY_GAP_MS)
+      pauseAtFirstFrame()
+      gapTimerRef.current = window.setTimeout(playCycle, IDLE_PLAY_GAP_MS)
+    }
+
+    const onLoadedData = () => {
+      pauseAtFirstFrame()
+      gapTimerRef.current = window.setTimeout(playCycle, 80)
     }
 
     video.addEventListener('ended', onEnded)
-    playFromStart()
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      onLoadedData()
+    } else {
+      video.addEventListener('loadeddata', onLoadedData, { once: true })
+    }
 
     const failTimer = window.setTimeout(() => {
       if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -105,41 +114,24 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
     return <RobotAvatar state="idle" className={className} alt={alt} />
   }
 
-  const media = (
-    <>
-      <img
-        src={ROBOT.idle}
-        alt=""
-        className={`floating-assistant__robot floating-assistant__robot-poster ${className}${showPoster ? '' : ' is-hidden'}`}
-        aria-hidden
-        draggable={false}
-      />
-      <video
-        ref={videoRef}
-        className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
-        poster={ROBOT.idle}
-        autoPlay
-        muted
-        playsInline
-        preload="auto"
-        aria-label={alt || undefined}
-        onLoadedData={() => setVideoReady(true)}
-        onPlaying={() => {
-          setVideoReady(true)
-          setInLoopPause(false)
-        }}
-        onError={() => setFallback(true)}
-      >
-        {/* VP9 + Alpha 透明底（由 ffmpeg colorkey 生成），勿用黑底 mp4 以免出现方框 */}
-        <source src={IDLE_VIDEO.webm} type="video/webm" />
-      </video>
-    </>
+  const videoEl = (
+    <video
+      ref={videoRef}
+      className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
+      muted
+      playsInline
+      preload="auto"
+      aria-label={alt || undefined}
+      onError={() => setFallback(true)}
+    >
+      <source src={IDLE_VIDEO.webm} type="video/webm" />
+    </video>
   )
 
   if (isFab) {
-    return <span className="floating-assistant__fab-media">{media}</span>
+    return <span className="floating-assistant__fab-media">{videoEl}</span>
   }
-  return <span className="floating-assistant__mascot-media">{media}</span>
+  return <span className="floating-assistant__mascot-media">{videoEl}</span>
 }
 
 function RobotMascot({ state = 'idle', className = '', alt = '飞行助手', useIdleVideo = true }) {
