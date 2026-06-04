@@ -3,6 +3,28 @@ import { Bell, Save, Send, Settings, ChevronDown, ChevronUp, WifiOff } from 'luc
 
 const API = ''
 
+function AiAnalysisToggle({ deviceId, cfg, onUpdate, hint }) {
+  const enabled = cfg.aiAnalysisEnabled !== false
+  return (
+    <div className="flex items-center gap-3">
+      <button
+        type="button"
+        onClick={() => onUpdate(deviceId, 'aiAnalysisEnabled', !enabled)}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${enabled ? 'bg-violet-500' : 'bg-slate-300'}`}
+        aria-pressed={enabled}
+        aria-label="告警后 AI 多模态分析"
+      >
+        <span
+          className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${enabled ? 'translate-x-5' : 'translate-x-1'}`}
+        />
+      </button>
+      <span className="text-xs text-dji-muted">
+        {hint || '告警后 AI 多模态分析（结合监控画面与历史记录推送结论）'}
+      </span>
+    </div>
+  )
+}
+
 // ─── 飞丢告警 单行卡片（memo 防止兄弟行更新时重渲染）───────────────────────
 const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded, onToggle }) {
   const enabled = cfg.enabled || false
@@ -22,6 +44,9 @@ const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded,
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {enabled && cfg.aiAnalysisEnabled !== false && (
+            <span className="ui-badge bg-violet-100 text-violet-700 border border-violet-200">AI</span>
+          )}
           {enabled && (
             <span className="ui-badge bg-orange-100 text-orange-700 border border-orange-200">
               {cfg.thresholdMinutes || 30} 分钟
@@ -52,6 +77,7 @@ const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded,
             </button>
             <span className="text-xs text-dji-muted">告警时发送监控截图（外部/内部/无人机画面）</span>
           </div>
+          <AiAnalysisToggle deviceId={deviceId} cfg={cfg} onUpdate={onUpdate} />
           <div>
             <label className="text-xs font-medium text-dji-ink">设备专属 Webhook（选填）</label>
             <input
@@ -87,6 +113,9 @@ const OfflineRow = memo(function OfflineRow({ deviceId, name, cfg, onUpdate, exp
           </div>
         </div>
         <div className="flex items-center gap-2">
+          {enabled && cfg.aiAnalysisEnabled !== false && (
+            <span className="ui-badge bg-violet-100 text-violet-700 border border-violet-200">AI</span>
+          )}
           {enabled && (
             <span className="ui-badge bg-red-100 text-red-700 border border-red-200">
               {cfg.offlineRepeatMinutes ? `每 ${cfg.offlineRepeatMinutes} 分钟` : '单次'}
@@ -118,6 +147,12 @@ const OfflineRow = memo(function OfflineRow({ deviceId, name, cfg, onUpdate, exp
             />
             <span className="text-xs text-dji-muted">分钟循环提醒（0 = 不循环）</span>
           </div>
+          <AiAnalysisToggle
+            deviceId={deviceId}
+            cfg={cfg}
+            onUpdate={onUpdate}
+            hint="告警后 AI 分析网络/市电稳定性，并结合历史记录推送结论"
+          />
           <div>
             <label className="text-xs font-medium text-dji-ink">设备专属 Webhook（选填）</label>
             <input
@@ -236,7 +271,9 @@ export default function AlertConfig({ devices }) {
           <Settings size={16} className="text-dji-black" />
           <h3 className="ui-section-title text-sm">全局企业微信 Webhook</h3>
         </div>
-        <p className="text-xs text-dji-muted mb-3">企业微信群机器人地址，设备未单独配置时使用此地址。</p>
+        <p className="text-xs text-dji-muted mb-3">
+          企业微信群机器人地址，设备未单独配置时使用此地址。告警 AI 分析需在服务端配置 <code className="text-[11px]">ZHIPU_API_KEY</code>。
+        </p>
         <div className="flex gap-2">
           <input
             type="text"
@@ -284,6 +321,18 @@ export default function AlertConfig({ devices }) {
               : '机场超过 2 分钟无数据时判定离线并推送'}
           </p>
           <div className="flex gap-2 shrink-0">
+            <button
+              onClick={() => selectAll('aiAnalysisEnabled', true)}
+              className="ui-btn-secondary !text-xs"
+            >
+              AI 全开
+            </button>
+            <button
+              onClick={() => selectAll('aiAnalysisEnabled', false)}
+              className="ui-btn-secondary !text-xs"
+            >
+              AI 全关
+            </button>
             <button
               onClick={() => selectAll(activeTab === 'lost' ? 'enabled' : 'offlineAlertEnabled', true)}
               className="ui-btn-secondary !text-xs"

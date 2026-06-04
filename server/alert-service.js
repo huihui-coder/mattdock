@@ -6,6 +6,7 @@ const crypto = require('crypto');
 
 const CONFIG_FILE = path.join(__dirname, '../haizhuDB/alert-config.json');
 const { captureStreamSnapshot } = require('./lib/stream-snapshot');
+const { computeLocationDistanceContext } = require('./lib/geo-utils');
 
 class AlertService {
   constructor(options = {}) {
@@ -308,7 +309,11 @@ class AlertService {
       content = `🔔 **告警测试**\n> Webhook 连接正常\n> 时间：${time}`;
     } else {
       const loc = this._droneLocationCache[deviceId];
-      const locStr = loc ? `\n> 最后位置：${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}（高度 ${loc.height || 0}m）` : '';
+      const airportState = this.getDeviceState(deviceId);
+      const distCtx = computeLocationDistanceContext(loc, airportState?.location);
+      const locStr = loc
+        ? `\n> 最后位置：${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}（高度 ${loc.height || 0}m）${distCtx.webhookLine || ''}`
+        : '';
       const cfg = this.deviceConfigs[deviceId] || {};
       const subOnlineVal = cfg._subDeviceOnline;
       const subOnline = subOnlineVal === 1 ? '（无人机在线）' : '（无人机离线）';

@@ -7,9 +7,11 @@ videos/
 client/public/videos/*
 !client/public/videos/robot-idle.webm
 !client/public/videos/robot-idle.mp4
-!client/public/videos/robot-idle-new.webm
-!client/public/videos/robot-idle-new.mp4
+# robot-idle-new.* 由你本地维护，勿提交、脚本也不会覆盖
+client/public/videos/robot-idle-new.*
 client/public/videos/*.source.mp4
+client/public/videos/_*.png
+client/public/videos/robot-idle-alpha.webm
 .DS_Store
 client/dist/
 
