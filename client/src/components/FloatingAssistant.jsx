@@ -20,8 +20,8 @@ const ROBOT = {
 }
 
 const IDLE_VIDEO = {
-  webm: '/videos/待机动画.webm',
-  mp4: '/videos/待机动画.mp4',
+  webm: '/videos/robot-idle.webm',
+  mp4: '/videos/robot-idle.mp4',
 }
 
 const QUICK_PROMPTS = [
@@ -57,24 +57,67 @@ function RobotAvatar({ state, className = '', alt = '飞行助手' }) {
 }
 
 function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
+  const videoRef = useRef(null)
   const [fallback, setFallback] = useState(false)
+  const [videoReady, setVideoReady] = useState(false)
+  const isFab = className.includes('is-fab')
+
+  useEffect(() => {
+    if (fallback) return undefined
+    const video = videoRef.current
+    if (!video) return undefined
+
+    const play = () => {
+      video.play().catch(() => {})
+    }
+    play()
+
+    const failTimer = window.setTimeout(() => {
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        setFallback(true)
+      }
+    }, 3000)
+
+    return () => window.clearTimeout(failTimer)
+  }, [fallback])
+
   if (fallback) {
     return <RobotAvatar state="idle" className={className} alt={alt} />
   }
-  return (
-    <video
-      className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
-      autoPlay
-      loop
-      muted
-      playsInline
-      aria-label={alt}
-      onError={() => setFallback(true)}
-    >
-      <source src={IDLE_VIDEO.webm} type="video/webm" />
-      <source src={IDLE_VIDEO.mp4} type="video/mp4" />
-    </video>
+
+  const media = (
+    <>
+      <img
+        src={ROBOT.idle}
+        alt=""
+        className={`floating-assistant__robot floating-assistant__robot-poster ${className}${videoReady ? ' is-hidden' : ''}`}
+        aria-hidden
+        draggable={false}
+      />
+      <video
+        ref={videoRef}
+        className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
+        poster={ROBOT.idle}
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="auto"
+        aria-label={alt || undefined}
+        onLoadedData={() => setVideoReady(true)}
+        onPlaying={() => setVideoReady(true)}
+        onError={() => setFallback(true)}
+      >
+        <source src={IDLE_VIDEO.webm} type="video/webm" />
+        <source src={IDLE_VIDEO.mp4} type="video/mp4" />
+      </video>
+    </>
   )
+
+  if (isFab) {
+    return <span className="floating-assistant__fab-media">{media}</span>
+  }
+  return <span className="floating-assistant__mascot-media">{media}</span>
 }
 
 function RobotMascot({ state = 'idle', className = '', alt = '飞行助手', useIdleVideo = true }) {
@@ -276,14 +319,41 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
     [input, imageFile, imagePreview, configured, streaming, messages, context, badge],
   )
 
+  const attachImageFile = useCallback((file) => {
+    if (!file?.type?.startsWith('image/')) return
+    setImagePreview((prev) => {
+      if (prev) URL.revokeObjectURL(prev)
+      return URL.createObjectURL(file)
+    })
+    setImageFile(file)
+    setMascotState('listen')
+  }, [])
+
   const onPickImage = (e) => {
     const file = e.target.files?.[0]
-    if (!file?.type?.startsWith('image/')) return
-    setImageFile(file)
-    setImagePreview(URL.createObjectURL(file))
-    setMascotState('listen')
+    if (file) attachImageFile(file)
     e.target.value = ''
   }
+
+  const onPasteImage = useCallback(
+    (e) => {
+      if (streaming) return
+      const items = e.clipboardData?.items
+      if (!items?.length) return
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]
+        if (item.kind === 'file' && item.type.startsWith('image/')) {
+          const file = item.getAsFile()
+          if (file) {
+            e.preventDefault()
+            attachImageFile(file)
+            return
+          }
+        }
+      }
+    },
+    [streaming, attachImageFile],
+  )
 
   const onClearHistory = () => {
     if (!window.confirm('清空本地对话记录？')) return
@@ -424,7 +494,10 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
                   className="floating-assistant__attach-remove"
                   onClick={() => {
                     setImageFile(null)
-                    setImagePreview(null)
+                    setImagePreview((prev) => {
+                      if (prev) URL.revokeObjectURL(prev)
+                      return null
+                    })
                   }}
                   aria-label="移除图片"
                 >
@@ -452,12 +525,13 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
               <textarea
                 className="floating-assistant__input"
                 rows={2}
-                placeholder="输入问题，可附图（多模态）"
+                placeholder="输入问题，可粘贴或上传图片"
                 value={input}
                 disabled={streaming}
                 onFocus={() => setMascotState('listen')}
                 onBlur={() => !streaming && setMascotState(badge > 0 ? 'alert' : 'idle')}
                 onChange={(e) => setInput(e.target.value)}
+                onPaste={onPasteImage}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault()

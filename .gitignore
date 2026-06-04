@@ -4,7 +4,9 @@ node_modules/
 build/
 *.log
 videos/
-client/public/videos/
+client/public/videos/*
+!client/public/videos/robot-idle.webm
+!client/public/videos/robot-idle.mp4
 .DS_Store
 client/dist/
 
