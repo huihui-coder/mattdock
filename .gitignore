@@ -7,6 +7,8 @@ videos/
 client/public/videos/*
 !client/public/videos/robot-idle.webm
 !client/public/videos/robot-idle.mp4
+!client/public/videos/robot-idle-new.webm
+!client/public/videos/robot-idle-new.mp4
 .DS_Store
 client/dist/
 

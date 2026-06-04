@@ -27,12 +27,15 @@ const ROBOT = {
 }
 
 const IDLE_VIDEO = {
-  webm: '/videos/robot-idle.webm',
-  mp4: '/videos/robot-idle.mp4',
+  webm: '/videos/robot-idle-new.webm',
+  mp4: '/videos/robot-idle-new.mp4',
 }
 
 /** 每次播完待机动画后静止间隔（毫秒） */
 const IDLE_PLAY_GAP_MS = 5000
+
+/** 顶栏首帧停留时上下浮动一圈的时长（毫秒） */
+const IDLE_FLOAT_MS = 1000
 
 const QUICK_PROMPTS = [
   { label: '解读告警', text: '请根据当前近期告警，逐条用通俗语言解读原因和建议操作。' },
@@ -174,6 +177,7 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
       onError={() => setFallback(true)}
     >
       <source src={IDLE_VIDEO.webm} type="video/webm" />
+      <source src={IDLE_VIDEO.mp4} type="video/mp4" />
     </video>
   )
 
@@ -183,7 +187,15 @@ function RobotIdleVideo({ className = '', alt = '飞行助手', floatWhilePause 
     return <span className="floating-assistant__fab-media">{videoEl}</span>
   }
   return (
-    <span key={floatWhilePause ? pauseAnimKey : undefined} className={mediaClass}>
+    <span
+      key={floatWhilePause ? pauseAnimKey : undefined}
+      className={mediaClass}
+      style={
+        idlePause && floatWhilePause
+          ? { animationDuration: `${IDLE_FLOAT_MS}ms` }
+          : undefined
+      }
+    >
       {videoEl}
     </span>
   )

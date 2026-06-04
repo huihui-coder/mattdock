@@ -760,7 +760,7 @@ body {
   overflow: visible;
 }
 
-/* 与待机动画间隔 5s 同步：首尾 translateY(0) 对齐视频首帧 */
+/* 首帧停留时 1s 完成一小圈上下浮动，首尾对齐视频第 0 帧 */
 @keyframes assistant-header-idle-bob {
   0%,
   100% {
@@ -768,12 +768,12 @@ body {
   }
 
   50% {
-    transform: translateY(-0.45rem);
+    transform: translateY(-0.35rem);
   }
 }
 
 .floating-assistant__header-mascot .floating-assistant__mascot-media.is-idle-pause {
-  animation: assistant-header-idle-bob 5s ease-in-out;
+  animation: assistant-header-idle-bob 1s ease-in-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
