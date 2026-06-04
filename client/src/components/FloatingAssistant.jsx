@@ -116,7 +116,7 @@ function RobotIdleVideo({ className = '', alt = '飞行助手' }) {
       />
       <video
         ref={videoRef}
-        className={`floating-assistant__robot floating-assistant__robot-video ${className}`}
+        className={`floating-assistant__robot floating-assistant__robot-video floating-assistant__robot-video--keyed ${className}`}
         poster={ROBOT.idle}
         autoPlay
         muted
