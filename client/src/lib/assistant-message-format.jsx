@@ -41,53 +41,104 @@ function renderInline(text, keyPrefix) {
   })
 }
 
-function renderList(lines, ordered, key) {
-  const Tag = ordered ? 'ol' : 'ul'
-  return (
-    <Tag key={key} className="assistant-list">
-      {lines.map((line, i) => {
-        const m = line.match(ordered ? /^\d+\.\s+(.*)$/ : /^[-*]\s+(.*)$/)
-        const body = m ? m[1] : line
-        return (
-          <li key={`${key}-${i}`} className="assistant-list-item">
-            {renderInline(body, `${key}-li-${i}`)}
-          </li>
-        )
-      })}
-    </Tag>
-  )
+/** 按行解析：支持标题与列表紧邻（单换行） */
+function parseLines(cleaned) {
+  const lines = cleaned.split('\n')
+  const nodes = []
+  let i = 0
+
+  while (i < lines.length) {
+    const trimmed = lines[i].trim()
+    if (!trimmed) {
+      i += 1
+      continue
+    }
+
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/)
+    if (heading) {
+      nodes.push({ type: 'heading', level: heading[1].length, text: heading[2] })
+      i += 1
+      continue
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      const items = []
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*]\s+/, ''))
+        i += 1
+      }
+      nodes.push({ type: 'ul', items })
+      continue
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      const items = []
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^\d+\.\s+/, ''))
+        i += 1
+      }
+      nodes.push({ type: 'ol', items })
+      continue
+    }
+
+    const paraLines = []
+    while (i < lines.length) {
+      const t = lines[i].trim()
+      if (!t) break
+      if (/^#{1,3}\s+/.test(t)) break
+      if (/^[-*]\s+/.test(t) || /^\d+\.\s+/.test(t)) break
+      paraLines.push(lines[i])
+      i += 1
+    }
+    if (paraLines.length) nodes.push({ type: 'p', lines: paraLines })
+  }
+
+  return nodes
 }
 
-function renderBlock(block, index) {
-  const trimmed = block.trim()
-  if (!trimmed) return null
+function headingClass(level) {
+  if (level <= 1) return 'assistant-h1'
+  if (level === 2) return 'assistant-h1'
+  return 'assistant-h2'
+}
 
-  const h3 = trimmed.match(/^###\s+(.+)$/)
-  if (h3) {
+function renderNode(node, index) {
+  if (node.type === 'heading') {
+    const cls = headingClass(node.level)
     return (
-      <h4 key={index} className="assistant-h">
-        {renderInline(h3[1], `h3-${index}`)}
-      </h4>
-    )
-  }
-  const h2 = trimmed.match(/^##\s+(.+)$/)
-  if (h2) {
-    return (
-      <h4 key={index} className="assistant-h">
-        {renderInline(h2[1], `h2-${index}`)}
-      </h4>
+      <div key={index} className={cls} role="heading" aria-level={node.level <= 2 ? 2 : 3}>
+        {renderInline(node.text, `h-${index}`)}
+      </div>
     )
   }
 
-  const lines = trimmed.split('\n')
-  const allBullet = lines.every((l) => /^[-*]\s+/.test(l.trim()))
-  const allOrdered = lines.every((l) => /^\d+\.\s+/.test(l.trim()))
-  if (lines.length > 1 && allBullet) return renderList(lines, false, `ul-${index}`)
-  if (lines.length > 1 && allOrdered) return renderList(lines, true, `ol-${index}`)
+  if (node.type === 'ul') {
+    return (
+      <ul key={index} className="assistant-list">
+        {node.items.map((item, i) => (
+          <li key={`${index}-${i}`} className="assistant-list-item">
+            {renderInline(item, `ul-${index}-${i}`)}
+          </li>
+        ))}
+      </ul>
+    )
+  }
+
+  if (node.type === 'ol') {
+    return (
+      <ol key={index} className="assistant-list">
+        {node.items.map((item, i) => (
+          <li key={`${index}-${i}`} className="assistant-list-item">
+            {renderInline(item, `ol-${index}-${i}`)}
+          </li>
+        ))}
+      </ol>
+    )
+  }
 
   return (
     <p key={index} className="assistant-p">
-      {lines.map((line, li) => (
+      {node.lines.map((line, li) => (
         <span key={`${index}-${li}`}>
           {li > 0 && <br />}
           {renderInline(line, `p-${index}-${li}`)}
@@ -102,10 +153,10 @@ export function AssistantRichText({ content, className = '' }) {
   const cleaned = stripAssistantNoise(content)
   if (!cleaned) return null
 
-  const blocks = cleaned.split(/\n{2,}/)
+  const nodes = parseLines(cleaned)
   return (
     <div className={`floating-assistant__rich ${className}`.trim()}>
-      {blocks.map((block, i) => renderBlock(block, i))}
+      {nodes.map((node, i) => renderNode(node, i))}
     </div>
   )
 }

@@ -23,3 +23,4 @@ pencil-new.pen
 !haizhuDB/
 haizhuDB/avatars/
 haizhuDB/sessions.json
+server/data/dock-live-state.json

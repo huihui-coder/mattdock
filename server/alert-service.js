@@ -6,6 +6,7 @@ const crypto = require('crypto');
 
 const CONFIG_FILE = path.join(__dirname, '../haizhuDB/alert-config.json');
 const { captureStreamSnapshot } = require('./lib/stream-snapshot');
+const { launchLostAlertJob } = require('./lib/lost-alert-job-launcher');
 const { computeLocationDistanceContext } = require('./lib/geo-utils');
 
 class AlertService {
@@ -25,6 +26,8 @@ class AlertService {
 
     this.aiAnalyzer = options.aiAnalyzer || null;
     this.getDeviceState = options.getDeviceState || (() => null);
+    this.mqttService = options.mqttService || null;
+    this.processor = options.processor || null;
     this.aiAnalysisEnabled = options.aiAnalysisEnabled !== false;
 
     this._loadConfig();
@@ -277,21 +280,22 @@ class AlertService {
       const elapsedMin = Math.round(elapsed / 60000);
       const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
       if (webhookUrl) {
-        this._sendWecomWebhook(webhookUrl, deviceName, deviceId, elapsedMin, 'lost');
         this.deviceConfigs[deviceId].lastAlertTime = Date.now();
+        this._saveConfig();
         const sendSnapshot = cfg.sendSnapshot !== false;
-        if (sendSnapshot) {
-          this._sendStreamSnapshot(webhookUrl, deviceId, '_out');
-          this._sendStreamSnapshot(webhookUrl, deviceId, '_in');
-          this._sendStreamSnapshot(webhookUrl, deviceId, '_flight');
+        const aiEnabled = this.aiAnalysisEnabled && cfg.aiAnalysisEnabled !== false;
+        if (sendSnapshot || aiEnabled) {
+          this._handleLostAlertSnapshotsAndAi({
+            webhookUrl,
+            deviceId,
+            deviceName,
+            elapsedMin,
+            sendSnapshot,
+            aiEnabled,
+          });
+        } else {
+          this._sendWecomWebhook(webhookUrl, deviceName, deviceId, elapsedMin, 'lost');
         }
-        this._runAiAnalysis({
-          alertKind: 'lost',
-          webhookUrl,
-          deviceId,
-          deviceName,
-          elapsedMin,
-        });
       }
     }
   }
@@ -323,6 +327,135 @@ class AlertService {
     this._postWebhook(webhookUrl, body);
   }
 
+  setMqttService(mqttService) {
+    this.mqttService = mqttService;
+  }
+
+  setProcessor(processor) {
+    this.processor = processor;
+  }
+
+  _postWebhookAsync(webhookUrl, body) {
+    return new Promise((resolve, reject) => {
+      const url = new URL(webhookUrl);
+      const isHttps = url.protocol === 'https:';
+      const options = {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname + url.search,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      };
+      const req = (isHttps ? https : http).request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          console.log('[AlertService] 企业微信推送结果:', data);
+          resolve(data);
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+  }
+
+  _serializeDeviceStateForAi(deviceState) {
+    if (!deviceState) return null;
+    return {
+      deviceName: deviceState.deviceName,
+      deviceType: deviceState.deviceType,
+      status: deviceState.status,
+      statusText: deviceState.statusText,
+      location: deviceState.location,
+      metrics: deviceState.metrics,
+      lastUpdate: deviceState.lastUpdate,
+      raw_mode_code: deviceState.raw_mode_code,
+      osdSnapshot: deviceState.osdSnapshot
+        ? {
+            sub_device: deviceState.osdSnapshot.sub_device,
+            drone_in_dock: deviceState.osdSnapshot.drone_in_dock,
+          }
+        : null,
+      flightSession: deviceState.flightSession ? { active: true } : null,
+    };
+  }
+
+  async _sendSnapshotShot(webhookUrl, shot) {
+    if (!shot?.base64) return;
+    const md5 = crypto.createHash('md5').update(shot.buffer).digest('hex');
+    await this._postWebhookAsync(
+      webhookUrl,
+      JSON.stringify({ msgtype: 'image', image: { base64: shot.base64, md5 } }),
+    );
+    console.log(`[AlertService] 截图已发送 ${shot.label || shot.suffix}`);
+  }
+
+  /**
+   * 手动触发飞丢告警（测试用，不更新 lastAlertTime）
+   * @returns {{ ok: boolean, pid?: number, error?: string }}
+   */
+  triggerLostAlertTest(deviceId, deviceName) {
+    const cfg = this.deviceConfigs[deviceId] || {};
+    const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
+    if (!webhookUrl) {
+      return { ok: false, error: '请先配置全局或设备专属 Webhook' };
+    }
+
+    const sendSnapshot = cfg.sendSnapshot !== false;
+    const aiEnabled = this.aiAnalysisEnabled && cfg.aiAnalysisEnabled !== false;
+    const elapsedMin = cfg.thresholdMinutes || 30;
+    const deviceState = this.getDeviceState(deviceId);
+    const resolvedName = deviceName || deviceState?.deviceName || deviceId;
+
+    console.log(`[AlertService] 手动触发飞丢告警测试 ${resolvedName} (${deviceId})`);
+    const pid = launchLostAlertJob({
+      deviceId,
+      deviceName: resolvedName,
+      elapsedMin,
+      thresholdMinutes: cfg.thresholdMinutes || 30,
+      webhookUrl,
+      sendSnapshot,
+      aiEnabled,
+      location: this._droneLocationCache[deviceId] || null,
+      subDeviceOnline: cfg._subDeviceOnline,
+      deviceState: this._serializeDeviceStateForAi(deviceState),
+    });
+
+    if (!pid) {
+      return { ok: false, error: '该设备飞丢截图任务正在执行中' };
+    }
+    return { ok: true, pid };
+  }
+
+  /**
+   * 飞丢告警：独立子进程执行截图+AI（不受 nodemon 重启影响）
+   */
+  _handleLostAlertSnapshotsAndAi({
+    webhookUrl,
+    deviceId,
+    deviceName,
+    elapsedMin,
+    sendSnapshot,
+    aiEnabled,
+  }) {
+    const cfg = this.deviceConfigs[deviceId] || {};
+    const deviceState = this.getDeviceState(deviceId);
+    console.log(`[AlertService] 启动飞丢截图子进程 ${deviceName} (${deviceId})`);
+    launchLostAlertJob({
+      deviceId,
+      deviceName,
+      elapsedMin,
+      thresholdMinutes: cfg.thresholdMinutes || 30,
+      webhookUrl,
+      sendSnapshot: sendSnapshot !== false,
+      aiEnabled: !!aiEnabled,
+      location: this._droneLocationCache[deviceId] || null,
+      subDeviceOnline: cfg._subDeviceOnline,
+      deviceState: this._serializeDeviceStateForAi(deviceState),
+    });
+  }
+
   _postWebhook(webhookUrl, body) {
     const url = new URL(webhookUrl);
     const isHttps = url.protocol === 'https:';
@@ -331,14 +464,14 @@ class AlertService {
       port: url.port || (isHttps ? 443 : 80),
       path: url.pathname + url.search,
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
     };
     const req = (isHttps ? https : http).request(options, (res) => {
       let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => console.log(`[AlertService] 企业微信推送结果:`, data));
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => console.log('[AlertService] 企业微信推送结果:', data));
     });
-    req.on('error', e => console.error('[AlertService] 企业微信推送失败:', e.message));
+    req.on('error', (e) => console.error('[AlertService] 企业微信推送失败:', e.message));
     req.write(body);
     req.end();
   }
@@ -370,7 +503,7 @@ class AlertService {
     this._postWebhook(webhookUrl, JSON.stringify({ msgtype: 'markdown', markdown: { content } }));
   }
 
-  _runAiAnalysis({ alertKind, webhookUrl, deviceId, deviceName, elapsedMin }) {
+  _runAiAnalysis({ alertKind, webhookUrl, deviceId, deviceName, elapsedMin, preCapturedShots }) {
     if (!this.aiAnalysisEnabled || !this.aiAnalyzer || !webhookUrl) return;
 
     const cfg = this.deviceConfigs[deviceId] || {};
@@ -390,6 +523,7 @@ class AlertService {
         location,
         subDeviceOnline,
         deviceState,
+        preCapturedShots,
       })
       .then((result) => {
         if (!result?.analysis) return;

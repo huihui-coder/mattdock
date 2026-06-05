@@ -22,32 +22,55 @@ const SUFFIX_LABELS = {
 function captureStreamSnapshot(deviceId, suffix = '_out', timeoutMs = 15000) {
   const streamUrl = `${STREAM_BASE}/${deviceId}${suffix}.live.flv`;
   const tmpFile = path.join(os.tmpdir(), `snapshot_${crypto.randomBytes(6).toString('hex')}.jpg`);
-  const args = ['-y', '-i', streamUrl, '-frames:v', '1', '-q:v', '2', '-t', '10', tmpFile];
+  const args = [
+    '-y',
+    '-rw_timeout', '15000000',
+    '-fflags', 'nobuffer',
+    '-analyzeduration', '500000',
+    '-probesize', '500000',
+    '-i', streamUrl,
+    '-frames:v', '1',
+    '-update', '1',
+    '-q:v', '2',
+    tmpFile,
+  ];
+
+  const readSnapshot = () => {
+    if (!fs.existsSync(tmpFile)) return null;
+    try {
+      const buffer = fs.readFileSync(tmpFile);
+      fs.unlinkSync(tmpFile);
+      if (!buffer.length) return null;
+      return {
+        buffer,
+        base64: buffer.toString('base64'),
+        mime: 'image/jpeg',
+        suffix,
+        label: SUFFIX_LABELS[suffix] || suffix,
+      };
+    } catch {
+      try {
+        if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+      } catch {
+        /* ignore */
+      }
+      return null;
+    }
+  };
 
   return new Promise((resolve) => {
-    execFile('ffmpeg', args, { timeout: timeoutMs }, (err) => {
-      if (err || !fs.existsSync(tmpFile)) {
-        resolve(null);
+    execFile('ffmpeg', args, { timeout: timeoutMs, windowsHide: true }, (err) => {
+      const shot = readSnapshot();
+      if (shot) {
+        resolve(shot);
         return;
       }
-      try {
-        const buffer = fs.readFileSync(tmpFile);
-        fs.unlinkSync(tmpFile);
-        resolve({
-          buffer,
-          base64: buffer.toString('base64'),
-          mime: 'image/jpeg',
-          suffix,
-          label: SUFFIX_LABELS[suffix] || suffix,
-        });
-      } catch {
-        try {
-          if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-        } catch {
-          /* ignore */
-        }
-        resolve(null);
+      if (err) {
+        console.warn(`[StreamSnapshot] ffmpeg 失败 ${deviceId}${suffix}:`, err.message || err);
+      } else {
+        console.warn(`[StreamSnapshot] 未生成截图文件 ${deviceId}${suffix}`);
       }
+      resolve(null);
     });
   });
 }

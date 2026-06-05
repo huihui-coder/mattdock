@@ -1,4 +1,89 @@
+import { useMemo, useState } from 'react'
 import { Cpu, Thermometer, Battery, Wind, CloudRain, MapPin, AlertTriangle, Package, X, Home, MonitorPlay, Radio } from 'lucide-react'
+
+/** 机场设备列：机巢 / 单兵遥控器 */
+const FACILITY_ICON = {
+  airport: { src: '/images/无人机库,机巢.svg', label: '机场机巢' },
+  remote: { src: '/images/无人机遥控器.svg', label: '单兵遥控器' },
+}
+
+/** 无人机列：单兵机 / 机场绑定机 */
+const DRONE_ICON = {
+  single: { src: '/images/单兵无人机.svg', label: '单兵无人机' },
+  drone: { src: '/images/机场无人机.svg', label: '机场无人机' },
+  virtual: { src: '/images/机场无人机.svg', label: '机场无人机' },
+}
+
+function DeviceListIcon({ src, label, status, getStatusDot }) {
+  return (
+    <div className="relative shrink-0" title={label}>
+      <div className="w-9 h-9 rounded-lg bg-white border border-slate-200/90 shadow-sm flex items-center justify-center p-1.5 transition-colors duration-200">
+        <img src={src} alt="" className="w-full h-full object-contain text-slate-700" aria-hidden />
+      </div>
+      <span
+        className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-white ${getStatusDot(status)}`}
+        aria-hidden
+      />
+      <span className="sr-only">{label}</span>
+    </div>
+  )
+}
+
+function DeviceFacilityIcon({ deviceType, status, getStatusDot }) {
+  const meta = deviceType === 'remote' ? FACILITY_ICON.remote : FACILITY_ICON.airport
+  return <DeviceListIcon src={meta.src} label={meta.label} status={status} getStatusDot={getStatusDot} />
+}
+
+function DeviceDroneIcon({ deviceType, status, getStatusDot }) {
+  const meta = DRONE_ICON[deviceType] || DRONE_ICON.drone
+  return <DeviceListIcon src={meta.src} label={meta.label} status={status} getStatusDot={getStatusDot} />
+}
+
+const FACILITY_TABS = [
+  { id: 'all', label: '全部' },
+  { id: 'airport', label: '机场', icon: FACILITY_ICON.airport },
+  { id: 'remote', label: '遥控器', icon: FACILITY_ICON.remote },
+]
+
+const DRONE_TABS = [
+  { id: 'all', label: '全部' },
+  { id: 'single', label: '单兵', icon: DRONE_ICON.single },
+  { id: 'drone', label: '机场机', icon: DRONE_ICON.drone },
+]
+
+function DeviceListTabBar({ tabs, counts, activeId, onChange, ariaLabel, activeClassName = 'ui-tab-active' }) {
+  return (
+    <div className="ui-nav-bar-full" role="tablist" aria-label={ariaLabel}>
+      {tabs.map((tab) => {
+        const count = counts[tab.id]
+        const active = activeId === tab.id
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(tab.id)}
+            className={`ui-tab flex-1 justify-center cursor-pointer ${active ? activeClassName : 'ui-tab-inactive'}`}
+          >
+            {tab.icon && (
+              <img
+                src={tab.icon.src}
+                alt=""
+                className={`w-4 h-4 object-contain shrink-0 ${active ? 'brightness-0 invert' : 'opacity-70'}`}
+                aria-hidden
+              />
+            )}
+            <span>{tab.label}</span>
+            <span className={`text-xs tabular-nums ${active ? 'text-white/85' : 'text-slate-400'}`}>
+              {count}
+            </span>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 const ACCENT_HEADERS = {
   blue: 'bg-blue-50/90 border-blue-100',
@@ -17,7 +102,38 @@ export default function DeviceList({
   onClearFilter,
   onCockpit,
   className = '',
+  showFacilityIcons = false,
+  showDroneIcons = false,
 }) {
+  const [facilityTab, setFacilityTab] = useState('all')
+  const [droneTab, setDroneTab] = useState('all')
+
+  const facilityCounts = useMemo(() => ({
+    all: devices.length,
+    airport: devices.filter((d) => d.deviceType === 'airport').length,
+    remote: devices.filter((d) => d.deviceType === 'remote').length,
+  }), [devices])
+
+  const droneCounts = useMemo(() => ({
+    all: devices.length,
+    single: devices.filter((d) => d.deviceType === 'single').length,
+    drone: devices.filter((d) => d.deviceType === 'drone' || d.deviceType === 'virtual').length,
+  }), [devices])
+
+  const tabFilterActive =
+    (showFacilityIcons && facilityTab !== 'all') || (showDroneIcons && droneTab !== 'all')
+
+  const visibleDevices = useMemo(() => {
+    if (showFacilityIcons && facilityTab !== 'all') {
+      return devices.filter((d) => d.deviceType === facilityTab)
+    }
+    if (showDroneIcons && droneTab !== 'all') {
+      if (droneTab === 'single') return devices.filter((d) => d.deviceType === 'single')
+      return devices.filter((d) => d.deviceType === 'drone' || d.deviceType === 'virtual')
+    }
+    return devices
+  }, [devices, facilityTab, showFacilityIcons, droneTab, showDroneIcons])
+
   const getStatusDot = (status) => {
     switch (status) {
       case 'normal': return 'bg-emerald-500 shadow-sm shadow-emerald-500/40'
@@ -49,7 +165,10 @@ export default function DeviceList({
         <div>
           <h2 className="ui-section-title">{title}</h2>
           <p className="ui-section-desc tabular-nums">
-            共 {devices.length} 个设备
+            共 {visibleDevices.length} 个设备
+            {tabFilterActive && (
+              <span className="text-slate-500 ml-1">/ {devices.length} 总计</span>
+            )}
             {filterActive && <span className="text-blue-600 font-medium ml-1">· 已筛选</span>}
           </p>
         </div>
@@ -66,15 +185,62 @@ export default function DeviceList({
         )}
       </div>
 
+      {showFacilityIcons && (
+        <div className={`px-4 pb-3 border-b border-slate-100/80 ${headerClass}`}>
+          <DeviceListTabBar
+            tabs={FACILITY_TABS}
+            counts={facilityCounts}
+            activeId={facilityTab}
+            onChange={setFacilityTab}
+            ariaLabel="机场设备分类"
+          />
+        </div>
+      )}
+
+      {showDroneIcons && (
+        <div className={`px-4 pb-3 border-b border-slate-100/80 ${headerClass}`}>
+          <DeviceListTabBar
+            tabs={DRONE_TABS}
+            counts={droneCounts}
+            activeId={droneTab}
+            onChange={setDroneTab}
+            ariaLabel="无人机分类"
+            activeClassName="ui-tab-active !bg-indigo-600 !shadow-indigo-600/25"
+          />
+        </div>
+      )}
+
       <div className="ui-panel-scroll divide-y divide-slate-100">
-        {devices.length === 0 ? (
+        {visibleDevices.length === 0 ? (
           <div className="p-10 text-center flex flex-col items-center justify-center min-h-[240px]">
-            <span className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-3">
-              <Cpu className="text-slate-400" size={28} strokeWidth={1.25} />
+            <span className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-3 p-2.5">
+              {showFacilityIcons ? (
+                <img
+                  src={(facilityTab === 'remote' ? FACILITY_ICON.remote : FACILITY_ICON.airport).src}
+                  alt=""
+                  className="w-full h-full object-contain opacity-50"
+                  aria-hidden
+                />
+              ) : showDroneIcons ? (
+                <img
+                  src={(droneTab === 'drone' ? DRONE_ICON.drone : DRONE_ICON.single).src}
+                  alt=""
+                  className="w-full h-full object-contain opacity-50"
+                  aria-hidden
+                />
+              ) : (
+                <Cpu className="text-slate-400" size={28} strokeWidth={1.25} />
+              )}
             </span>
             <p className="text-sm font-medium text-slate-700">暂无设备数据</p>
-            <p className="text-xs text-slate-500 mt-1.5 max-w-[200px] leading-relaxed">
-              {filterActive ? '当前筛选条件下没有匹配设备，可清除筛选重试' : '等待 MQTT 推送设备状态'}
+            <p className="text-xs text-slate-500 mt-1.5 max-w-[220px] leading-relaxed">
+              {filterActive
+                ? '当前筛选条件下没有匹配设备，可清除筛选重试'
+                : showFacilityIcons && facilityTab !== 'all'
+                  ? `暂无${facilityTab === 'airport' ? '机场' : '遥控器'}设备`
+                  : showDroneIcons && droneTab !== 'all'
+                    ? `暂无${droneTab === 'single' ? '单兵' : '机场'}无人机`
+                    : '等待 MQTT 推送设备状态'}
             </p>
             {!filterActive && (
               <span className="inline-flex items-center gap-1.5 mt-4 text-xs text-slate-400">
@@ -84,21 +250,41 @@ export default function DeviceList({
             )}
           </div>
         ) : (
-          devices.map((device) => (
+          visibleDevices.map((device) => (
             <div
               key={device.deviceId}
               onClick={() => onSelect(device)}
               onKeyDown={(e) => { if (e.key === 'Enter') onSelect(device) }}
               role="button"
               tabIndex={0}
-              className={`p-4 cursor-pointer transition-all duration-200 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400/50 ${
-                selectedId === device.deviceId ? 'bg-blue-50/80 ring-1 ring-inset ring-blue-200' : ''
+              className={`p-4 cursor-pointer transition-all duration-200 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset ${
+                showDroneIcons ? 'focus-visible:ring-indigo-400/50' : 'focus-visible:ring-blue-400/50'
+              } ${
+                selectedId === device.deviceId
+                  ? showDroneIcons
+                    ? 'bg-indigo-50/80 ring-1 ring-inset ring-indigo-200'
+                    : 'bg-blue-50/80 ring-1 ring-inset ring-blue-200'
+                  : ''
               }`}
             >
               <div className="flex items-start justify-between gap-2 mb-2.5">
-                <div className="flex items-start gap-2 min-w-0">
-                  <div className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${getStatusDot(device.status)}`} aria-hidden />
-                  <div className="min-w-0">
+                <div className="flex items-start gap-2.5 min-w-0">
+                  {showFacilityIcons && (device.deviceType === 'airport' || device.deviceType === 'remote') ? (
+                    <DeviceFacilityIcon
+                      deviceType={device.deviceType}
+                      status={device.status}
+                      getStatusDot={getStatusDot}
+                    />
+                  ) : showDroneIcons && ['drone', 'single', 'virtual'].includes(device.deviceType) ? (
+                    <DeviceDroneIcon
+                      deviceType={device.deviceType}
+                      status={device.status}
+                      getStatusDot={getStatusDot}
+                    />
+                  ) : (
+                    <div className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${getStatusDot(device.status)}`} aria-hidden />
+                  )}
+                  <div className="min-w-0 flex-1">
                     <span className="font-semibold text-slate-800 truncate block">{device.deviceName || device.deviceId}</span>
                     {device.deviceName && device.deviceName !== device.deviceId && (
                       <span className="text-xs text-slate-400 truncate block mt-0.5">{device.deviceId}</span>
@@ -106,14 +292,27 @@ export default function DeviceList({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-                  {device.metrics.modeCode && (
+                  {device.metrics.operational && (
+                    <span className={`text-[10px] px-2 py-0.5 rounded-md font-medium border ${
+                      device.metrics.operational.value === 'flying'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : device.metrics.operational.value === 'disconnected'
+                          ? 'bg-slate-100 text-slate-600 border-slate-200'
+                          : 'bg-blue-50 text-blue-700 border-blue-100'
+                    }`}>
+                      {device.metrics.operational.statusText}
+                    </span>
+                  )}
+                  {device.metrics.modeCode && !device.metrics.operational && (
                     <span className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100 font-medium">
                       {device.metrics.modeCode.statusText}
                     </span>
                   )}
-                  <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${getStatusBadge(device.status)}`}>
-                    {device.statusText}
-                  </span>
+                  {!['drone', 'single', 'virtual'].includes(device.deviceType) && (
+                    <span className={`text-xs px-2 py-0.5 rounded-md font-medium ${getStatusBadge(device.status)}`}>
+                      {device.statusText}
+                    </span>
+                  )}
                   {(device.deviceType === 'airport' || device.deviceType === 'remote') && onCockpit && (
                     <button
                       type="button"
@@ -165,6 +364,12 @@ export default function DeviceList({
                   <div className={`flex items-center gap-1 font-medium ${device.metrics.droneInDock.value === 1 ? 'text-emerald-600' : 'text-orange-500'}`}>
                     <Home size={12} aria-hidden />
                     <span>{device.metrics.droneInDock.statusText}</span>
+                  </div>
+                )}
+                {device.metrics.boundDrone && (
+                  <div className="flex items-center gap-1 text-sky-700 col-span-2">
+                    <Radio size={12} aria-hidden />
+                    <span className="truncate">绑定 {device.metrics.boundDrone.name}</span>
                   </div>
                 )}
               </div>

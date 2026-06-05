@@ -14,6 +14,20 @@ const DeviceProcessor = require('./device-processor');
 const AlertService = require('./alert-service');
 const { registerImageRoutes } = require('./routes/image-api');
 const { registerAssistantRoutes } = require('./routes/assistant-api');
+const { getFlightRecordsForAssistant, getFlightStatsSnapshot } = require('./lib/flight-records-for-assistant');
+const {
+  isDockSharedOutAirport,
+  resolveVideoId,
+  METHOD_LIVE_CAMERA_CHANGE,
+} = require('./lib/live-camera-service');
+const {
+  isDockSeriesAirport,
+  SUPPLEMENT_LIGHT_ACTIONS,
+  METHOD_SUPPLEMENT_LIGHT_OPEN,
+  METHOD_SUPPLEMENT_LIGHT_CLOSE,
+} = require('./lib/dock-service');
+const { getJobSecret } = require('./lib/lost-alert-mqtt-bridge');
+const { getLiveCameraPosition } = require('./lib/dock-live-state-store');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -198,14 +212,15 @@ app.use(cors());
 app.use(express.json({ limit: '25mb' }));
 
 const TOKEN_USAGE_FILE = path.join(__dirname, '../haizhuDB/ai-token-usage.json');
-const DEFAULT_MODEL_TOTAL = 1000000;
+/** 本地进度条上限（非厂商账单；火山 LAS 模型用量以控制台为准） */
+const DEFAULT_MODEL_TOTAL = Number(process.env.AI_TOKEN_DISPLAY_TOTAL) || 1000000;
 
 function readTokenUsage() {
   try {
     if (!fs.existsSync(TOKEN_USAGE_FILE)) return {};
     return JSON.parse(fs.readFileSync(TOKEN_USAGE_FILE, 'utf8'));
   } catch (error) {
-    console.error('[AI额度] 读取额度文件失败:', error.message);
+    console.error('[AI用量] 读取统计文件失败:', error.message);
     return {};
   }
 }
@@ -215,7 +230,7 @@ function writeTokenUsage(usageData) {
     fs.mkdirSync(path.dirname(TOKEN_USAGE_FILE), { recursive: true });
     fs.writeFileSync(TOKEN_USAGE_FILE, JSON.stringify(usageData, null, 2), 'utf8');
   } catch (error) {
-    console.error('[AI额度] 写入额度文件失败:', error.message);
+    console.error('[AI用量] 写入统计文件失败:', error.message);
   }
 }
 
@@ -242,7 +257,11 @@ function updateTokenUsage(model, usage) {
   };
 
   writeTokenUsage(usageData);
-  console.log(`[AI额度] ${model} 本次:${usedTokens}, 累计:${nextUsed}, 剩余:${nextRemaining}`);
+  if (process.env.AI_USAGE_LOG !== '0') {
+    console.log(
+      `[AI用量] ${model} 本次 token:${usedTokens}, 累计:${nextUsed}（本地统计，非厂商账单；剩余按 ${current.total} 上限估算:${nextRemaining}）`,
+    );
+  }
   return usageData[model];
 }
 
@@ -486,22 +505,69 @@ const thresholdConfig = {
 
 const processor = new DeviceProcessor(thresholdConfig);
 const { createAlertAiAnalyzer } = require('./lib/alert-ai-analyzer');
-const alertAiAnalyzer = createAlertAiAnalyzer({ updateTokenUsage });
+let mqttService;
+const alertAiAnalyzer = createAlertAiAnalyzer({
+  updateTokenUsage,
+  getDeviceState: (deviceId) => processor.getDeviceState(deviceId),
+  processor,
+  getMqttService: () => mqttService,
+});
 const alertService = new AlertService({
   aiAnalyzer: alertAiAnalyzer,
   getDeviceState: (deviceId) => processor.getDeviceState(deviceId),
+  processor,
   aiAnalysisEnabled: process.env.ALERT_AI_ENABLED !== '0',
 });
 
-const mqttService = new MQTTService({
+mqttService = new MQTTService({
   brokerUrl: process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
   username: process.env.MQTT_USERNAME || '',
   password: process.env.MQTT_PASSWORD || '',
   clientId: process.env.MQTT_CLIENT_ID || 'airport_monitor_',
   topics: process.env.MQTT_TOPICS || 'airport/devices/#'
-}, wsService, alertService);
+}, wsService, alertService, processor);
+
+alertService.setMqttService(mqttService);
 
 mqttService.connect();
+
+function requireLostAlertJobSecret(req, res, next) {
+  if (req.headers['x-job-secret'] === getJobSecret()) return next();
+  return res.status(403).json({ error: 'job secret invalid' });
+}
+
+// 飞丢告警子进程复用主进程 MQTT（避免第二连接被 broker 拒绝）
+app.get('/api/internal/lost-alert/status', requireLostAlertJobSecret, (req, res) => {
+  res.json({ mqttConnected: mqttService.isConnected() });
+});
+
+app.post('/api/internal/lost-alert/service', requireLostAlertJobSecret, async (req, res) => {
+  try {
+    const { deviceId, method, data } = req.body || {};
+    if (!deviceId || !method) {
+      return res.status(400).json({ error: 'deviceId and method required' });
+    }
+    if (!mqttService.isConnected()) {
+      return res.status(503).json({ error: 'MQTT 未连接' });
+    }
+    await mqttService.publishService(deviceId, method, data ?? null);
+    if (method === METHOD_LIVE_CAMERA_CHANGE && data?.camera_position !== undefined) {
+      processor.patchDockControlState(deviceId, {
+        liveCameraPosition: data.camera_position,
+        source: 'lost_alert',
+      });
+    }
+    if (method === METHOD_SUPPLEMENT_LIGHT_OPEN) {
+      processor.patchDockControlState(deviceId, { supplementLightState: 1, source: 'lost_alert' });
+    }
+    if (method === METHOD_SUPPLEMENT_LIGHT_CLOSE) {
+      processor.patchDockControlState(deviceId, { supplementLightState: 0, source: 'lost_alert' });
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  }
+});
 
 // 每分钟检查一次机场是否离线
 setInterval(() => alertService.checkAirportOffline(), 60 * 1000);
@@ -511,13 +577,25 @@ registerImageRoutes(app, { requireImageStudio: requirePermission('image-studio')
 registerAssistantRoutes(app, {
   requireAssistant: requirePermission('ai-assistant'),
   updateTokenUsage,
+  enrichAssistantContext: (ctx) => {
+    const flightView = ctx?.flightView;
+    const flightStats = getFlightStatsSnapshot(processor, flightView);
+    const opts = { flightView, selectedDevice: ctx?.selectedDevice };
+    return {
+      ...ctx,
+      flightStats,
+      flightRecords: getFlightRecordsForAssistant(processor, () => buildActiveFlightSessions(), opts),
+      flightRanking: flightStats.ranking,
+    };
+  },
 });
 
-const zhipuKey = (process.env.ZHIPU_API_KEY || '').trim();
-const zhipuModel = (process.env.ZHIPU_MODEL || 'glm-4.6v-flash').trim();
-const alertAiOn = process.env.ALERT_AI_ENABLED !== '0' && !!zhipuKey;
-console.log(`[Assistant] Zhipu: key=${zhipuKey ? '已配置' : '未配置'}, model=${zhipuModel || '(空)'}`);
+const arkKey = (process.env.ARK_API_KEY || '').trim();
+const arkModel = (process.env.ARK_MODEL || 'doubao-seed-2-0-mini-260428').trim();
+const alertAiOn = process.env.ALERT_AI_ENABLED !== '0' && !!arkKey;
+console.log(`[Assistant] Ark: key=${arkKey ? '已配置' : '未配置'}, model=${arkModel || '(空)'}`);
 console.log(`[AlertAI] 告警多模态分析: ${alertAiOn ? '已启用' : '未启用'}`);
+console.log(`[Ark] 联网搜索: ${process.env.ARK_WEB_SEARCH || 'auto'}（有外网时自动开启）`);
 
 // 获取离巢告警配置
 app.get('/api/alert-config', (req, res) => {
@@ -528,6 +606,19 @@ app.get('/api/alert-config', (req, res) => {
 app.post('/api/alert-config', (req, res) => {
   alertService.updateConfigs(req.body);
   res.json({ message: '告警配置已保存', config: alertService.getConfig() });
+});
+
+// 手动触发飞丢告警（测试截图 + AI + 企业微信推送）
+app.post('/api/alert-config/trigger-lost', (req, res) => {
+  const { deviceId } = req.body || {};
+  if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
+  const state = processor.getDeviceState?.(deviceId);
+  const deviceName = state?.deviceName || deviceId;
+  const result = alertService.triggerLostAlertTest(deviceId, deviceName);
+  if (!result.ok) {
+    return res.status(result.error?.includes('执行中') ? 409 : 400).json({ error: result.error });
+  }
+  res.json({ message: '飞丢告警测试已触发', pid: result.pid });
 });
 
 // 测试推送
@@ -595,6 +686,133 @@ app.post('/api/thresholds', (req, res) => {
 // 获取当前阈值配置
 app.get('/api/thresholds', (req, res) => {
   res.json(processor.thresholds);
+});
+
+// Dock 系列直播相机切换（舱内/舱外共用 _out 流）
+app.post('/api/live/camera-change', requirePermission('monitor'), async (req, res) => {
+  const { deviceId, cameraPosition, videoId } = req.body || {};
+  const gatewaySn = String(deviceId || '').trim();
+  const pos = Number(cameraPosition);
+
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  if (pos !== 0 && pos !== 1) {
+    return res.status(400).json({ error: 'camera_position 须为 0（舱内）或 1（舱外）' });
+  }
+
+  const state = processor.getDeviceState(gatewaySn);
+  const checkDevice = {
+    deviceId: gatewaySn,
+    deviceType: state?.deviceType || 'airport',
+    deviceName: state?.deviceName || processor.getDeviceName(gatewaySn),
+  };
+  if (!isDockSharedOutAirport(checkDevice)) {
+    return res.status(400).json({
+      error: '该设备非 Dock 系列机场，不支持舱内/舱外 MQTT 切换',
+    });
+  }
+
+  const resolvedVideoId = resolveVideoId(gatewaySn, videoId);
+  try {
+    const reply = await mqttService.invokeService(gatewaySn, METHOD_LIVE_CAMERA_CHANGE, {
+      camera_position: pos,
+      video_id: resolvedVideoId,
+    });
+    const updated = processor.patchDockControlState(gatewaySn, {
+      liveCameraPosition: pos,
+      source: 'api',
+    });
+    if (updated && mqttService.wsService) {
+      mqttService.wsService.broadcast({
+        type: 'device_data',
+        topic: `thing/product/${gatewaySn}/osd`,
+        raw: { data: updated.osdSnapshot || {} },
+        processed: updated,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.json({
+      ok: true,
+      deviceId: gatewaySn,
+      camera_position: pos,
+      camera_label: pos === 0 ? '舱内' : '舱外',
+      video_id: resolvedVideoId,
+      reply: reply?.data,
+    });
+  } catch (e) {
+    console.error('[Live] camera-change 失败:', e.message);
+    res.status(502).json({ error: e.message || '直播相机切换失败' });
+  }
+});
+
+app.get('/api/live/dock3-config/:deviceId', (req, res) => {
+  const gatewaySn = req.params.deviceId;
+  const state = processor.getDeviceState(gatewaySn);
+  const dockSharedOut = isDockSharedOutAirport(state || { deviceId: gatewaySn, deviceType: 'airport' });
+  const liveCameraPosition =
+    state?.liveCameraPosition ?? getLiveCameraPosition(gatewaySn) ?? null;
+  res.json({
+    deviceId: gatewaySn,
+    dockSharedOut,
+    dock3SharedOut: dockSharedOut,
+    videoId: dockSharedOut ? resolveVideoId(gatewaySn) : null,
+    liveCameraPosition,
+    liveCameraLabel:
+      liveCameraPosition === 0 ? '舱内推流' : liveCameraPosition === 1 ? '舱外推流' : null,
+  });
+});
+
+// Dock 系列机场补光灯开关
+app.post('/api/dock/supplement-light', requirePermission('monitor'), async (req, res) => {
+  const { deviceId, action } = req.body || {};
+  const gatewaySn = String(deviceId || '').trim();
+  const act = String(action || '').toLowerCase();
+
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  const method = SUPPLEMENT_LIGHT_ACTIONS[act];
+  if (!method) {
+    return res.status(400).json({ error: 'action 须为 open 或 close' });
+  }
+
+  const state = processor.getDeviceState(gatewaySn);
+  const checkDevice = {
+    deviceId: gatewaySn,
+    deviceType: state?.deviceType || 'airport',
+    deviceName: state?.deviceName || processor.getDeviceName(gatewaySn),
+  };
+  if (!isDockSeriesAirport(checkDevice)) {
+    return res.status(400).json({ error: '该设备非 Dock 系列机场，不支持补光灯控制' });
+  }
+
+  try {
+    const reply = await mqttService.invokeService(gatewaySn, method, null);
+    const status = reply?.data?.output?.status;
+    const lightState = act === 'open' ? 1 : 0;
+    const updated = processor.patchDockControlState(gatewaySn, { supplementLightState: lightState });
+    if (updated && mqttService.wsService) {
+      mqttService.wsService.broadcast({
+        type: 'device_data',
+        topic: `thing/product/${gatewaySn}/osd`,
+        raw: { data: updated.osdSnapshot || {} },
+        processed: updated,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.json({
+      ok: true,
+      deviceId: gatewaySn,
+      action: act,
+      method,
+      status,
+      reply: reply?.data,
+    });
+  } catch (e) {
+    console.error('[Dock] supplement-light 失败:', e.message);
+    res.status(502).json({ error: e.message || '补光灯控制失败' });
+  }
 });
 
 // 手动重连MQTT

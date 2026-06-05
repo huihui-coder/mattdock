@@ -1,0 +1,12 @@
+{
+  "watch": ["server"],
+  "ext": "js",
+  "ignore": [
+    "haizhuDB/**",
+    "server/data/**",
+    "client/**",
+    "node_modules/**",
+    "**/*.json"
+  ],
+  "delay": 5000
+}

@@ -809,14 +809,32 @@ body {
   color: #334155;
 }
 
+.floating-assistant__rich .assistant-h1,
+.floating-assistant__rich .assistant-h2,
 .floating-assistant__rich .assistant-h {
-  margin: 0.5rem 0 0.25rem;
-  font-size: 0.8125rem;
-  font-weight: 600;
   color: #1e293b;
+  line-height: 1.35;
 }
 
-.floating-assistant__rich .assistant-h:first-child {
+/* ## 一级标题 */
+.floating-assistant__rich .assistant-h1 {
+  margin: 0.65rem 0 0.35rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+}
+
+.floating-assistant__rich .assistant-h1:first-child {
+  margin-top: 0;
+}
+
+/* ### 二级标题 */
+.floating-assistant__rich .assistant-h2 {
+  margin: 0.5rem 0 0.3rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.floating-assistant__rich .assistant-h2:first-child {
   margin-top: 0;
 }
 

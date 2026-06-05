@@ -1,13 +1,62 @@
 const fs = require('fs');
 const path = require('path');
+const { mergeOsdSnapshot, buildDockTelemetry } = require('./lib/dock-osd');
+const { getLiveCameraPosition, setLiveCameraPosition } = require('./lib/dock-live-state-store');
 
 // 飞行统计持久化路径
 const FLIGHT_HISTORY_FILE = path.join(__dirname, '../haizhuDB/flight-history.json');
 
-// 判定规则：飞行态与非飞行态
+/** DJI mode_code 飞行器状态（enum_int 官方枚举） */
+const MODE_CODE_TEXT = {
+  0: '待机',
+  1: '起飞准备',
+  2: '起飞准备完毕',
+  3: '手动飞行',
+  4: '自动起飞',
+  5: '航线飞行',
+  6: '全景拍照',
+  7: '智能跟随',
+  8: 'ADS-B 躲避',
+  9: '自动返航',
+  10: '自动降落',
+  11: '强制降落',
+  12: '三桨叶降落',
+  13: '升级中',
+  14: '未连接',
+  15: 'APAS',
+  16: '虚拟摇杆状态',
+  17: '指令飞行',
+  18: '空中 RTK 收敛模式',
+  19: '机场选址中',
+};
+
+// 飞行态：3–12、15–19；非飞行态：0–2、13、14
 const FLIGHT_MODES = new Set([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19]);
 const NON_FLIGHT_MODES = new Set([0, 1, 2, 13, 14]);
 const FLIGHT_STALE_TIMEOUT_MS = 90 * 1000;
+
+function resolveOperationalLink(mode, session) {
+  const modeNum = mode !== undefined && mode !== null ? Number(mode) : undefined;
+  const modeLabel =
+    modeNum !== undefined && !Number.isNaN(modeNum) && MODE_CODE_TEXT[modeNum] != null
+      ? MODE_CODE_TEXT[modeNum]
+      : null;
+
+  if (session != null || (modeNum !== undefined && !Number.isNaN(modeNum) && FLIGHT_MODES.has(modeNum))) {
+    return {
+      value: 'flying',
+      status: 'normal',
+      statusText: modeLabel || '飞行中',
+    };
+  }
+  if (modeNum === 14) {
+    return { value: 'disconnected', status: 'warning', statusText: MODE_CODE_TEXT[14] };
+  }
+  if (modeLabel) {
+    return { value: 'ground', status: 'normal', statusText: modeLabel };
+  }
+  return null;
+}
 
 /**
  * 设备数据处理模块
@@ -58,15 +107,17 @@ class DeviceProcessor {
 
     // 设备状态缓存
     this.deviceStates = new Map();
+    /** 单兵遥控器 SN -> 绑定无人机 SN（由 OSD gateway / sub_device 自动学习） */
+    this.remoteDroneBindings = new Map();
     // 设备名称映射 - 海珠机场设备
     this.deviceNames = {
       '8UUXP3B00A10VD': '南洲-Dock3-M4TD',
       '7CTDM1200B453R': '华洲-Dock2-M3TD',
-      'NEST20202412U002': '沙园-充电-M3T',
+      'NEST20202412U002': '江南中-充电-M3T',
       'NEST44202512U014': '区府-换电-M4T',
       'AHRXNAH00A01C6': '凤阳-Dock3-M4TD',
       'AHRXNAH00A01DF': '华洲-Dock3-M4TD',
-      'AHRXNAH00A0192': '江南中-Dock3-M4TD',
+      'AHRXNAH00A0192': '中大-Dock3-M4TD',
       'AHRXNAH00A01CE': '金碧二中-Dock3-M4TD',
       'NEST15202602U001-1': '会展-双机换电1号-M4T',
       'NEST15202602U001-2': '会展-双机换电2号-M4T',
@@ -75,7 +126,7 @@ class DeviceProcessor {
       'AHRXNAH00A019D': '三中-Dock3-M4TD',
       'NEST44202602U002': '艺术博物馆-换电-M4T',
       'AHRXNAH00A018Z': '分局-Dock3-M4TD',
-      'AHRXN9600A00R6': '市局（凤阳）-Dock3-M41',
+      'AHRXN9600A00R6': '市局（凤阳）-Dock3-M4TD',
       '1581F9F4X25AF00A00X0': '市局（凤阳）-M4TD-无人机',
       '1581F9HEC259S00CFP71': '昌岗派出所-M4T',
       '1581F9HEC259S00CTR1C': '南华西派出所-M4T',
@@ -100,6 +151,7 @@ class DeviceProcessor {
       '1581F9HEC258V00C1B83': '凤阳派出所-M4T',
       '1581F9HEC259S00C1ESG': '海幢派出所-M4T',
       '1581F9HEC258V00C1NPD': '巡特警二中队-M4T（1号机）',
+      '1581F9HEC259S00C6YKP': '巡特警二中队—M4T（2号机）',
       '1581F9HEC259S00CLT1Q': '南洲派出所-M4T',
       '1581F9HEC258T00CG2H0': '华洲派出所-M4T',
       '1581F9HEC258V00CVX83': '琶洲派出所-M4T',
@@ -268,6 +320,63 @@ class DeviceProcessor {
     return deviceId;
   }
 
+  /** 从 OSD 载荷解析绑定的无人机 SN */
+  extractBoundDroneSn(payload) {
+    const sn =
+      payload?.sub_device?.device_sn ||
+      payload?.sub_devices?.[0]?.device_sn ||
+      payload?.aircraft_sn ||
+      payload?.drone_sn;
+    return sn && String(sn).startsWith('1581F') ? String(sn) : null;
+  }
+
+  /** 单兵机上报的 gateway 为遥控器 SN 时记录绑定关系 */
+  rememberSingleDroneRemoteLink(droneId, gateway) {
+    if (!droneId?.startsWith('1581F') || !gateway || !String(gateway).startsWith('9N9')) return;
+    this.remoteDroneBindings.set(String(gateway), droneId);
+  }
+
+  /**
+   * 解析单兵遥控器当前绑定的无人机
+   */
+  resolveBoundDroneForRemote(remoteId, payload, prevState) {
+    const fromPayload = this.extractBoundDroneSn(payload);
+    if (fromPayload) {
+      this.remoteDroneBindings.set(remoteId, fromPayload);
+      return fromPayload;
+    }
+    const cached = this.remoteDroneBindings.get(remoteId) || prevState?.boundDroneSn;
+    if (cached) return cached;
+    for (const [id, state] of this.deviceStates.entries()) {
+      if (
+        id.startsWith('1581F') &&
+        state.gateway === remoteId &&
+        ['drone', 'single', 'virtual'].includes(state.deviceType)
+      ) {
+        this.remoteDroneBindings.set(remoteId, id);
+        return id;
+      }
+    }
+    return null;
+  }
+
+  /** 绑定无人机的展示名（用于「xx-遥控器」） */
+  getBoundDroneDisplayName(droneSn) {
+    if (!droneSn) return null;
+    if (this.deviceNames[droneSn]) return this.normalizeFlightDisplayName(this.deviceNames[droneSn]);
+    const state = this.deviceStates.get(droneSn);
+    if (state?.deviceName && state.deviceName !== droneSn) {
+      return this.normalizeFlightDisplayName(state.deviceName);
+    }
+    return null;
+  }
+
+  nameRemoteFromBoundDrone(remoteId, droneSn) {
+    const base = this.getBoundDroneDisplayName(droneSn);
+    if (!base) return null;
+    return `${base}-遥控器`;
+  }
+
   /**
    * 处理设备数据
    * @param {string} topic - MQTT主题
@@ -303,11 +412,18 @@ class DeviceProcessor {
     } else if (isRemoteController) {
       result.deviceType = 'remote';
     } else if (isDrone) {
-      // 有直接名称映射 且 没有 gateway（未绑定机场）= 单兵无人机
-      // 有 gateway 且 gateway 在机场映射里 = 机场绑定无人机
       const hasDirectName = !!this.deviceNames[deviceId];
-      const hasAirportGateway = gateway && !!this.deviceNames[gateway];
-      result.deviceType = (hasDirectName && !hasAirportGateway) ? 'single' : 'drone';
+      const isAirportStylePayload =
+        payload.drone_in_dock !== undefined ||
+        (payload.dock_batteries && Array.isArray(payload.dock_batteries));
+      const gatewayIsAirport =
+        gateway &&
+        !!this.deviceNames[gateway] &&
+        !String(gateway).startsWith('1581F') &&
+        !String(gateway).startsWith('9N9');
+      result.deviceType =
+        hasDirectName && (!gatewayIsAirport || !isAirportStylePayload) ? 'single' : 'drone';
+      this.rememberSingleDroneRemoteLink(deviceId, gateway);
     } else {
       result.deviceType = 'airport';
     }
@@ -374,10 +490,25 @@ class DeviceProcessor {
     // 把当前的活跃 session 也放进 result 返回给前端实时显示
     result.activeSession = session;
 
-    // 机场绑定无人机时，机场显示为“无人机设备名称-遥控器”
-    const boundDroneSn = payload.sub_device?.device_sn || payload.sub_devices?.[0]?.device_sn;
-    if (!isDrone && !isRemoteController && boundDroneSn && this.deviceNames[boundDroneSn]) {
-      result.deviceName = `${this.deviceNames[boundDroneSn]}-遥控器`;
+    // 机场 / 单兵遥控器：绑定无人机后命名为「xx派出所-M4T-遥控器」
+    const boundDroneSn = this.extractBoundDroneSn(payload);
+    if (!isDrone && !isRemoteController && boundDroneSn) {
+      const airportRemoteName = this.nameRemoteFromBoundDrone(deviceId, boundDroneSn);
+      if (airportRemoteName) result.deviceName = airportRemoteName;
+    }
+    if (isRemoteController) {
+      const linkedDroneSn = this.resolveBoundDroneForRemote(deviceId, payload, prevState);
+      if (linkedDroneSn) {
+        result.boundDroneSn = linkedDroneSn;
+        const remoteName = this.nameRemoteFromBoundDrone(deviceId, linkedDroneSn);
+        if (remoteName) result.deviceName = remoteName;
+        result.metrics.boundDrone = {
+          sn: linkedDroneSn,
+          name: this.getBoundDroneDisplayName(linkedDroneSn) || linkedDroneSn,
+          status: 'normal',
+          statusText: '已绑定',
+        };
+      }
     }
 
     // ========== 机场代理子设备飞行状态机 ==========
@@ -589,6 +720,13 @@ class DeviceProcessor {
       };
     }
 
+    // 单兵/绑定机：链路状态（按 mode_code 枚举）
+    if (['drone', 'single', 'virtual'].includes(result.deviceType)) {
+      const mode = currentMode !== undefined ? currentMode : prevState?.raw_mode_code;
+      const operational = resolveOperationalLink(mode, session);
+      if (operational) result.metrics.operational = operational;
+    }
+
     // ========== 告警状态 ==========
     if (payload.alarm_state !== undefined && payload.alarm_state !== 0) {
       result.alerts.push({
@@ -612,9 +750,22 @@ class DeviceProcessor {
       result.metrics.batterySlots = prevState.metrics.batterySlots;
     }
 
-    // 计算整体状态 - 根据风速和电池槽状态判断
-    result.status = this.calculateOverallStatus(result.metrics, prevState);
+    // 计算整体状态
+    result.status = this.calculateOverallStatus(result.metrics, prevState, {
+      deviceType: result.deviceType,
+      rawModeCode: currentMode !== undefined ? currentMode : prevState?.raw_mode_code,
+      activeSession: session,
+      boundDroneSn: result.boundDroneSn || prevState?.boundDroneSn,
+    });
     result.statusText = this.getStatusText(result.status);
+
+    if (['drone', 'single', 'virtual'].includes(result.deviceType)) {
+      const op = result.metrics.operational;
+      if (op) {
+        result.status = op.status === 'warning' ? 'warning' : 'normal';
+        result.statusText = op.statusText;
+      }
+    }
 
     // 生成告警 - 优先显示电池告警，然后是风速告警
     // 如果电池槽状态为警告，生成告警（即使当前消息没有电池槽数据）
@@ -649,6 +800,24 @@ class DeviceProcessor {
     }
 
     // 合并状态
+    let osdSnapshot = prevState?.osdSnapshot || {};
+    let supplementLightState = prevState?.supplementLightState ?? null;
+    let liveCameraPosition = prevState?.liveCameraPosition ?? null;
+
+    if (result.deviceType === 'airport') {
+      osdSnapshot = mergeOsdSnapshot(osdSnapshot, payload);
+      const telemetry = buildDockTelemetry(osdSnapshot, deviceId, {
+        supplementLightState,
+        liveCameraPosition,
+      });
+      supplementLightState = telemetry.supplementLightState;
+      liveCameraPosition = telemetry.liveCameraPosition;
+      if (liveCameraPosition === null) {
+        const stored = getLiveCameraPosition(deviceId);
+        if (stored !== null) liveCameraPosition = stored;
+      }
+    }
+
     const mergedResult = {
       ...result,
       // 合并指标：保留之前存在的指标，更新新收到的指标
@@ -662,7 +831,11 @@ class DeviceProcessor {
       raw_mode_code: currentMode !== undefined ? currentMode : prevState?.raw_mode_code,
       raw_total_flight_distance: totalFlightDistance !== null ? totalFlightDistance : prevState?.raw_total_flight_distance,
       raw_total_flight_time: totalFlightTime !== null ? totalFlightTime : prevState?.raw_total_flight_time,
-      flightSession: session || null
+      flightSession: session || null,
+      boundDroneSn: result.boundDroneSn || prevState?.boundDroneSn || null,
+      osdSnapshot: result.deviceType === 'airport' ? osdSnapshot : prevState?.osdSnapshot || null,
+      supplementLightState,
+      liveCameraPosition,
     };
 
     // 更新设备状态缓存
@@ -675,29 +848,9 @@ class DeviceProcessor {
    * 获取模式文本
    */
   getModeText(modeCode) {
-    const modes = {
-      0: "待机",
-      1: "起飞准备",
-      2: "起飞准备完毕",
-      3: "手动飞行",
-      4: "自动起飞",
-      5: "航线飞行",
-      6: "全景拍照",
-      7: "智能跟随",
-      8: "ADS-B 躲避",
-      9: "自动返航",
-      10: "自动降落",
-      11: "强制降落",
-      12: "三桨叶降落",
-      13: "升级中",
-      14: "未连接",
-      15: "APAS",
-      16: "虚拟摇杆状态",
-      17: "指令飞行",
-      18: "空中 RTK 收敛模式",
-      19: "机场选址中"
-    };
-    return modes[modeCode] || `模式${modeCode}`;
+    const n = Number(modeCode);
+    if (MODE_CODE_TEXT[n] != null) return MODE_CODE_TEXT[n];
+    return `模式${modeCode}`;
   }
 
   /**
@@ -783,8 +936,49 @@ class DeviceProcessor {
   /**
    * 计算整体状态 - 根据风速和电池槽状态判断
    */
-  calculateOverallStatus(metrics, prevState = null) {
-    // 优先检查电池槽状态（如果有）
+  calculateOverallStatus(metrics, prevState = null, ctx = {}) {
+    const { deviceType, rawModeCode, activeSession, boundDroneSn } = ctx;
+
+    if (deviceType === 'remote') {
+      if (boundDroneSn || metrics.boundDrone?.sn) {
+        if (metrics.subDeviceOnline?.value === 1) return 'normal';
+        const droneState = this.deviceStates.get(boundDroneSn || metrics.boundDrone?.sn);
+        if (droneState?.activeSession || droneState?.flightSession) return 'normal';
+        if (droneState?.lastSeen && Date.now() - new Date(droneState.lastSeen).getTime() < FLIGHT_STALE_TIMEOUT_MS) {
+          return 'normal';
+        }
+        return 'normal';
+      }
+      if (prevState?.lastSeen && Date.now() - new Date(prevState.lastSeen).getTime() < FLIGHT_STALE_TIMEOUT_MS) {
+        return 'normal';
+      }
+      return 'unknown';
+    }
+
+    if (['drone', 'single', 'virtual'].includes(deviceType)) {
+      const mode = rawModeCode ?? metrics.modeCode?.value;
+      if (activeSession || (mode !== undefined && FLIGHT_MODES.has(mode))) {
+        return 'normal';
+      }
+      if (mode === 14) {
+        return 'warning';
+      }
+      if (mode !== undefined) {
+        return 'normal';
+      }
+      if (metrics.windSpeed) {
+        return metrics.windSpeed.status;
+      }
+      if (metrics.droneBattery) {
+        return 'normal';
+      }
+      if (prevState?.lastSeen && Date.now() - new Date(prevState.lastSeen).getTime() < FLIGHT_STALE_TIMEOUT_MS) {
+        return 'normal';
+      }
+      return 'unknown';
+    }
+
+    // 机场：风速 / 电池槽
     if (metrics.batterySlots && metrics.batterySlots.status === 'warning') {
       return 'warning';
     }
@@ -887,6 +1081,35 @@ class DeviceProcessor {
     return this.deviceStates.get(deviceId);
   }
 
+  /** 控制指令成功后写入 Dock 状态（OSD 延迟时 UI 仍可识别） */
+  patchDockControlState(deviceId, patch = {}) {
+    const state = this.deviceStates.get(deviceId);
+    if (!state || state.deviceType !== 'airport') return null;
+
+    const osdSnapshot = { ...(state.osdSnapshot || {}) };
+    let liveCameraPosition = state.liveCameraPosition ?? null;
+    let supplementLightState = state.supplementLightState ?? null;
+
+    if (patch.liveCameraPosition === 0 || patch.liveCameraPosition === 1) {
+      osdSnapshot.camera_position = patch.liveCameraPosition;
+      liveCameraPosition = patch.liveCameraPosition;
+      setLiveCameraPosition(deviceId, patch.liveCameraPosition, patch.source || 'control');
+    }
+    if (patch.supplementLightState === 0 || patch.supplementLightState === 1) {
+      osdSnapshot.supplement_light_state = patch.supplementLightState;
+      supplementLightState = patch.supplementLightState;
+    }
+
+    const next = {
+      ...state,
+      osdSnapshot,
+      supplementLightState,
+      liveCameraPosition,
+    };
+    this.deviceStates.set(deviceId, next);
+    return next;
+  }
+
   /**
    * 更新阈值配置
    */
@@ -896,3 +1119,6 @@ class DeviceProcessor {
 }
 
 module.exports = DeviceProcessor;
+module.exports.MODE_CODE_TEXT = MODE_CODE_TEXT;
+module.exports.FLIGHT_MODES = FLIGHT_MODES;
+module.exports.NON_FLIGHT_MODES = NON_FLIGHT_MODES;

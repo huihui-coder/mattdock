@@ -26,7 +26,7 @@ function AiAnalysisToggle({ deviceId, cfg, onUpdate, hint }) {
 }
 
 // ─── 飞丢告警 单行卡片（memo 防止兄弟行更新时重渲染）───────────────────────
-const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded, onToggle }) {
+const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded, onToggle, onTriggerTest, triggering }) {
   const enabled = cfg.enabled || false
   return (
     <div className={enabled ? 'bg-orange-50/60' : ''}>
@@ -51,6 +51,18 @@ const LostRow = memo(function LostRow({ deviceId, name, cfg, onUpdate, expanded,
             <span className="ui-badge bg-orange-100 text-orange-700 border border-orange-200">
               {cfg.thresholdMinutes || 30} 分钟
             </span>
+          )}
+          {enabled && (
+            <button
+              type="button"
+              onClick={() => onTriggerTest(deviceId)}
+              disabled={triggering}
+              className="ui-btn-secondary !text-xs !py-1 !px-2.5 disabled:opacity-50"
+              title="立即走完整飞丢告警流程（截图 + AI + 企业微信）"
+            >
+              <Send size={12} />
+              {triggering ? '发送中…' : '立即告警'}
+            </button>
           )}
           <button onClick={() => onToggle(deviceId)} className="text-gray-400 hover:text-gray-600 p-1">
             {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -176,6 +188,7 @@ export default function AlertConfig({ devices }) {
   const [deviceConfigs, setDeviceConfigs] = useState({})
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
+  const [triggeringLost, setTriggeringLost] = useState({})
   const [message, setMessage] = useState(null)
   const [expandedLost, setExpandedLost] = useState({})
   const [expandedOffline, setExpandedOffline] = useState({})
@@ -209,6 +222,33 @@ export default function AlertConfig({ devices }) {
     }
     setSaving(false)
   }, [globalWebhookUrl, deviceConfigs, showMsg])
+
+  const handleTriggerLost = useCallback(async (deviceId) => {
+    const cfg = deviceConfigs[deviceId] || {}
+    const webhookUrl = cfg.webhookUrl || globalWebhookUrl
+    if (!webhookUrl) {
+      showMsg('请先配置 Webhook（全局或设备专属）', 'error')
+      return
+    }
+    setTriggeringLost(prev => ({ ...prev, [deviceId]: true }))
+    try {
+      const res = await fetch(`${API}/api/alert-config/trigger-lost`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        showMsg(data.error || '触发失败', 'error')
+        return
+      }
+      showMsg(`飞丢告警测试已触发（pid ${data.pid || '—'}），请查看企业微信群与终端日志`)
+    } catch {
+      showMsg('触发失败', 'error')
+    } finally {
+      setTriggeringLost(prev => ({ ...prev, [deviceId]: false }))
+    }
+  }, [deviceConfigs, globalWebhookUrl, showMsg])
 
   const handleTest = useCallback(async () => {
     if (!globalWebhookUrl) return showMsg('请先填写 Webhook URL', 'error')
@@ -272,7 +312,7 @@ export default function AlertConfig({ devices }) {
           <h3 className="ui-section-title text-sm">全局企业微信 Webhook</h3>
         </div>
         <p className="text-xs text-dji-muted mb-3">
-          企业微信群机器人地址，设备未单独配置时使用此地址。告警 AI 分析需在服务端配置 <code className="text-[11px]">ZHIPU_API_KEY</code>。
+          企业微信群机器人地址，设备未单独配置时使用此地址。告警 AI 分析需在服务端配置 <code className="text-[11px]">ARK_API_KEY</code>。
         </p>
         <div className="flex gap-2">
           <input
@@ -358,6 +398,8 @@ export default function AlertConfig({ devices }) {
                 onUpdate={updateDevice}
                 expanded={!!expandedLost[deviceId]}
                 onToggle={toggleLost}
+                onTriggerTest={handleTriggerLost}
+                triggering={!!triggeringLost[deviceId]}
               />
             ))
           ) : (

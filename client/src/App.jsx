@@ -39,6 +39,7 @@ function App() {
   const [alertsBuffer, setAlertsBuffer] = useState([])  // 告警缓冲区
   const [healthAlerts, setHealthAlerts] = useState({}) // 按设备ID存储健康告警
   const [selectedDevice, setSelectedDevice] = useState(null)
+  const [flightView, setFlightView] = useState(null)
   const [statusFilter, setStatusFilter] = useState(null)  // 状态筛选：null/warning/critical
   const [cockpitDevice, setCockpitDevice] = useState(null)
   const [profileOpen, setProfileOpen] = useState(false)
@@ -203,6 +204,15 @@ function App() {
     }
   }, [])
 
+  // 详情弹窗打开时，跟随 WebSocket 实时刷新同一设备
+  useEffect(() => {
+    if (!selectedDevice?.deviceId) return
+    const latest = devices.find((d) => d.deviceId === selectedDevice.deviceId)
+    if (latest && latest.lastUpdate !== selectedDevice.lastUpdate) {
+      setSelectedDevice(latest)
+    }
+  }, [devices, selectedDevice?.deviceId, selectedDevice?.lastUpdate])
+
   // 获取初始设备列表
   useEffect(() => {
     if (!token) return
@@ -239,7 +249,7 @@ function App() {
 
   // 统计数据
   const airportDevices = devices.filter(d => d.deviceType === 'airport' || d.deviceType === 'remote')
-  const droneDevices = devices.filter(d => d.deviceType === 'drone')
+  const droneDevices = devices.filter(d => ['drone', 'single', 'virtual'].includes(d.deviceType))
   
   // 根据状态筛选设备
   const filteredAirportDevices = statusFilter 
@@ -253,6 +263,7 @@ function App() {
     total: devices.length,
     airport: airportDevices.length,
     drone: droneDevices.length,
+    single: devices.filter(d => d.deviceType === 'single').length,
     normal: devices.filter(d => d.status === 'normal').length,
     warning: devices.filter(d => d.status === 'warning').length,
     critical: devices.filter(d => d.status === 'critical').length
@@ -378,6 +389,7 @@ function App() {
               selectedId={selectedDevice?.deviceId}
               title="机场设备"
               accent="blue"
+              showFacilityIcons
               filterActive={statusFilter !== null}
               onClearFilter={() => setStatusFilter(null)}
               onCockpit={setCockpitDevice}
@@ -391,8 +403,9 @@ function App() {
               healthAlerts={healthAlerts}
               onSelect={setSelectedDevice}
               selectedId={selectedDevice?.deviceId}
-              title="无人机设备"
+              title="无人机 / 单兵"
               accent="indigo"
+              showDroneIcons
               filterActive={statusFilter !== null}
               onClearFilter={() => setStatusFilter(null)}
               className="flex-1"
@@ -413,7 +426,7 @@ function App() {
 
         {/* 飞行记录页 */}
         {activeTab === 'flight-records' && hasPermission('flight-records') && (
-          <FlightDashboard />
+          <FlightDashboard onFlightViewChange={setFlightView} />
         )}
 
         {activeTab === 'accounts' && user?.role === 'admin' && (
@@ -463,15 +476,29 @@ function App() {
               level: a.level,
               message: a.message,
             })),
+            healthAlerts: Object.entries(healthAlerts).flatMap(([deviceId, list]) =>
+              (list || []).map((h) => ({
+                deviceId,
+                deviceName:
+                  devices.find((d) => d.deviceId === deviceId)?.deviceName || deviceId,
+                code: h.code,
+                level: h.level,
+                levelText: h.levelText,
+                module: h.module,
+                message: h.message,
+              })),
+            ).slice(0, 24),
             selectedDevice: selectedDevice
               ? {
                   deviceId: selectedDevice.deviceId,
-                  name: selectedDevice.name,
+                  name: selectedDevice.deviceName || selectedDevice.name,
+                  deviceType: selectedDevice.deviceType,
                   status: selectedDevice.status,
                   windSpeed: selectedDevice.windSpeed,
                   battery: selectedDevice.battery,
                 }
               : null,
+            flightView: activeTab === 'flight-records' ? flightView : null,
           }}
         />
       )}

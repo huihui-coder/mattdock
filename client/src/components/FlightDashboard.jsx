@@ -26,6 +26,27 @@ const SHORTCUTS = [
 
 const PAGE_SIZE = 20
 
+function buildFlightQueryRange(dateRange) {
+  const startTime = dateRange[0] ? new Date(dateRange[0]).toISOString() : ''
+  let endTime = ''
+  if (dateRange[1]) {
+    const endDate = new Date(dateRange[1])
+    const now = new Date()
+    const sameDay = endDate.getFullYear() === now.getFullYear()
+      && endDate.getMonth() === now.getMonth()
+      && endDate.getDate() === now.getDate()
+    endTime = (sameDay ? now : endDate).toISOString()
+  }
+  return { startTime, endTime }
+}
+
+const TAB_LABELS = {
+  airport: '自动机场',
+  single: '单兵无人机',
+  virtual: '虚拟机场',
+  all: '全部设备',
+}
+
 const STAT_ITEMS = [
   { key: 'count', label: '飞行架次', suffix: '架次', icon: Plane, text: 'text-blue-600', iconColor: 'text-blue-400', bg: 'bg-blue-50 border-blue-100' },
   { key: 'mileage', label: '飞行里程', icon: Navigation, isMileage: true, text: 'text-indigo-600', iconColor: 'text-indigo-400', bg: 'bg-indigo-50 border-indigo-100' },
@@ -95,7 +116,7 @@ function StatusBadge({ record }) {
   )
 }
 
-export default function FlightDashboard() {
+export default function FlightDashboard({ onFlightViewChange }) {
   const [activeTab, setActiveTab] = useState('airport')
   const [page, setPage] = useState(1)
   const initEnd = toDatetimeLocal(new Date())
@@ -117,19 +138,21 @@ export default function FlightDashboard() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  useEffect(() => {
+    if (!onFlightViewChange) return
+    const { startTime, endTime } = buildFlightQueryRange(dateRange)
+    onFlightViewChange({
+      activeTab,
+      startTime,
+      endTime,
+      tabLabel: TAB_LABELS[activeTab] || activeTab,
+    })
+  }, [activeTab, dateRange, onFlightViewChange])
+
   const fetchStats = async (resetPage = true) => {
     setLoading(true)
     try {
-      const startTime = dateRange[0] ? new Date(dateRange[0]).toISOString() : ''
-      let endTime = ''
-      if (dateRange[1]) {
-        const endDate = new Date(dateRange[1])
-        const now = new Date()
-        const sameDay = endDate.getFullYear() === now.getFullYear()
-          && endDate.getMonth() === now.getMonth()
-          && endDate.getDate() === now.getDate()
-        endTime = (sameDay ? now : endDate).toISOString()
-      }
+      const { startTime, endTime } = buildFlightQueryRange(dateRange)
       const res = await fetch(`/api/flight-records?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`)
       const data = await res.json()
       const history = data.history || []

@@ -5,7 +5,8 @@
   "main": "server/index.js",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "server": "nodemon server/index.js",
+    "server": "nodemon --config nodemon.json server/index.js",
+    "server:stable": "node server/index.js",
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
     "start": "node server/index.js"

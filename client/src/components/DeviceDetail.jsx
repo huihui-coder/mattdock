@@ -1,5 +1,6 @@
 import { X, Thermometer, Droplets, Battery, Signal, Wind, CloudRain, MapPin, Activity, Clock, Wifi, Plane, HardDrive, Zap, Shield, Sun, Compass, Database } from 'lucide-react'
-import LiveStreamPlayer from './LiveStreamPlayer'
+import LiveStreamPlayer, { isDockSharedOutAirport } from './LiveStreamPlayer'
+import { isDockSeriesAirport } from './SupplementLightControl'
 
 export default function DeviceDetail({ device, onClose }) {
   const getMetricStatusColor = (status) => {
@@ -49,9 +50,12 @@ export default function DeviceDetail({ device, onClose }) {
   // 风速特殊样式 - 重点显示
   const isWindSpeed = (type) => type === 'windSpeed'
 
-  // 从原始数据提取更多详细信息
+  // 从原始数据提取更多详细信息（优先用服务端合并后的 osdSnapshot）
   const raw = device.raw || {}
-  const rawData = raw.data || raw
+  const rawData = device.osdSnapshot || raw.data || raw
+  const supplementLightState =
+    device.supplementLightState ?? rawData.supplement_light_state
+  const liveCameraPosition = device.liveCameraPosition
 
   // 格式化字节大小
   const formatBytes = (bytes) => {
@@ -157,7 +161,15 @@ export default function DeviceDetail({ device, onClose }) {
 
         {/* 直播流 */}
         <div className="p-4 border-b border-gray-200">
-          <LiveStreamPlayer deviceId={device.deviceId} deviceType={deviceType} />
+          <LiveStreamPlayer
+            deviceId={device.deviceId}
+            deviceType={deviceType}
+            deviceName={device.deviceName || device.deviceId}
+            dock3SharedOut={isDockSharedOutAirport(deviceType, device.deviceName || device.deviceId)}
+            supplementLightState={supplementLightState}
+            showSupplementLight={isDockSeriesAirport(deviceType, device.deviceName || device.deviceId)}
+            liveCameraPosition={liveCameraPosition}
+          />
         </div>
 
         {/* 位置信息 */}
@@ -399,8 +411,16 @@ export default function DeviceDetail({ device, onClose }) {
             </div>
             <div className="bg-gray-50 p-3 rounded-lg">
               <span className="text-gray-500 text-xs">补光灯</span>
-              <p className="font-medium">{rawData.supplement_light_state === 0 ? '关闭' : '开启'}</p>
+              <p className="font-medium">
+                {supplementLightState === 1 ? '开启' : supplementLightState === 0 ? '关闭' : '未知'}
+              </p>
             </div>
+            {liveCameraPosition === 0 || liveCameraPosition === 1 ? (
+              <div className="bg-gray-50 p-3 rounded-lg">
+                <span className="text-gray-500 text-xs">当前推流相机</span>
+                <p className="font-medium">{liveCameraPosition === 0 ? '舱内推流' : '舱外推流'}</p>
+              </div>
+            ) : null}
             <div className="bg-gray-50 p-3 rounded-lg">
               <span className="text-gray-500 text-xs">急停状态</span>
               <p className="font-medium">{rawData.emergency_stop_state === 0 ? '正常' : '已急停'}</p>

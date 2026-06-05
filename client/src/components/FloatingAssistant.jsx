@@ -35,8 +35,9 @@ const IDLE_PLAY_GAP_MS = 5000
 
 const QUICK_PROMPTS = [
   { label: '解读告警', text: '请根据当前近期告警，逐条用通俗语言解读原因和建议操作。' },
-  { label: '今日摘要', text: '根据当前设备与告警快照，生成一段简短的值班摘要（概况、风险点、待办）。' },
-  { label: '问当前设备', text: '请说明当前关注设备的运行状态与需要注意的事项。' },
+  { label: '今日摘要', text: '根据当前设备、告警与飞行记录快照，生成一段简短的值班摘要（概况、风险点、待办）。' },
+  { label: '飞行记录', text: '请根据近期飞行记录，汇总飞行频次、里程、时长，并指出值得关注的情况。' },
+  { label: '问当前设备', text: '请说明当前关注设备的运行状态、近期飞行情况与需要注意的事项。' },
 ]
 
 function getToken() {
@@ -379,7 +380,7 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
       const text = (textOverride ?? input).trim()
       if (!text && !imageFile) return
       if (configured === false) {
-        setError('服务端未配置智谱 API，请联系管理员')
+        setError('服务端未配置火山方舟 API，请联系管理员')
         return
       }
       if (streaming) return
@@ -567,7 +568,7 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
             </div>
             <div className="floating-assistant__header-text">
               <h2 className="floating-assistant__title">飞行助手</h2>
-              <p className="floating-assistant__subtitle">基于当前监控数据</p>
+              <p className="floating-assistant__subtitle">基于监控数据与飞行记录</p>
             </div>
             <div className="floating-assistant__header-actions">
               <button

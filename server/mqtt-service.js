@@ -1,5 +1,6 @@
 const mqtt = require('mqtt');
-const DeviceProcessor = require('./device-processor');
+const { newMqttIds } = require('./lib/live-camera-service');
+const { setLiveCameraPosition } = require('./lib/dock-live-state-store');
 const fs = require('fs');
 const path = require('path');
 
@@ -15,14 +16,19 @@ try {
 }
 
 class MQTTService {
-  constructor(config, wsService, alertService) {
+  constructor(config, wsService, alertService, processor) {
     this.config = config;
     this.wsService = wsService;
     this.alertService = alertService;
     this.client = null;
-    this.processor = new DeviceProcessor();
+    this.processor = processor;
+    if (!this.processor) {
+      throw new Error('MQTTService 需要注入共享 DeviceProcessor 实例');
+    }
     this.connected = false;
     this.reconnectAttempts = 0;
+    /** @type {Map<string, { resolve: Function, reject: Function, timer: NodeJS.Timeout }>} */
+    this.pendingServices = new Map();
   }
 
   connect() {
@@ -104,8 +110,12 @@ class MQTTService {
   }
 
   subscribeTopics() {
-    const topics = this.config.topics.split(',').map(t => t.trim());
-    topics.forEach(topic => {
+    const topics = [
+      ...this.config.topics.split(',').map((t) => t.trim()),
+      'thing/product/+/services_reply',
+    ].filter(Boolean);
+    const unique = [...new Set(topics)];
+    unique.forEach((topic) => {
       this.client.subscribe(topic, { qos: 1 }, (err) => {
         if (err) {
           console.error(`[MQTT] 订阅失败: ${topic}`, err.message);
@@ -129,15 +139,21 @@ class MQTTService {
         return;
       }
 
-      // 判断消息类型：osd 或 events
+      if (topic.includes('/services_reply')) {
+        this.handleServicesReply(topic, data);
+        return;
+      }
+
+      // 判断消息类型：osd / state / events
       const isEvents = topic.includes('/events');
       const isOsd = topic.includes('/osd');
+      const isState = topic.endsWith('/state') || topic.includes('/state');
 
       if (isEvents) {
         // 处理健康告警事件
         this.handleEvents(topic, data);
-      } else if (isOsd) {
-        // 处理OSD数据
+      } else if (isOsd || isState) {
+        // 处理 OSD / state（Dock 分片属性需合并，如 supplement_light_state、live_status）
         const processedData = this.processor.process(topic, data);
 
         // 广播到WebSocket客户端
@@ -171,6 +187,130 @@ class MQTTService {
     } catch (error) {
       console.error('[MQTT] 处理消息错误:', error);
     }
+  }
+
+  handleServicesReply(topic, data) {
+    const tid = data?.tid;
+    const parts = topic.split('/');
+    const gatewaySn = parts[2];
+    const method = data?.method;
+
+    // 任意来源的 live_camera_change 应答（含司空）——记录当前推流相机
+    if (method === 'live_camera_change') {
+      const pos =
+        data?.data?.output?.camera_position ??
+        data?.data?.camera_position ??
+        (tid && this.pendingServices.has(tid) ? this.pendingServices.get(tid).requestData?.camera_position : undefined);
+      const normalized = pos === 0 || pos === 1 ? pos : null;
+      if (normalized !== null && gatewaySn) {
+        setLiveCameraPosition(gatewaySn, normalized, 'services_reply');
+        const updated = this.processor.patchDockControlState(gatewaySn, {
+          liveCameraPosition: normalized,
+        });
+        if (updated && this.wsService) {
+          this.wsService.broadcast({
+            type: 'device_data',
+            topic: `thing/product/${gatewaySn}/osd`,
+            raw: { data: updated.osdSnapshot || {} },
+            processed: updated,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
+    }
+
+    if (!tid || !this.pendingServices.has(tid)) return;
+
+    const pending = this.pendingServices.get(tid);
+    clearTimeout(pending.timer);
+    this.pendingServices.delete(tid);
+
+    const result = data?.data?.result;
+    if (result !== undefined && result !== 0) {
+      pending.reject(new Error(`设备返回错误码: ${result}`));
+      return;
+    }
+    pending.resolve(data);
+
+    if (this.wsService && method === 'live_camera_change') {
+      this.wsService.broadcast({
+        type: 'live_camera_change_reply',
+        deviceId: gatewaySn,
+        method,
+        result,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  /**
+   * 仅下发 services，不等待 services_reply（告警截图等长流程用，避免阻塞）
+   */
+  publishService(gatewaySn, method, data) {
+    return new Promise((resolve, reject) => {
+      if (!this.client || !this.connected) {
+        reject(new Error('MQTT 未连接'));
+        return;
+      }
+
+      const { bid, tid } = newMqttIds();
+      const payload = {
+        bid,
+        tid,
+        timestamp: Date.now(),
+        method,
+        data,
+      };
+      const topic = `thing/product/${gatewaySn}/services`;
+
+      this.client.publish(topic, JSON.stringify(payload), { qos: 1 }, (err) => {
+        if (err) {
+          reject(err);
+        } else {
+          console.log(`[MQTT] 已下发 ${method} -> ${gatewaySn}`, data);
+          resolve({ method, gatewaySn, tid });
+        }
+      });
+    });
+  }
+
+  /**
+   * 下发 DJI services（如 live_camera_change）
+   */
+  invokeService(gatewaySn, method, data, timeoutMs = 15000) {
+    return new Promise((resolve, reject) => {
+      if (!this.client || !this.connected) {
+        reject(new Error('MQTT 未连接'));
+        return;
+      }
+
+      const { bid, tid } = newMqttIds();
+      const payload = {
+        bid,
+        tid,
+        timestamp: Date.now(),
+        method,
+        data,
+      };
+      const topic = `thing/product/${gatewaySn}/services`;
+
+      const timer = setTimeout(() => {
+        this.pendingServices.delete(tid);
+        reject(new Error('等待设备应答超时'));
+      }, timeoutMs);
+
+      this.pendingServices.set(tid, { resolve, reject, timer, requestData: data });
+
+      this.client.publish(topic, JSON.stringify(payload), { qos: 1 }, (err) => {
+        if (err) {
+          clearTimeout(timer);
+          this.pendingServices.delete(tid);
+          reject(err);
+        } else {
+          console.log(`[MQTT] 已下发 ${method} -> ${gatewaySn}`, data);
+        }
+      });
+    });
   }
 
   /**
