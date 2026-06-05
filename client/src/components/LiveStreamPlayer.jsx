@@ -2,11 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import flvjs from 'flv.js'
 import { Video, VideoOff, RefreshCw, Loader2, Plane } from 'lucide-react'
 import SupplementLightControl, { isDockSeriesAirport } from './SupplementLightControl'
-
-const STREAM_BASE = (import.meta.env.VITE_STREAM_BASE_URL || 'https://www.hzdkjw.com:1443/live').replace(
-  /\/$/,
-  '',
-)
+import { fetchStreamUrl } from '../lib/stream-url'
 
 const DOCK_CAMERA_OPTIONS = [
   { position: 0, label: '舱内推流' },
@@ -17,15 +13,15 @@ function getToken() {
   return localStorage.getItem('auth_token') || ''
 }
 
-export function isDockSharedOutAirport(deviceType, deviceName) {
-  return isDockSeriesAirport(deviceType, deviceName)
+export function isDockSharedOutAirport(deviceType, deviceId) {
+  return isDockSeriesAirport(deviceType, deviceId)
 }
 
 /** @deprecated 与 isDockSharedOutAirport 相同，覆盖 Dock / Dock2 / Dock3 */
 export const isDock3SharedOutAirport = isDockSharedOutAirport
 
-function buildStreamUrl(deviceId, suffix) {
-  return `${STREAM_BASE}/${deviceId}${suffix}`
+function suffixToKey(suffix) {
+  return String(suffix || '_out').replace(/\.live\.flv$/, '') || '_out'
 }
 
 function Dock3CameraSwitcher({ cameraPosition, switching, onSelect }) {
@@ -62,6 +58,7 @@ export default function LiveStreamPlayer({
   deviceId,
   deviceType,
   deviceName = '',
+  regionId = '',
   dock3SharedOut: dock3SharedOutProp,
   supplementLightState,
   showSupplementLight: showSupplementLightProp,
@@ -81,10 +78,15 @@ export default function LiveStreamPlayer({
   const [configCameraPosition, setConfigCameraPosition] = useState(null)
 
   const dock3SharedOut =
-    dock3SharedOutProp ?? isDock3SharedOutAirport(deviceType, deviceName)
+    dock3SharedOutProp ?? isDock3SharedOutAirport(deviceType, deviceId)
 
   const showSupplementLight =
-    showSupplementLightProp ?? isDockSeriesAirport(deviceType, deviceName)
+    showSupplementLightProp ?? isDockSeriesAirport(deviceType, deviceId)
+
+  const dockOutLabel = useMemo(
+    () => (deviceId ? `${deviceId}_out.live.flv` : ''),
+    [deviceId],
+  )
 
   const isDock3View = dock3SharedOut && playSource === 'dock'
 
@@ -118,15 +120,20 @@ export default function LiveStreamPlayer({
     return map[currentStream] || '_out.live.flv'
   }, [deviceType, dock3SharedOut, playSource, currentStream])
 
-  const streamUrl = useMemo(
-    () => buildStreamUrl(deviceId, streamSuffix),
-    [deviceId, streamSuffix],
-  )
+  const [streamUrl, setStreamUrl] = useState('')
+  const streamSuffixKey = useMemo(() => suffixToKey(streamSuffix), [streamSuffix])
 
-  const dockOutUrl = useMemo(
-    () => (deviceId ? buildStreamUrl(deviceId, '_out.live.flv') : ''),
-    [deviceId],
-  )
+  useEffect(() => {
+    if (!deviceId) {
+      setStreamUrl('')
+      return undefined
+    }
+    let cancelled = false
+    fetchStreamUrl(deviceId, streamSuffixKey, regionId)
+      .then((url) => { if (!cancelled) setStreamUrl(url) })
+      .catch(() => { if (!cancelled) setStreamUrl('') })
+    return () => { cancelled = true }
+  }, [deviceId, streamSuffixKey, regionId, reloadKey])
 
   useEffect(() => {
     if (!dock3SharedOut || !deviceId) return
@@ -199,7 +206,7 @@ export default function LiveStreamPlayer({
   }, [])
 
   useEffect(() => {
-    if (!videoRef.current || !deviceId) return undefined
+    if (!videoRef.current || !deviceId || !streamUrl) return undefined
 
     let cancelled = false
     const cleanup = () => {
@@ -417,7 +424,7 @@ export default function LiveStreamPlayer({
           <span className="text-gray-400">
             {isDock3View ? (
               <>
-                推流地址固定 <span className="text-gray-300 font-mono text-xs">{dockOutUrl}</span>
+                推流地址固定 <span className="text-gray-300 font-mono text-xs">{dockOutLabel}</span>
                 <span className="mx-1">·</span>
                 当前相机 <span className="text-gray-300">{statusLabel}</span>
               </>

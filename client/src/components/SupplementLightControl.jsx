@@ -85,6 +85,13 @@ export default function SupplementLightControl({ deviceId, supplementLightState 
   )
 }
 
-export function isDockSeriesAirport(deviceType, deviceName) {
-  return deviceType === 'airport' && /dock/i.test(deviceName || '')
+const NON_DOCK_TYPES = new Set(['drone', 'single', 'remote', 'airport_drone'])
+
+/** 非 NEST 前缀的 gateway SN 均为 Dock 系列 */
+export function isDockSeriesAirport(deviceType, deviceId) {
+  const id = String(deviceId || '').trim()
+  if (!id || id.startsWith('NEST')) return false
+  const type = String(deviceType || '').toLowerCase()
+  if (NON_DOCK_TYPES.has(type)) return false
+  return true
 }

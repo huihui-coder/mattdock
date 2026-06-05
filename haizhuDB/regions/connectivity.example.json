@@ -1,0 +1,13 @@
+{
+  "mqtt": {
+    "brokerUrl": "tcp://smartcity.zhifei.tech:1883",
+    "username": "zfiUser",
+    "password": "zfiUser@240403",
+    "clientId": "monitor-zengcheng",
+    "topics": "thing/product/+/osd,thing/product/+/state,thing/product/+/events"
+  },
+  "stream": {
+    "baseUrl": "https://live.zhifei.tech:24143/live",
+    "token": "your-stream-token-here"
+  }
+}

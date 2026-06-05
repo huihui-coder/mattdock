@@ -4,23 +4,29 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const CONFIG_FILE = path.join(__dirname, '../haizhuDB/alert-config.json');
+const {
+  getRegionAlertConfigPath,
+  readRegions,
+  DEFAULT_REGION_ID,
+} = require('./lib/region-store');
+const {
+  collectAlertConfigDeviceIds,
+  resolveRegionIdInScope,
+  getLeafProcessorsInScope,
+} = require('./lib/region-runtime');
 const { captureStreamSnapshot } = require('./lib/stream-snapshot');
+const { isDockSeriesAirport } = require('./lib/dock-service');
 const { launchLostAlertJob } = require('./lib/lost-alert-job-launcher');
 const { computeLocationDistanceContext } = require('./lib/geo-utils');
 
 class AlertService {
   constructor(options = {}) {
-    // deviceId -> { enabled, thresholdMinutes, webhookUrl, lastOutTime, lastAlertTime,
-    //              offlineAlertEnabled, offlineAlertImmediate, offlineRepeatMinutes,
-    //              lastOfflineTime, lastOfflineAlertTime }
-    this.deviceConfigs = {};
+    /** @type {Map<string, { globalWebhookUrl: string, deviceConfigs: Object }>} */
+    this.regionStores = new Map();
     // deviceId -> 当前是否在舱 (true=在舱)
     this.droneInDockState = {};
     // deviceId -> 机场是否在线 (true=在线)
     this.airportOnlineState = {};
-    // 全局 Webhook（可被设备级覆盖）
-    this.globalWebhookUrl = '';
     // deviceId(机场) -> { latitude, longitude, height }
     this._droneLocationCache = {};
 
@@ -28,69 +34,191 @@ class AlertService {
     this.getDeviceState = options.getDeviceState || (() => null);
     this.mqttService = options.mqttService || null;
     this.processor = options.processor || null;
+    this.resolveRegionId = options.resolveRegionId || (() => null);
     this.aiAnalysisEnabled = options.aiAnalysisEnabled !== false;
 
-    this._loadConfig();
+    this._loadAllRegionConfigs();
   }
 
-  _loadConfig() {
+  _regionIdFor(deviceId, sourceRegionId) {
+    if (sourceRegionId) return sourceRegionId;
+    return this.resolveRegionId(deviceId) || DEFAULT_REGION_ID;
+  }
+
+  _loadRegionConfig(regionId) {
+    const file = getRegionAlertConfigPath(regionId);
+    let data = { globalWebhookUrl: '', deviceConfigs: {} };
     try {
-      if (fs.existsSync(CONFIG_FILE)) {
-        const raw = fs.readFileSync(CONFIG_FILE, 'utf8');
-        const data = JSON.parse(raw);
-        this.deviceConfigs = data.deviceConfigs || {};
-        this.globalWebhookUrl = data.globalWebhookUrl || '';
+      if (fs.existsSync(file)) {
+        data = JSON.parse(fs.readFileSync(file, 'utf8'));
       }
     } catch (e) {
-      console.warn('[AlertService] 配置文件读取失败:', e.message);
+      console.warn(`[AlertService] 区域 ${regionId} 配置读取失败:`, e.message);
+    }
+    this.regionStores.set(regionId, {
+      globalWebhookUrl: data.globalWebhookUrl || '',
+      deviceConfigs: data.deviceConfigs || {},
+    });
+  }
+
+  _loadAllRegionConfigs() {
+    const regions = readRegions();
+    if (regions.length) {
+      for (const region of regions) this._loadRegionConfig(region.id);
+    } else {
+      this._loadRegionConfig(DEFAULT_REGION_ID);
     }
   }
 
-  _saveConfig() {
+  _store(regionId) {
+    if (!this.regionStores.has(regionId)) this._loadRegionConfig(regionId);
+    return this.regionStores.get(regionId);
+  }
+
+  _saveRegionConfig(regionId) {
+    const store = this.regionStores.get(regionId);
+    if (!store) return;
     try {
-      const dir = path.dirname(CONFIG_FILE);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(CONFIG_FILE, JSON.stringify({
-        globalWebhookUrl: this.globalWebhookUrl,
-        deviceConfigs: this.deviceConfigs
+      const file = getRegionAlertConfigPath(regionId);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, JSON.stringify({
+        globalWebhookUrl: store.globalWebhookUrl,
+        deviceConfigs: store.deviceConfigs,
       }, null, 2), 'utf8');
     } catch (e) {
-      console.warn('[AlertService] 配置文件保存失败:', e.message);
+      console.warn(`[AlertService] 区域 ${regionId} 配置保存失败:`, e.message);
     }
   }
 
-  // 获取所有配置（供前端展示）
-  getConfig() {
+  _deviceEntry(deviceId, sourceRegionId) {
+    const regionId = this._regionIdFor(deviceId, sourceRegionId);
+    const store = this._store(regionId);
+    if (!store.deviceConfigs[deviceId]) store.deviceConfigs[deviceId] = {};
+    return { regionId, store, cfg: store.deviceConfigs[deviceId] };
+  }
+
+  _webhookFor(deviceId, sourceRegionId) {
+    const { store, cfg } = this._deviceEntry(deviceId, sourceRegionId);
+    return cfg.webhookUrl || store.globalWebhookUrl;
+  }
+
+  _saveForDevice(deviceId) {
+    this._saveRegionConfig(this._regionIdFor(deviceId));
+  }
+
+  _eachDeviceConfig(fn) {
+    for (const store of this.regionStores.values()) {
+      for (const [deviceId, cfg] of Object.entries(store.deviceConfigs)) {
+        fn(deviceId, cfg, store);
+      }
+    }
+  }
+
+  getScopedConfig(scope = {}) {
+    const { visibleRegionIds = [], regionId: primaryRegionId, processors = [] } = scope;
+    const regions = readRegions();
+    const leaves = getLeafProcessorsInScope(processors, regions);
+    const deviceConfigs = {};
+    const regionWebhooks = {};
+    const leafRegions = [];
+
+    for (const { regionId: rid, regionName } of leaves) {
+      const store = this._store(rid);
+      regionWebhooks[rid] = store.globalWebhookUrl || '';
+      leafRegions.push({ id: rid, name: regionName || rid });
+      for (const [deviceId, cfg] of Object.entries(store.deviceConfigs)) {
+        const owner = resolveRegionIdInScope(deviceId, processors, regions) || rid;
+        if (owner === rid) deviceConfigs[deviceId] = cfg;
+      }
+    }
+
+    const singleLeafId = leaves.length === 1 ? leaves[0].regionId : null;
     return {
-      globalWebhookUrl: this.globalWebhookUrl,
-      deviceConfigs: this.deviceConfigs
+      globalWebhookUrl: singleLeafId ? (regionWebhooks[singleLeafId] || '') : '',
+      regionWebhooks,
+      leafRegions,
+      deviceConfigs,
+      regionId: primaryRegionId,
+      visibleRegionIds,
     };
   }
 
+  // 获取所有配置（兼容旧调用）
+  getConfig() {
+    const regions = readRegions();
+    return this.getScopedConfig({
+      visibleRegionIds: regions.map((r) => r.id),
+      regionId: DEFAULT_REGION_ID,
+      processors: [],
+    });
+  }
+
   // 更新全局 Webhook
-  setGlobalWebhook(url) {
-    this.globalWebhookUrl = url;
-    this._saveConfig();
+  setGlobalWebhook(url, regionId = DEFAULT_REGION_ID) {
+    const store = this._store(regionId);
+    store.globalWebhookUrl = url;
+    this._saveRegionConfig(regionId);
   }
 
   // 更新单个设备配置
   setDeviceConfig(deviceId, config) {
-    if (!this.deviceConfigs[deviceId]) {
-      this.deviceConfigs[deviceId] = {};
-    }
-    Object.assign(this.deviceConfigs[deviceId], config);
-    this._saveConfig();
+    const { cfg, regionId } = this._deviceEntry(deviceId);
+    Object.assign(cfg, config);
+    this._saveRegionConfig(regionId);
   }
 
-  // 批量更新设备配置
-  updateConfigs({ globalWebhookUrl, deviceConfigs }) {
-    if (globalWebhookUrl !== undefined) this.globalWebhookUrl = globalWebhookUrl;
-    if (deviceConfigs) {
-      Object.entries(deviceConfigs).forEach(([id, cfg]) => {
-        this.deviceConfigs[id] = { ...this.deviceConfigs[id], ...cfg };
-      });
+  updateScopedConfigs(scope, { globalWebhookUrl, regionWebhooks, deviceConfigs }) {
+    const visibleRegionIds = scope?.visibleRegionIds || [];
+    const regions = readRegions();
+    const leaves = getLeafProcessorsInScope(scope?.processors || [], regions);
+    const leafIds = new Set(leaves.map((p) => p.regionId));
+    const { ids: allowedIds } = collectAlertConfigDeviceIds(scope?.processors || [], regions);
+
+    if (regionWebhooks && typeof regionWebhooks === 'object') {
+      for (const [rid, url] of Object.entries(regionWebhooks)) {
+        if (!leafIds.has(rid)) continue;
+        if (visibleRegionIds.length && !visibleRegionIds.includes(rid)) continue;
+        const store = this._store(rid);
+        store.globalWebhookUrl = url || '';
+        this._saveRegionConfig(rid);
+      }
+    } else if (globalWebhookUrl !== undefined && leaves.length === 1) {
+      const rid = leaves[0].regionId;
+      const store = this._store(rid);
+      store.globalWebhookUrl = globalWebhookUrl;
+      this._saveRegionConfig(rid);
     }
-    this._saveConfig();
+
+    if (deviceConfigs) {
+      const grouped = {};
+      for (const [deviceId, cfg] of Object.entries(deviceConfigs)) {
+        if (allowedIds.size && !allowedIds.has(deviceId)) continue;
+        const regionId = resolveRegionIdInScope(deviceId, scope?.processors || [], regions)
+          || this._regionIdFor(deviceId);
+        if (visibleRegionIds.length && !visibleRegionIds.includes(regionId)) continue;
+        if (!grouped[regionId]) grouped[regionId] = {};
+        const store = this._store(regionId);
+        grouped[regionId][deviceId] = { ...store.deviceConfigs[deviceId], ...cfg };
+      }
+      for (const [regionId, configs] of Object.entries(grouped)) {
+        const store = this._store(regionId);
+        Object.assign(store.deviceConfigs, configs);
+        this._saveRegionConfig(regionId);
+      }
+    }
+  }
+
+  // 批量更新设备配置（无区域校验，仅供内部/迁移）
+  updateConfigs(payload) {
+    const { globalWebhookUrl, deviceConfigs } = payload || {};
+    if (globalWebhookUrl !== undefined) {
+      this.setGlobalWebhook(globalWebhookUrl);
+    }
+    if (deviceConfigs) {
+      for (const [deviceId, cfg] of Object.entries(deviceConfigs)) {
+        this.setDeviceConfig(deviceId, cfg);
+      }
+    }
   }
 
   /**
@@ -98,25 +226,23 @@ class AlertService {
    * @param {string} deviceId
    * @param {string} deviceName
    */
-  onAirportOnline(deviceId, deviceName) {
+  onAirportOnline(deviceId, deviceName, sourceRegionId) {
     const wasOnline = this.airportOnlineState[deviceId];
     this.airportOnlineState[deviceId] = Date.now(); // 记录最后在线时间
 
-    const cfg = this.deviceConfigs[deviceId];
+    const { cfg } = this._deviceEntry(deviceId, sourceRegionId);
     if (!cfg || !cfg.offlineAlertEnabled) return;
 
     // 机场恢复在线，重置离线告警计时
     if (wasOnline === 0) {
       console.log(`[AlertService] ${deviceName} 机场恢复在线`);
-      const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
+      const webhookUrl = this._webhookFor(deviceId);
       if (webhookUrl) {
         this._sendWecomWebhook(webhookUrl, deviceName, deviceId, 0, 'online');
       }
     }
-    if (this.deviceConfigs[deviceId]) {
-      this.deviceConfigs[deviceId].lastOfflineTime = null;
-      this.deviceConfigs[deviceId].lastOfflineAlertTime = null;
-    }
+    cfg.lastOfflineTime = null;
+    cfg.lastOfflineAlertTime = null;
   }
 
   /**
@@ -129,7 +255,7 @@ class AlertService {
 
     Object.entries(this.airportOnlineState).forEach(([deviceId, lastSeen]) => {
       if (lastSeen === 0) return; // 已标记为离线，跳过
-      const cfg = this.deviceConfigs[deviceId];
+      const { cfg } = this._deviceEntry(deviceId);
       if (!cfg || !cfg.offlineAlertEnabled) return;
 
       if (now - lastSeen > offlineThresholdMs) {
@@ -137,17 +263,18 @@ class AlertService {
         if (wasOnline) {
           // 刚离线
           this.airportOnlineState[deviceId] = 0;
-          this.deviceConfigs[deviceId].lastOfflineTime = now;
-          this.deviceConfigs[deviceId].lastOfflineAlertTime = null;
+          cfg.lastOfflineTime = now;
+          cfg.lastOfflineAlertTime = null;
           const deviceName = this._getDeviceName(deviceId);
           console.log(`[AlertService] ${deviceName} 机场离线`);
 
           // 立即推送一次（如果配置了）
           if (cfg.offlineAlertImmediate !== false) {
-            const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
+            const webhookUrl = this._webhookFor(deviceId);
             if (webhookUrl) {
               this._sendWecomWebhook(webhookUrl, deviceName, deviceId, 0, 'offline_first');
-              this.deviceConfigs[deviceId].lastOfflineAlertTime = now;
+              cfg.lastOfflineAlertTime = now;
+              this._saveForDevice(deviceId);
               this._runAiAnalysis({
                 alertKind: 'offline_first',
                 webhookUrl,
@@ -162,7 +289,7 @@ class AlertService {
     });
 
     // 循环提醒已离线的机场
-    Object.entries(this.deviceConfigs).forEach(([deviceId, cfg]) => {
+    this._eachDeviceConfig((deviceId, cfg) => {
       if (!cfg.offlineAlertEnabled) return;
       if (this.airportOnlineState[deviceId] !== 0) return; // 不是离线状态
 
@@ -175,10 +302,11 @@ class AlertService {
 
       const deviceName = this._getDeviceName(deviceId);
       const offlineMin = Math.round((now - cfg.lastOfflineTime) / 60000);
-      const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
+      const webhookUrl = this._webhookFor(deviceId);
       if (webhookUrl) {
         this._sendWecomWebhook(webhookUrl, deviceName, deviceId, offlineMin, 'offline_repeat');
-        this.deviceConfigs[deviceId].lastOfflineAlertTime = now;
+        cfg.lastOfflineAlertTime = now;
+        this._saveForDevice(deviceId);
         this._runAiAnalysis({
           alertKind: 'offline_repeat',
           webhookUrl,
@@ -206,20 +334,20 @@ class AlertService {
    * @param {number|undefined} droneInDock      1=在舱, 0=出舱
    * @param {number|undefined} subDeviceOnline  1=无人机在线(飞行中), 0=无人机离线
    */
-  onDeviceUpdate(deviceId, deviceName, droneInDock, subDeviceOnline) {
+  onDeviceUpdate(deviceId, deviceName, droneInDock, subDeviceOnline, sourceRegionId) {
     // 缓存设备名
     if (!this._deviceNameCache) this._deviceNameCache = {};
     this._deviceNameCache[deviceId] = deviceName;
     // 缓存无人机在线状态
     if (subDeviceOnline !== undefined) {
-      if (!this.deviceConfigs[deviceId]) this.deviceConfigs[deviceId] = {};
-      this.deviceConfigs[deviceId]._subDeviceOnline = subDeviceOnline;
+      const { cfg } = this._deviceEntry(deviceId, sourceRegionId);
+      cfg._subDeviceOnline = subDeviceOnline;
     }
     // 记录机场在线
-    this.onAirportOnline(deviceId, deviceName);
+    this.onAirportOnline(deviceId, deviceName, sourceRegionId);
     if (droneInDock === undefined) return;
 
-    const cfg = this.deviceConfigs[deviceId];
+    const { cfg } = this._deviceEntry(deviceId, sourceRegionId);
     if (!cfg || !cfg.enabled) return;
 
     const inDock = droneInDock === 1;
@@ -230,12 +358,12 @@ class AlertService {
       const wasOut = this.droneInDockState[deviceId] === false;
       const hadAlert = !!cfg.lastAlertTime;
       this.droneInDockState[deviceId] = true;
-      this.deviceConfigs[deviceId].lastOutTime = null;
-      this.deviceConfigs[deviceId].lastAlertTime = null;
+      cfg.lastOutTime = null;
+      cfg.lastAlertTime = null;
       if (wasOut && hadAlert) {
         // 曾经触发过飞丢告警，回仓时发通知
         console.log(`[AlertService] ${deviceName} 无人机已回仓（曾告警）`);
-        const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
+        const webhookUrl = this._webhookFor(deviceId);
         if (webhookUrl) {
           const time = new Date().toLocaleString('zh-CN');
           const content = `✅ **无人机已回仓**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 无人机已安全返回机巢\n> 时间：${time}`;
@@ -243,7 +371,14 @@ class AlertService {
           const sendSnapshot = cfg.sendSnapshot !== false;
           if (sendSnapshot) {
             this._sendStreamSnapshot(webhookUrl, deviceId, '_out');
-            this._sendStreamSnapshot(webhookUrl, deviceId, '_in');
+            const airportState = this.getDeviceState(deviceId);
+            const dock = isDockSeriesAirport({
+              deviceId,
+              deviceType: airportState?.deviceType || 'airport',
+            });
+            if (!dock) {
+              this._sendStreamSnapshot(webhookUrl, deviceId, '_in');
+            }
           }
         }
       }
@@ -255,8 +390,8 @@ class AlertService {
       // 刚离巢：记录离巢时间
       if (this.droneInDockState[deviceId] !== false) {
         this.droneInDockState[deviceId] = false;
-        this.deviceConfigs[deviceId].lastOutTime = Date.now();
-        this.deviceConfigs[deviceId].lastAlertTime = null;
+        cfg.lastOutTime = Date.now();
+        cfg.lastAlertTime = null;
         const state = isFlying ? '执行任务中' : '离线';
         console.log(`[AlertService] ${deviceName} 无人机离开机巢（${state}），开始计时`);
         return;
@@ -265,7 +400,7 @@ class AlertService {
       const thresholdMs = (cfg.thresholdMinutes || 30) * 60 * 1000;
       const outTime = cfg.lastOutTime;
       if (!outTime) {
-        this.deviceConfigs[deviceId].lastOutTime = Date.now();
+        cfg.lastOutTime = Date.now();
         return;
       }
 
@@ -278,10 +413,10 @@ class AlertService {
 
       // 超过阈值仍未返回 → 推送飞丢告警
       const elapsedMin = Math.round(elapsed / 60000);
-      const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
+      const webhookUrl = this._webhookFor(deviceId);
       if (webhookUrl) {
-        this.deviceConfigs[deviceId].lastAlertTime = Date.now();
-        this._saveConfig();
+        cfg.lastAlertTime = Date.now();
+        this._saveForDevice(deviceId);
         const sendSnapshot = cfg.sendSnapshot !== false;
         const aiEnabled = this.aiAnalysisEnabled && cfg.aiAnalysisEnabled !== false;
         if (sendSnapshot || aiEnabled) {
@@ -318,7 +453,7 @@ class AlertService {
       const locStr = loc
         ? `\n> 最后位置：${loc.latitude.toFixed(6)}, ${loc.longitude.toFixed(6)}（高度 ${loc.height || 0}m）${distCtx.webhookLine || ''}`
         : '';
-      const cfg = this.deviceConfigs[deviceId] || {};
+      const cfg = this._deviceEntry(deviceId).cfg;
       const subOnlineVal = cfg._subDeviceOnline;
       const subOnline = subOnlineVal === 1 ? '（无人机在线）' : '（无人机离线）';
       content = `⚠️ **无人机离巢告警**\n> 设备：${deviceName} ${subOnline}\n> SN：${deviceId}\n> 无人机已离开机巢 **${elapsedMin} 分钟**，飞机疑似飞丢请检查飞行状态${locStr}\n> 时间：${time}`;
@@ -395,9 +530,9 @@ class AlertService {
    * 手动触发飞丢告警（测试用，不更新 lastAlertTime）
    * @returns {{ ok: boolean, pid?: number, error?: string }}
    */
-  triggerLostAlertTest(deviceId, deviceName) {
-    const cfg = this.deviceConfigs[deviceId] || {};
-    const webhookUrl = cfg.webhookUrl || this.globalWebhookUrl;
+  triggerLostAlertTest(deviceId, deviceName, sourceRegionId) {
+    const { cfg } = this._deviceEntry(deviceId, sourceRegionId);
+    const webhookUrl = this._webhookFor(deviceId, sourceRegionId);
     if (!webhookUrl) {
       return { ok: false, error: '请先配置全局或设备专属 Webhook' };
     }
@@ -409,9 +544,11 @@ class AlertService {
     const resolvedName = deviceName || deviceState?.deviceName || deviceId;
 
     console.log(`[AlertService] 手动触发飞丢告警测试 ${resolvedName} (${deviceId})`);
+    const regionId = sourceRegionId || this.resolveRegionId(deviceId);
     const pid = launchLostAlertJob({
       deviceId,
       deviceName: resolvedName,
+      regionId,
       elapsedMin,
       thresholdMinutes: cfg.thresholdMinutes || 30,
       webhookUrl,
@@ -439,12 +576,14 @@ class AlertService {
     sendSnapshot,
     aiEnabled,
   }) {
-    const cfg = this.deviceConfigs[deviceId] || {};
+    const { cfg } = this._deviceEntry(deviceId);
     const deviceState = this.getDeviceState(deviceId);
-    console.log(`[AlertService] 启动飞丢截图子进程 ${deviceName} (${deviceId})`);
+    const regionId = this.resolveRegionId(deviceId);
+    console.log(`[AlertService] 启动飞丢截图子进程 ${deviceName} (${deviceId}) region=${regionId}`);
     launchLostAlertJob({
       deviceId,
       deviceName,
+      regionId,
       elapsedMin,
       thresholdMinutes: cfg.thresholdMinutes || 30,
       webhookUrl,
@@ -477,7 +616,8 @@ class AlertService {
   }
 
   _sendStreamSnapshot(webhookUrl, deviceId, suffix = '_out') {
-    captureStreamSnapshot(deviceId, suffix).then((shot) => {
+    const regionId = this.resolveRegionId(deviceId);
+    captureStreamSnapshot(deviceId, suffix, 15000, regionId).then((shot) => {
       if (!shot) {
         console.warn(`[AlertService] 截图失败 ${deviceId}${suffix}`);
         return;
@@ -506,7 +646,7 @@ class AlertService {
   _runAiAnalysis({ alertKind, webhookUrl, deviceId, deviceName, elapsedMin, preCapturedShots }) {
     if (!this.aiAnalysisEnabled || !this.aiAnalyzer || !webhookUrl) return;
 
-    const cfg = this.deviceConfigs[deviceId] || {};
+    const { cfg } = this._deviceEntry(deviceId);
     if (cfg.aiAnalysisEnabled === false) return;
 
     const deviceState = this.getDeviceState(deviceId);
@@ -536,7 +676,8 @@ class AlertService {
   }
 
   _sendFlightSnapshot(webhookUrl, deviceId, deviceName) {
-    captureStreamSnapshot(deviceId, '_flight').then((shot) => {
+    const regionId = this.resolveRegionId(deviceId);
+    captureStreamSnapshot(deviceId, '_flight', 15000, regionId).then((shot) => {
       if (!shot) {
         console.warn(`[AlertService] ${deviceName} 无人机截图失败`);
         return;

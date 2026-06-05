@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { HardDrive, Plus, Pencil, Trash2, X, Save, Search, Wifi, Link2 } from 'lucide-react'
+import RegionLabel from './RegionLabel'
 
 const SOURCE_LABELS = {
   builtin: '内置',
@@ -104,6 +105,7 @@ function SimpleDeviceTable({ rows, onEdit, onDelete, emptyText = '暂无设备' 
         <tr className="border-b border-dji-border text-dji-muted">
           <th className="text-left py-2 font-medium">设备名称</th>
           <th className="text-left py-2 font-medium">SN</th>
+          <th className="text-left py-2 font-medium">区域</th>
           <th className="text-left py-2 font-medium">来源</th>
           <th className="text-left py-2 font-medium">状态</th>
           <th className="text-right py-2 font-medium">操作</th>
@@ -116,6 +118,9 @@ function SimpleDeviceTable({ rows, onEdit, onDelete, emptyText = '暂无设备' 
               {d.source === 'unmapped' ? <span className="text-amber-700">{d.deviceId}</span> : d.name}
             </td>
             <td className="py-2.5 font-mono text-xs text-dji-muted">{d.deviceId}</td>
+            <td className="py-2.5">
+              <RegionLabel regionName={d.regionName} regionId={d.regionId} />
+            </td>
             <td className="py-2.5"><SourceBadge source={d.source} /></td>
             <td className="py-2.5"><OnlineBadge online={d.online} statusText={d.statusText} /></td>
             <td className="py-2.5 text-right"><DeviceActions device={d} onEdit={onEdit} onDelete={onDelete} /></td>
@@ -151,6 +156,7 @@ function BindingPairTable({
             <th className="text-left py-2 font-medium w-[140px]">设备型号</th>
             <th className="text-left py-2 font-medium w-[200px]">SN</th>
             <th className="text-left py-2 font-medium min-w-[200px]">名称</th>
+            <th className="text-left py-2 font-medium w-[88px]">区域</th>
             <th className="text-left py-2 font-medium w-[100px]">绑定</th>
             <th className="text-left py-2 font-medium w-[90px]">状态</th>
             <th className="text-right py-2 font-medium w-[80px]">操作</th>
@@ -158,7 +164,7 @@ function BindingPairTable({
         </thead>
         <tbody>
           {rows.length === 0 ? (
-            <tr><td colSpan={6} className="py-8 text-center text-dji-muted">{emptyText}</td></tr>
+            <tr><td colSpan={7} className="py-8 text-center text-dji-muted">{emptyText}</td></tr>
           ) : rows.map((row) => (
             <tr
               key={row[primaryKey]}
@@ -175,6 +181,9 @@ function BindingPairTable({
               </td>
               <td className="py-3 pr-3">
                 <StackedCell primary={row[primaryDeviceKey]?.name} secondary={row[secondaryDeviceKey]?.name} />
+              </td>
+              <td className="py-3 pr-3">
+                <RegionLabel regionName={row.regionName} regionId={row.regionId} />
               </td>
               <td className="py-3 pr-3">
                 <span className="inline-flex px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-600">
@@ -222,7 +231,14 @@ export default function DeviceManager() {
   const [form, setForm] = useState({ deviceId: '', name: '', category: 'single' })
   const [formLoading, setFormLoading] = useState(false)
   const [editing, setEditing] = useState(null)
-  const [editForm, setEditForm] = useState({ name: '', category: 'single', droneSn: '', droneName: '' })
+  const [editForm, setEditForm] = useState({
+    name: '',
+    category: 'single',
+    droneSn: '',
+    droneName: '',
+    regionId: '',
+    regionName: '',
+  })
   const [editLoading, setEditLoading] = useState(false)
 
   const loadDevices = async () => {
@@ -292,6 +308,8 @@ export default function DeviceManager() {
       category: device.category,
       droneSn: pair?.droneSn || '',
       droneName: pair?.drone?.name || '',
+      regionId: device.regionId || pair?.regionId || '',
+      regionName: device.regionName || pair?.regionName || '',
       pairAirportSn: pairKind === 'airport'
         ? (pair?.airportSn || (isAirportRow ? device.deviceId : null))
         : null,
@@ -586,6 +604,21 @@ export default function DeviceManager() {
               <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">{error}</div>
             )}
             <div className="space-y-4">
+              <div>
+                <div className="text-sm font-medium text-dji-ink mb-2">区域</div>
+                <div className="ui-input flex items-center gap-2 bg-dji-page/60 text-dji-ink cursor-default">
+                  {editForm.regionId || editForm.regionName ? (
+                    <>
+                      <RegionLabel regionName={editForm.regionName} regionId={editForm.regionId} />
+                      {editForm.regionId && editForm.regionName && editForm.regionName !== editForm.regionId && (
+                        <span className="text-xs font-mono text-dji-muted">{editForm.regionId}</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-sm text-dji-muted">未分配</span>
+                  )}
+                </div>
+              </div>
               <div>
                 <div className="text-sm font-medium text-dji-ink mb-2">显示名称</div>
                 <input

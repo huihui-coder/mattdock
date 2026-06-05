@@ -309,7 +309,13 @@ function buildMultimodalUserContent({ textPrompt, images, labelImages = false })
   return content;
 }
 
-function createAlertAiAnalyzer({ updateTokenUsage, getMqttService, getDeviceState, processor } = {}) {
+function createAlertAiAnalyzer({
+  updateTokenUsage,
+  getMqttService,
+  getDeviceState,
+  processor,
+  resolveRegionId,
+} = {}) {
   const onTokenUsage = updateTokenUsage
     ? (usage) => updateTokenUsage(ARK_MODEL, usage)
     : undefined;
@@ -465,7 +471,8 @@ function createAlertAiAnalyzer({ updateTokenUsage, getMqttService, getDeviceStat
     const history = getRecentAlerts(deviceId, 8);
     const flights = loadFlightHistory(deviceId, 5);
 
-    const shots = await captureStreamSnapshots(deviceId, ['_out', '_in']);
+    const regionId = resolveRegionId?.(deviceId) || processor?.regionId || null;
+    const shots = await captureStreamSnapshots(deviceId, ['_out', '_in'], regionId);
     const shotDesc = shots.length
       ? shots.map((s) => s.label).join('、')
       : '未能获取监控截图（机场可能已断网/断电）';

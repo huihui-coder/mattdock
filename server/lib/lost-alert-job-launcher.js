@@ -18,7 +18,7 @@ function launchLostAlertJob(payload) {
 
   const child = spawn(process.execPath, [script, encoded], {
     detached: true,
-    stdio: 'inherit',
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
       LOST_ALERT_MAIN_PORT: String(process.env.PORT || 3001),
@@ -26,8 +26,17 @@ function launchLostAlertJob(payload) {
     windowsHide: true,
   });
 
+  const forward = (chunk) => {
+    process.stdout.write(chunk);
+  };
+  child.stdout?.on('data', forward);
+  child.stderr?.on('data', forward);
+  child.on('exit', (code) => {
+    console.log(`[AlertService] 飞丢截图子进程结束 pid=${child.pid} code=${code ?? '?'}`);
+  });
+
   child.unref();
-  console.log(`[AlertService] 已启动独立飞丢截图子进程 pid=${child.pid}`);
+  console.log(`[AlertService] 已启动独立飞丢截图子进程 pid=${child.pid}（日志见下方 [LostAlertJob]/[DockLostSnap]）`);
   return child.pid;
 }
 

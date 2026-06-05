@@ -1,18 +1,28 @@
-/** Dock 系列机场（Dock / Dock2 / Dock3 等） */
+const NON_DOCK_TYPES = new Set(['drone', 'single', 'remote', 'airport_drone']);
+
+function readDeviceId(device) {
+  return String(device?.deviceId || '').trim();
+}
+
+function readDeviceType(device) {
+  return String(device?.deviceType || '').toLowerCase();
+}
+
+/** NEST 前缀为换电系列机场 */
+function isNestSeriesAirport(device) {
+  const id = readDeviceId(device);
+  if (!id.startsWith('NEST')) return false;
+  const type = readDeviceType(device);
+  return !type || type === 'airport';
+}
+
+/** Dock 系列机场：凡非 NEST 开头的 gateway SN（不按 deviceType 卡死） */
 function isDockSeriesAirport(device) {
-  if (!device) return false;
-  const type = device.deviceType || (device.deviceId?.startsWith('NEST') ? 'airport' : '');
-  if (type !== 'airport') return false;
-  const name = device.deviceName || device.deviceId || '';
-  if (/dock/i.test(name)) return true;
-  const sns = [process.env.DOCK_GATEWAY_SNS, process.env.DOCK3_GATEWAY_SNS]
-    .filter(Boolean)
-    .join(',');
-  const list = sns
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return list.includes(device.deviceId);
+  const id = readDeviceId(device);
+  if (!id || id.startsWith('NEST')) return false;
+  const type = readDeviceType(device);
+  if (NON_DOCK_TYPES.has(type)) return false;
+  return true;
 }
 
 /** Dock 系列：舱内/舱外共用 _out 推流，切换需 MQTT live_camera_change */
@@ -29,6 +39,7 @@ const SUPPLEMENT_LIGHT_ACTIONS = {
 };
 
 module.exports = {
+  isNestSeriesAirport,
   isDockSeriesAirport,
   isDockSharedOutAirport,
   METHOD_SUPPLEMENT_LIGHT_OPEN,

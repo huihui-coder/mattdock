@@ -67,6 +67,7 @@ async function main() {
   const {
     deviceId,
     deviceName,
+    regionId: jobRegionId,
     elapsedMin,
     webhookUrl,
     location,
@@ -77,14 +78,17 @@ async function main() {
     thresholdMinutes,
   } = job;
 
-  console.log(`${LOG} 开始 pid=${process.pid} ${deviceName} (截图=${sendSnapshot}, AI=${aiEnabled})`);
+  const regionId = jobRegionId || process.env.DEFAULT_REGION_ID || 'haizhu';
+  console.log(
+    `${LOG} 开始 pid=${process.pid} ${deviceName} region=${regionId} (截图=${sendSnapshot}, AI=${aiEnabled})`,
+  );
 
   if (!tryAcquireLostAlertJobLock(deviceId)) {
     console.log(`${LOG} 已有任务在执行，退出 ${deviceName} (${deviceId})`);
     process.exit(0);
   }
 
-  const processor = new DeviceProcessor({});
+  const processor = new DeviceProcessor({}, { regionId, regionName: regionId });
   const mqttService = createLostAlertMqttBridge();
 
   const alertAiAnalyzer = createAlertAiAnalyzer({
@@ -110,6 +114,15 @@ async function main() {
             : null,
       });
       console.log(`${LOG} 截图完成，共 ${shots.length} 张`);
+      if (!shots.length) {
+        console.warn(
+          `${LOG} 未截到画面：请确认区域 ${regionId} 的推流地址/token 正确，且 ffmpeg 可访问直播流`,
+        );
+      } else {
+        shots.forEach((s) => {
+          console.log(`${LOG}   · ${s.label || s.suffix} (${Math.round((s.buffer?.length || 0) / 1024)}KB)`);
+        });
+      }
     }
 
     if (aiEnabled && process.env.ALERT_AI_ENABLED !== '0' && alertAiAnalyzer) {

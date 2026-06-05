@@ -1,6 +1,7 @@
 import { X, Thermometer, Droplets, Battery, Signal, Wind, CloudRain, MapPin, Activity, Clock, Wifi, Plane, HardDrive, Zap, Shield, Sun, Compass, Database } from 'lucide-react'
 import LiveStreamPlayer, { isDockSharedOutAirport } from './LiveStreamPlayer'
 import { isDockSeriesAirport } from './SupplementLightControl'
+import RegionLabel from './RegionLabel'
 
 export default function DeviceDetail({ device, onClose }) {
   const getMetricStatusColor = (status) => {
@@ -79,8 +80,14 @@ export default function DeviceDetail({ device, onClose }) {
   // 无人机权限信息
   const droneAuthority = rawData.drone_authority_info
 
-  // 判断设备类型（直接用后端字段）
-  const deviceType = device.deviceType || (device.deviceId.startsWith('NEST') ? 'airport' : 'drone')
+  // 判断设备类型：非 NEST 的 gateway SN（如 AHRXN/7CTXN）缺省按 Dock 机场处理
+  const deviceType = (() => {
+    if (device.deviceType) return device.deviceType
+    const id = String(device.deviceId || '')
+    if (id.startsWith('NEST') || /^AHRXN|^7CTXN|^7CTD/i.test(id)) return 'airport'
+    if (/^1581/i.test(id)) return 'drone'
+    return 'airport'
+  })()
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -88,7 +95,11 @@ export default function DeviceDetail({ device, onClose }) {
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200 bg-gray-50 sticky top-0 z-10">
           <div>
-            <h3 className="text-xl font-bold text-gray-900">{device.deviceId}</h3>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h3 className="text-xl font-bold text-gray-900">{device.deviceName || device.deviceId}</h3>
+              <RegionLabel regionName={device.regionName} regionId={device.regionId} />
+            </div>
+            <p className="text-sm text-gray-500 font-mono mt-0.5">{device.deviceId}</p>
             <p className="text-sm text-gray-500">{device.topic}</p>
             {device.gateway && (
               <p className="text-xs text-gray-400 mt-1">网关: {device.gateway}</p>
@@ -163,11 +174,12 @@ export default function DeviceDetail({ device, onClose }) {
         <div className="p-4 border-b border-gray-200">
           <LiveStreamPlayer
             deviceId={device.deviceId}
+            regionId={device.regionId}
             deviceType={deviceType}
             deviceName={device.deviceName || device.deviceId}
-            dock3SharedOut={isDockSharedOutAirport(deviceType, device.deviceName || device.deviceId)}
+            dock3SharedOut={isDockSharedOutAirport(deviceType, device.deviceId)}
             supplementLightState={supplementLightState}
-            showSupplementLight={isDockSeriesAirport(deviceType, device.deviceName || device.deviceId)}
+            showSupplementLight={isDockSeriesAirport(deviceType, device.deviceId)}
             liveCameraPosition={liveCameraPosition}
           />
         </div>

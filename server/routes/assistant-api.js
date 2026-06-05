@@ -106,7 +106,7 @@ function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enri
       history,
       prompt: text || '请描述这张图片与当前监控场景的关系，并给出建议。',
       imageDataUrl,
-      context: enrichAssistantContext ? enrichAssistantContext(context || {}) : context || {},
+      context: enrichAssistantContext ? enrichAssistantContext(context || {}, req) : context || {},
     });
 
     if (auditLog) {

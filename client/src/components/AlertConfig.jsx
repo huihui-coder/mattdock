@@ -3,6 +3,14 @@ import { Bell, Save, Send, Settings, ChevronDown, ChevronUp, WifiOff } from 'luc
 
 const API = ''
 
+function getToken() { return localStorage.getItem('auth_token') || '' }
+function apiFetch(url, opts = {}) {
+  return fetch(`${API}${url}`, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}), 'x-auth-token': getToken() },
+  })
+}
+
 function AiAnalysisToggle({ deviceId, cfg, onUpdate, hint }) {
   const enabled = cfg.aiAnalysisEnabled !== false
   return (
@@ -182,28 +190,45 @@ const OfflineRow = memo(function OfflineRow({ deviceId, name, cfg, onUpdate, exp
 })
 
 // ─── 主组件 ──────────────────────────────────────────────────────────────────
-export default function AlertConfig({ devices }) {
+export default function AlertConfig({ devices, user }) {
   const [activeTab, setActiveTab] = useState('lost')       // 'lost' | 'offline'
   const [globalWebhookUrl, setGlobalWebhookUrl] = useState('')
+  const [regionWebhooks, setRegionWebhooks] = useState({})
+  const [leafRegions, setLeafRegions] = useState([])
+  const [deviceRegionMap, setDeviceRegionMap] = useState({})
   const [deviceConfigs, setDeviceConfigs] = useState({})
   const [saving, setSaving] = useState(false)
-  const [testing, setTesting] = useState(false)
+  const [testingRegion, setTestingRegion] = useState(null)
   const [triggeringLost, setTriggeringLost] = useState({})
   const [message, setMessage] = useState(null)
   const [expandedLost, setExpandedLost] = useState({})
   const [expandedOffline, setExpandedOffline] = useState({})
   const [deviceNameMap, setDeviceNameMap] = useState({})
 
+  const isMultiRegion = leafRegions.length > 1
+
   useEffect(() => {
-    fetch(`${API}/api/alert-config`)
+    apiFetch('/api/alert-config')
       .then(r => r.json())
       .then(data => {
         setGlobalWebhookUrl(data.globalWebhookUrl || '')
+        setRegionWebhooks(data.regionWebhooks || {})
+        setLeafRegions(data.leafRegions || [])
+        setDeviceRegionMap(data.deviceRegionMap || {})
         setDeviceConfigs(data.deviceConfigs || {})
         setDeviceNameMap(data.deviceNameMap || {})
       })
       .catch(() => {})
   }, [])
+
+  const resolveWebhookForDevice = useCallback((deviceId) => {
+    const cfg = deviceConfigs[deviceId] || {}
+    if (cfg.webhookUrl) return cfg.webhookUrl
+    const rid = deviceRegionMap[deviceId]
+      || devices.find((d) => d.deviceId === deviceId)?.regionId
+    if (rid && regionWebhooks[rid]) return regionWebhooks[rid]
+    return globalWebhookUrl
+  }, [deviceConfigs, deviceRegionMap, devices, regionWebhooks, globalWebhookUrl])
 
   const showMsg = useCallback((text, type = 'success') => {
     setMessage({ text, type })
@@ -213,30 +238,30 @@ export default function AlertConfig({ devices }) {
   const handleSave = useCallback(async () => {
     setSaving(true)
     try {
-      await fetch(`${API}/api/alert-config`, {
+      const payload = isMultiRegion
+        ? { regionWebhooks, deviceConfigs }
+        : { globalWebhookUrl, deviceConfigs }
+      await apiFetch('/api/alert-config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ globalWebhookUrl, deviceConfigs })
+        body: JSON.stringify(payload),
       })
       showMsg('配置已保存')
     } catch {
       showMsg('保存失败', 'error')
     }
     setSaving(false)
-  }, [globalWebhookUrl, deviceConfigs, showMsg])
+  }, [globalWebhookUrl, regionWebhooks, deviceConfigs, isMultiRegion, showMsg])
 
   const handleTriggerLost = useCallback(async (deviceId) => {
-    const cfg = deviceConfigs[deviceId] || {}
-    const webhookUrl = cfg.webhookUrl || globalWebhookUrl
+    const webhookUrl = resolveWebhookForDevice(deviceId)
     if (!webhookUrl) {
-      showMsg('请先配置 Webhook（全局或设备专属）', 'error')
+      showMsg('请先配置 Webhook（区域全局或设备专属）', 'error')
       return
     }
     setTriggeringLost(prev => ({ ...prev, [deviceId]: true }))
     try {
-      const res = await fetch(`${API}/api/alert-config/trigger-lost`, {
+      const res = await apiFetch('/api/alert-config/trigger-lost', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId }),
       })
       const data = await res.json().catch(() => ({}))
@@ -250,23 +275,25 @@ export default function AlertConfig({ devices }) {
     } finally {
       setTriggeringLost(prev => ({ ...prev, [deviceId]: false }))
     }
-  }, [deviceConfigs, globalWebhookUrl, showMsg])
+  }, [resolveWebhookForDevice, showMsg])
 
-  const handleTest = useCallback(async () => {
-    if (!globalWebhookUrl) return showMsg('请先填写 Webhook URL', 'error')
-    setTesting(true)
+  const handleTest = useCallback(async (regionId) => {
+    const webhookUrl = isMultiRegion
+      ? regionWebhooks[regionId]
+      : globalWebhookUrl
+    if (!webhookUrl) return showMsg('请先填写 Webhook URL', 'error')
+    setTestingRegion(regionId || 'single')
     try {
-      await fetch(`${API}/api/alert-config/test`, {
+      await apiFetch('/api/alert-config/test', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ webhookUrl: globalWebhookUrl, snapshotDeviceId: 'NEST20202412U002', snapshotStream: 'out' })
+        body: JSON.stringify({ webhookUrl }),
       })
       showMsg('测试消息已发送，请查看企业微信群')
     } catch {
       showMsg('发送失败', 'error')
     }
-    setTesting(false)
-  }, [globalWebhookUrl, showMsg])
+    setTestingRegion(null)
+  }, [globalWebhookUrl, regionWebhooks, isMultiRegion, showMsg])
 
   // 更新单个设备的某个字段（稳定引用，memo 子组件不重建）
   const updateDevice = useCallback((deviceId, key, value) => {
@@ -279,9 +306,7 @@ export default function AlertConfig({ devices }) {
   const toggleLost = useCallback(id => setExpandedLost(prev => ({ ...prev, [id]: !prev[id] })), [])
   const toggleOffline = useCallback(id => setExpandedOffline(prev => ({ ...prev, [id]: !prev[id] })), [])
 
-  const allDeviceIds = [
-    ...new Set([...devices.map(d => d.deviceId), ...Object.keys(deviceConfigs)])
-  ]
+  const allDeviceIds = devices.map(d => d.deviceId)
 
   const getDeviceName = (deviceId) => {
     const live = devices.find((d) => d.deviceId === deviceId)
@@ -309,14 +334,70 @@ export default function AlertConfig({ devices }) {
         </div>
       )}
 
-      {/* 全局 Webhook */}
+      {/* 区域范围 */}
+      <div className="ui-card p-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-medium text-dji-black">告警配置范围</p>
+          <p className="text-xs text-dji-muted mt-1">
+            {isMultiRegion
+              ? `当前账号可管理 ${leafRegions.map((r) => r.name).join('、')} 的独立 Webhook 与规则`
+              : `仅显示并保存「${leafRegions[0]?.name || user?.regionName || '当前区域'}」的配置，与其他区域互不影响`}
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(leafRegions.length ? leafRegions : [{ id: user?.regionId, name: user?.regionName }]).map((r) => (
+            r?.id && (
+              <span key={r.id} className="ui-badge bg-slate-100 text-slate-700 border border-slate-200">
+                {r.name || r.id}
+              </span>
+            )
+          ))}
+        </div>
+      </div>
+
+      {/* 区域 Webhook（单区域 / 多区域） */}
+      {isMultiRegion ? (
+        <div className="space-y-3">
+          {leafRegions.map((region) => (
+            <div key={region.id} className="ui-card p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Settings size={16} className="text-dji-black" />
+                <h3 className="ui-section-title text-sm">{region.name} · 企业微信 Webhook</h3>
+              </div>
+              <p className="text-xs text-dji-muted mb-3">
+                仅 {region.name} 区域设备未单独配置时使用此地址。
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  className="ui-input flex-1"
+                  placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+                  value={regionWebhooks[region.id] || ''}
+                  onChange={(e) => setRegionWebhooks((prev) => ({ ...prev, [region.id]: e.target.value }))}
+                />
+                <button
+                  type="button"
+                  onClick={() => handleTest(region.id)}
+                  disabled={testingRegion === region.id}
+                  className="ui-btn-secondary !text-sm disabled:opacity-50"
+                >
+                  <Send size={14} />
+                  {testingRegion === region.id ? '发送中...' : '测试'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
       <div className="ui-card p-4">
         <div className="flex items-center gap-2 mb-2">
           <Settings size={16} className="text-dji-black" />
-          <h3 className="ui-section-title text-sm">全局企业微信 Webhook</h3>
+          <h3 className="ui-section-title text-sm">
+            {leafRegions[0]?.name || user?.regionName || '当前区域'} · 企业微信 Webhook
+          </h3>
         </div>
         <p className="text-xs text-dji-muted mb-3">
-          企业微信群机器人地址，设备未单独配置时使用此地址。告警 AI 分析需在服务端配置 <code className="text-[11px]">ARK_API_KEY</code>。
+          本区域设备未单独配置时使用此地址。告警 AI 分析需在服务端配置 <code className="text-[11px]">ARK_API_KEY</code>。
         </p>
         <div className="flex gap-2">
           <input
@@ -327,15 +408,17 @@ export default function AlertConfig({ devices }) {
             onChange={e => setGlobalWebhookUrl(e.target.value)}
           />
           <button
-            onClick={handleTest}
-            disabled={testing}
+            type="button"
+            onClick={() => handleTest(null)}
+            disabled={testingRegion === 'single'}
             className="ui-btn-secondary !text-sm disabled:opacity-50"
           >
             <Send size={14} />
-            {testing ? '发送中...' : '测试'}
+            {testingRegion === 'single' ? '发送中...' : '测试'}
           </button>
         </div>
       </div>
+      )}
 
       {/* 告警类型 Tab */}
       <div className="ui-card overflow-hidden">

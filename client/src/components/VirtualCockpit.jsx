@@ -2,8 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import flvjs from 'flv.js'
 import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, Maximize2, Boxes, Siren, Bell, PanelLeft, Keyboard, Filter, Search, Sparkles, Settings, Camera, Loader2, ChevronLeft, ChevronRight, Brain, Activity } from 'lucide-react'
 import LogoMark from './LogoMark'
-
-const STREAM_BASE = 'https://www.hzdkjw.com:1443/live/'
+import { fetchStreamUrl } from '../lib/stream-url'
 const CESIUM_TK = '9eb56d3fe1e23a9bf19af660b3a9e37c'
 const TEST_VIDEO_URL = '/api/proxy-video'
 
@@ -212,6 +211,8 @@ function FlvPlayer({ url, className = '', isMainStream = false }) {
 }
 
 export default function VirtualCockpit({ device, onClose }) {
+  const deviceId = device.deviceId
+  const regionId = device.regionId || ''
   // 'flight' | 'out' | 'in' | 'map'
   const [mainView, setMainView] = useState('flight')
   const [mapPanelView, setMapPanelView] = useState('map')
@@ -229,6 +230,7 @@ export default function VirtualCockpit({ device, onClose }) {
   const [captureInterval, setCaptureInterval] = useState(3)
   const [lastTokenUsage, setLastTokenUsage] = useState(null)
   const [totalTokenUsage, setTotalTokenUsage] = useState(0)
+  const [streams, setStreams] = useState({ out: '', in: '', flight: '' })
   // AI多模态模型选择
   const [aiModel, setAiModel] = useState('qwen3-vl-flash')
   const [aiModels, setAiModels] = useState([
@@ -285,14 +287,24 @@ export default function VirtualCockpit({ device, onClose }) {
   const captureTimerRef = useRef(null)
   const canvasRef = useRef(null)
   const detailCanvasRef = useRef(null)
-  const deviceId = device.deviceId
   const metrics = device.metrics || {}
 
-  const streams = {
-    out: `${STREAM_BASE}${deviceId}_out.live.flv`,
-    in: `${STREAM_BASE}${deviceId}_in.live.flv`,
-    flight: `${STREAM_BASE}${deviceId}_flight.live.flv`,
-  }
+  useEffect(() => {
+    if (!deviceId) return undefined
+    let cancelled = false
+    Promise.all([
+      fetchStreamUrl(deviceId, '_out', regionId),
+      fetchStreamUrl(deviceId, '_in', regionId),
+      fetchStreamUrl(deviceId, '_flight', regionId),
+    ])
+      .then(([out, inUrl, flight]) => {
+        if (!cancelled) setStreams({ out, in: inUrl, flight })
+      })
+      .catch(() => {
+        if (!cancelled) setStreams({ out: '', in: '', flight: '' })
+      })
+    return () => { cancelled = true }
+  }, [deviceId, regionId])
 
   const droneInDock = metrics.droneInDock?.value
   const droneBattery = metrics.droneBattery?.value

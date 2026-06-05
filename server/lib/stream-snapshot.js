@@ -4,10 +4,9 @@ const path = require('path');
 const crypto = require('crypto');
 const os = require('os');
 
-const STREAM_BASE = (process.env.STREAM_BASE_URL || 'https://www.hzdkjw.com:1443/live').replace(
-  /\/$/,
-  '',
-);
+const { buildStreamUrl, getDefaultStreamConfig } = require('./region-connectivity');
+
+const STREAM_BASE = getDefaultStreamConfig().baseUrl;
 
 const SUFFIX_LABELS = {
   _out: '机场外部画面',
@@ -19,8 +18,10 @@ const SUFFIX_LABELS = {
  * 从直播流截取一帧 JPEG
  * @returns {Promise<{ buffer: Buffer, base64: string, mime: string, suffix: string, label: string } | null>}
  */
-function captureStreamSnapshot(deviceId, suffix = '_out', timeoutMs = 15000) {
-  const streamUrl = `${STREAM_BASE}/${deviceId}${suffix}.live.flv`;
+function captureStreamSnapshot(deviceId, suffix = '_out', timeoutMs = 15000, regionId = null) {
+  const streamUrl = regionId
+    ? buildStreamUrl(regionId, deviceId, suffix)
+    : `${STREAM_BASE}/${deviceId}${suffix}.live.flv`;
   const tmpFile = path.join(os.tmpdir(), `snapshot_${crypto.randomBytes(6).toString('hex')}.jpg`);
   const args = [
     '-y',
@@ -65,18 +66,26 @@ function captureStreamSnapshot(deviceId, suffix = '_out', timeoutMs = 15000) {
         resolve(shot);
         return;
       }
+      const regionHint = regionId ? ` region=${regionId}` : '';
       if (err) {
-        console.warn(`[StreamSnapshot] ffmpeg 失败 ${deviceId}${suffix}:`, err.message || err);
+        console.warn(
+          `[StreamSnapshot] ffmpeg 失败 ${deviceId}${suffix}${regionHint}:`,
+          err.message || err,
+        );
+        console.warn(`[StreamSnapshot] 推流地址: ${streamUrl.replace(/token=[^&]+/, 'token=***')}`);
       } else {
-        console.warn(`[StreamSnapshot] 未生成截图文件 ${deviceId}${suffix}`);
+        console.warn(`[StreamSnapshot] 未生成截图文件 ${deviceId}${suffix}${regionHint}`);
+        console.warn(`[StreamSnapshot] 推流地址: ${streamUrl.replace(/token=[^&]+/, 'token=***')}`);
       }
       resolve(null);
     });
   });
 }
 
-async function captureStreamSnapshots(deviceId, suffixes) {
-  const shots = await Promise.all(suffixes.map((suffix) => captureStreamSnapshot(deviceId, suffix)));
+async function captureStreamSnapshots(deviceId, suffixes, regionId = null) {
+  const shots = await Promise.all(
+    suffixes.map((suffix) => captureStreamSnapshot(deviceId, suffix, 15000, regionId)),
+  );
   return shots.filter(Boolean);
 }
 

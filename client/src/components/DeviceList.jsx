@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Cpu, Thermometer, Battery, Wind, CloudRain, MapPin, AlertTriangle, Package, X, Home, MonitorPlay, Radio } from 'lucide-react'
+import RegionLabel from './RegionLabel'
 
 /** 机场设备列：机巢 / 单兵遥控器 */
 const FACILITY_ICON = {
@@ -285,7 +286,10 @@ export default function DeviceList({
                     <div className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${getStatusDot(device.status)}`} aria-hidden />
                   )}
                   <div className="min-w-0 flex-1">
-                    <span className="font-semibold text-slate-800 truncate block">{device.deviceName || device.deviceId}</span>
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <span className="font-semibold text-slate-800 truncate">{device.deviceName || device.deviceId}</span>
+                      <RegionLabel regionName={device.regionName} regionId={device.regionId} className="shrink-0" />
+                    </div>
                     {device.deviceName && device.deviceName !== device.deviceId && (
                       <span className="text-xs text-slate-400 truncate block mt-0.5">{device.deviceId}</span>
                     )}

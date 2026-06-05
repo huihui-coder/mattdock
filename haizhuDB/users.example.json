@@ -3,7 +3,8 @@
     "username": "admin",
     "passwordHash": "",
     "role": "admin",
-    "permissions": ["monitor", "alert-config", "flight-records", "device-config", "image-studio", "ai-assistant"],
+    "regionId": "haizhu",
+    "permissions": ["monitor", "alert-config", "flight-records", "device-config", "image-studio", "ai-assistant", "audit-log"],
     "createdAt": ""
   }
 ]

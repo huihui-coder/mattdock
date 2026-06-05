@@ -29,7 +29,8 @@ function isDockLostSnapshotTarget(deviceId, getDeviceState) {
  * @returns {Promise<{ shots: Array, errors: string[] }>}
  */
 async function runDockLostSnapshotSequence(deviceId, mqttService, processor) {
-  if (!mqttService?.isConnected?.()) {
+  const conn = mqttService?.getForDevice?.(deviceId) || mqttService;
+  if (!conn?.isConnected?.()) {
     return { shots: [], errors: ['MQTT 未连接，无法执行 Dock 截图流程'] };
   }
 
@@ -73,7 +74,8 @@ async function runDockLostSnapshotSequence(deviceId, mqttService, processor) {
 
   const snapNow = async (captureTag, label) => {
     console.log(`[DockLostSnap] ${deviceId} 开始截图: ${label}`);
-    const shot = await captureStreamSnapshot(deviceId, '_out', SNAPSHOT_TIMEOUT_MS);
+    const regionId = processor?.regionId || null;
+    const shot = await captureStreamSnapshot(deviceId, '_out', SNAPSHOT_TIMEOUT_MS, regionId);
     if (!shot) {
       errors.push(`${label}截图失败`);
       console.warn(`[DockLostSnap] ${deviceId} ${label} 截图失败`);
@@ -124,9 +126,9 @@ async function runDockLostSnapshotSequence(deviceId, mqttService, processor) {
   return { shots, errors };
 }
 
-async function captureFlightSnapshot(deviceId) {
+async function captureFlightSnapshot(deviceId, regionId = null) {
   console.log(`[DockLostSnap] ${deviceId} 开始截取无人机画面`);
-  const shot = await captureStreamSnapshot(deviceId, '_flight', SNAPSHOT_TIMEOUT_MS);
+  const shot = await captureStreamSnapshot(deviceId, '_flight', SNAPSHOT_TIMEOUT_MS, regionId);
   if (!shot) {
     console.warn(`[DockLostSnap] ${deviceId} 无人机画面截图失败`);
     return null;
@@ -154,7 +156,7 @@ async function captureLostAlertSnapshots(deviceId, { mqttService, getDeviceState
         mqttService,
         processor,
       );
-      const flight = await captureFlightSnapshot(deviceId);
+      const flight = await captureFlightSnapshot(deviceId, processor?.regionId);
       const all = flight ? [...dockShots, flight] : [...dockShots];
       if (errors.length) {
         console.warn(`[DockLostSnap] ${deviceId} 部分步骤失败:`, errors.join('; '));
@@ -170,7 +172,7 @@ async function captureLostAlertSnapshots(deviceId, { mqttService, getDeviceState
     }
   }
 
-  return captureStreamSnapshots(deviceId, ['_out', '_in', '_flight']);
+  return captureStreamSnapshots(deviceId, ['_out', '_in', '_flight'], processor?.regionId);
 }
 
 module.exports = {

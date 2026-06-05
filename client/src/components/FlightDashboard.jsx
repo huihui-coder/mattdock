@@ -2,6 +2,15 @@ import { useState, useEffect, useRef } from 'react'
 import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight, FlaskConical, Trophy, ArrowUpDown, Inbox } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { logClientAudit } from '../lib/audit-client'
+import RegionLabel from './RegionLabel'
+
+function getToken() { return localStorage.getItem('auth_token') || '' }
+function apiFetch(url, opts = {}) {
+  return fetch(url, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}), 'x-auth-token': getToken() },
+  })
+}
 
 const pad = (n) => String(n).padStart(2, '0')
 const toDatetimeLocal = (d) => {
@@ -117,9 +126,10 @@ function StatusBadge({ record }) {
   )
 }
 
-export default function FlightDashboard({ onFlightViewChange }) {
+export default function FlightDashboard({ onFlightViewChange, user }) {
   const [activeTab, setActiveTab] = useState('airport')
   const [page, setPage] = useState(1)
+  const [scopeRegions, setScopeRegions] = useState([])
   const initEnd = toDatetimeLocal(new Date())
   const initStart = (() => { const s = new Date(Date.now() - 6*86400000); s.setHours(0,0,0,0); return toDatetimeLocal(s) })()
   const [dateRange, setDateRange] = useState([initStart, initEnd])
@@ -154,8 +164,10 @@ export default function FlightDashboard({ onFlightViewChange }) {
     setLoading(true)
     try {
       const { startTime, endTime } = buildFlightQueryRange(dateRange)
-      const res = await fetch(`/api/flight-records?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`)
+      const res = await apiFetch(`/api/flight-records?type=${activeTab}&startTime=${startTime}&endTime=${endTime}`)
+      if (res.status === 401) return
       const data = await res.json()
+      setScopeRegions(data.leafRegions || [])
       const history = data.history || []
       const all = data.records || []
       const validHistory = history.filter(r => (r.totalMileage || 0) > 0 && (r.totalDuration || 0) > 5)
@@ -189,7 +201,7 @@ export default function FlightDashboard({ onFlightViewChange }) {
   const simulateFlight = async () => {
     setSimulating(true)
     try {
-      await fetch('/api/simulate-flight', { method: 'POST' })
+      await apiFetch('/api/simulate-flight', { method: 'POST' })
       await fetchStats(false)
     } catch (e) {
       console.error('模拟飞行失败:', e)
@@ -204,6 +216,7 @@ export default function FlightDashboard({ onFlightViewChange }) {
       '序号': i + 1,
       '状态': r.status === 'active' ? '进行中' : '已完成',
       '设备名称': getRecordDeviceName(r),
+      ...(showRegionColumn ? { '区域': r.regionName || r.regionId || '' } : {}),
       '起飞时间': r.startTime ? new Date(r.startTime).toLocaleString('zh-CN') : '--',
       '降落时间': r.status === 'active' ? '--' : (r.endTime ? new Date(r.endTime).toLocaleString('zh-CN') : '--'),
       '飞行里程': r.totalMileage > 1000 ? `${(r.totalMileage/1000).toFixed(2)} km` : `${Math.round(r.totalMileage || 0)} m`,
@@ -248,7 +261,7 @@ export default function FlightDashboard({ onFlightViewChange }) {
     })
   }
 
-  useEffect(() => { fetchStats() }, [activeTab, dateRange])
+  useEffect(() => { fetchStats() }, [activeTab, dateRange, user?.regionId, user?.username])
   useEffect(() => {
     const timer = setInterval(() => fetchStatsRef.current?.(false), 30000)
     return () => clearInterval(timer)
@@ -282,8 +295,28 @@ export default function FlightDashboard({ onFlightViewChange }) {
 
   const btnSecondary = 'ui-btn-secondary'
 
+  const showRegionColumn = scopeRegions.length > 1
+
   return (
     <div className="space-y-5">
+      <div className="ui-card px-4 py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-dji-ink">
+          飞行记录范围：<span className="font-medium">{user?.regionName || '当前区域'}</span>
+          {scopeRegions.length > 1
+            ? <span className="text-dji-muted">（{scopeRegions.map((r) => r.name).join('、')}）</span>
+            : <span className="text-dji-muted"> · 仅本区域数据</span>}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {(scopeRegions.length ? scopeRegions : [{ id: user?.regionId, name: user?.regionName }]).map((r) => (
+            r?.id && (
+              <span key={r.id} className="ui-badge bg-slate-100 text-slate-700 border border-slate-200">
+                {r.name || r.id}
+              </span>
+            )
+          ))}
+        </div>
+      </div>
+
       {/* 筛选工具栏 */}
       <div className="ui-card p-4">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
@@ -469,6 +502,7 @@ export default function FlightDashboard({ onFlightViewChange }) {
                   <tr>
                     <th className="px-4 py-2.5 text-left font-medium w-24">状态</th>
                     <th className="px-4 py-2.5 text-left font-medium min-w-[140px]">设备</th>
+                    {showRegionColumn && <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">区域</th>}
                     <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">起飞时间</th>
                     <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">降落时间</th>
                     <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">里程</th>
@@ -495,6 +529,11 @@ export default function FlightDashboard({ onFlightViewChange }) {
                           {getRecordDeviceName(r)}
                         </span>
                       </td>
+                      {showRegionColumn && (
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <RegionLabel regionId={r.regionId} regionName={r.regionName} />
+                        </td>
+                      )}
                       <td className="px-4 py-2.5 text-dji-muted whitespace-nowrap tabular-nums">{formatTime(r.startTime)}</td>
                       <td className="px-4 py-2.5 text-dji-muted whitespace-nowrap tabular-nums">{r.status === 'active' ? '--' : formatTime(r.endTime)}</td>
                       <td className="px-4 py-2.5 text-right text-dji-ink whitespace-nowrap tabular-nums">{formatMileage(r.totalMileage || 0)}</td>

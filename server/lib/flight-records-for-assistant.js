@@ -211,7 +211,8 @@ function getFlightRecordsForAssistant(processor, getActiveSessions, options = {}
   const limit = options.limit ?? MAX_RECORDS;
   const selectedDevice = options.selectedDevice;
 
-  const history = filterFlightHistory(processor.flightHistory, {
+  const historySource = options.historyOverride || processor.flightHistory;
+  const history = filterFlightHistory(historySource, {
     type: snapshot.activeTab,
     startTime: snapshot.startTime,
     endTime: snapshot.endTime,

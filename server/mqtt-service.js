@@ -16,14 +16,16 @@ try {
 }
 
 class MQTTService {
-  constructor(config, wsService, alertService, processor) {
+  constructor(config, wsService, alertService, regionRuntime) {
     this.config = config;
+    this.regionId = config.regionId || 'default';
     this.wsService = wsService;
     this.alertService = alertService;
     this.client = null;
-    this.processor = processor;
-    if (!this.processor) {
-      throw new Error('MQTTService 需要注入共享 DeviceProcessor 实例');
+    this.regionRuntime = regionRuntime;
+    this.onStatusChange = null;
+    if (!this.regionRuntime) {
+      throw new Error('MQTTService 需要注入 RegionRuntime 实例');
     }
     this.connected = false;
     this.reconnectAttempts = 0;
@@ -32,6 +34,7 @@ class MQTTService {
   }
 
   connect() {
+    const protocolVersion = Number(this.config.protocolVersion || process.env.MQTT_PROTOCOL_VERSION || 5);
     const options = {
       clientId: this.config.clientId,
       clean: true,
@@ -39,7 +42,7 @@ class MQTTService {
       reconnectPeriod: 5000,
       keepalive: 60,
       reschedulePings: true,
-      protocolVersion: 5,
+      protocolVersion: Number.isFinite(protocolVersion) ? protocolVersion : 5,
     };
 
     if (this.config.username) {
@@ -49,23 +52,15 @@ class MQTTService {
       options.password = this.config.password;
     }
 
-    console.log(`[MQTT] 正在连接到 ${this.config.brokerUrl}...`);
+    console.log(`[MQTT:${this.regionId}] 正在连接到 ${this.config.brokerUrl}...`);
     this.client = mqtt.connect(this.config.brokerUrl, options);
 
     this.client.on('connect', () => {
-      console.log('[MQTT] 连接成功');
+      console.log(`[MQTT:${this.regionId}] 连接成功`);
       this.connected = true;
       this.reconnectAttempts = 0;
       this.subscribeTopics();
-      
-      // 通知WebSocket客户端连接状态
-      if (this.wsService) {
-        this.wsService.broadcast({
-          type: 'connection',
-          status: 'connected',
-          timestamp: new Date().toISOString()
-        });
-      }
+      this._emitStatus('connected');
     });
 
     this.client.on('message', (topic, message) => {
@@ -73,17 +68,9 @@ class MQTTService {
     });
 
     this.client.on('error', (error) => {
-      console.error('[MQTT] 连接错误:', error.message);
+      console.error(`[MQTT:${this.regionId}] 连接错误:`, error.message);
       this.connected = false;
-      
-      if (this.wsService) {
-        this.wsService.broadcast({
-          type: 'connection',
-          status: 'error',
-          error: error.message,
-          timestamp: new Date().toISOString()
-        });
-      }
+      this._emitStatus('error', error.message);
     });
 
     this.client.on('disconnect', (packet) => {
@@ -91,22 +78,21 @@ class MQTTService {
     });
 
     this.client.on('close', () => {
-      console.log('[MQTT] 连接关闭', new Date().toISOString());
+      console.log(`[MQTT:${this.regionId}] 连接关闭`, new Date().toISOString());
       this.connected = false;
-      
-      if (this.wsService) {
-        this.wsService.broadcast({
-          type: 'connection',
-          status: 'disconnected',
-          timestamp: new Date().toISOString()
-        });
-      }
+      this._emitStatus('disconnected');
     });
 
     this.client.on('reconnect', () => {
       this.reconnectAttempts++;
-      console.log(`[MQTT] 正在重连... (第 ${this.reconnectAttempts} 次)`);
+      console.log(`[MQTT:${this.regionId}] 正在重连... (第 ${this.reconnectAttempts} 次)`);
     });
+  }
+
+  _emitStatus(status, error) {
+    if (typeof this.onStatusChange === 'function') {
+      this.onStatusChange({ regionId: this.regionId, status, error });
+    }
   }
 
   subscribeTopics() {
@@ -118,9 +104,9 @@ class MQTTService {
     unique.forEach((topic) => {
       this.client.subscribe(topic, { qos: 1 }, (err) => {
         if (err) {
-          console.error(`[MQTT] 订阅失败: ${topic}`, err.message);
+          console.error(`[MQTT:${this.regionId}] 订阅失败: ${topic}`, err.message);
         } else {
-          console.log(`[MQTT] 已订阅主题: ${topic}`);
+          console.log(`[MQTT:${this.regionId}] 已订阅主题: ${topic}`);
         }
       });
     });
@@ -154,15 +140,22 @@ class MQTTService {
         this.handleEvents(topic, data);
       } else if (isOsd || isState) {
         // 处理 OSD / state（Dock 分片属性需合并，如 supplement_light_state、live_status）
-        const processedData = this.processor.process(topic, data);
+        const processedData = this.regionRuntime.processMqttMessage(topic, data, this.regionId);
+        if (!processedData) return;
 
         // 广播到WebSocket客户端
         if (this.wsService) {
+          const regionId = this.regionId || this.regionRuntime.resolveRegionIdForDevice(processedData.deviceId);
+          const proc = this.regionRuntime.getProcessor(regionId);
           this.wsService.broadcast({
             type: 'device_data',
             topic: topic,
             raw: data,
-            processed: processedData,
+            processed: {
+              ...processedData,
+              regionId,
+              regionName: processedData.regionName || proc?.regionName || regionId,
+            },
             timestamp: new Date().toISOString()
           });
         }
@@ -176,7 +169,13 @@ class MQTTService {
         if (this.alertService) {
           const droneInDock = processedData.metrics.droneInDock?.value;
           const subDeviceOnline = processedData.metrics.subDeviceOnline?.value;
-          this.alertService.onDeviceUpdate(processedData.deviceId, processedData.deviceName, droneInDock, subDeviceOnline);
+          this.alertService.onDeviceUpdate(
+            processedData.deviceId,
+            processedData.deviceName,
+            droneInDock,
+            subDeviceOnline,
+            this.regionId,
+          );
           // 缓存无人机位置（无人机设备有 location 且 gateway 指向机场）
           if (processedData.deviceType === 'drone' && processedData.location && processedData.gateway) {
             this.alertService.updateDroneLocation(processedData.gateway, processedData.location);
@@ -204,7 +203,8 @@ class MQTTService {
       const normalized = pos === 0 || pos === 1 ? pos : null;
       if (normalized !== null && gatewaySn) {
         setLiveCameraPosition(gatewaySn, normalized, 'services_reply');
-        const updated = this.processor.patchDockControlState(gatewaySn, {
+        const proc = this.regionRuntime.getProcessorForDevice(gatewaySn);
+        const updated = proc?.patchDockControlState(gatewaySn, {
           liveCameraPosition: normalized,
         });
         if (updated && this.wsService) {
@@ -212,7 +212,7 @@ class MQTTService {
             type: 'device_data',
             topic: `thing/product/${gatewaySn}/osd`,
             raw: { data: updated.osdSnapshot || {} },
-            processed: updated,
+            processed: { ...updated, regionId: proc?.regionId },
             timestamp: new Date().toISOString(),
           });
         }
@@ -321,7 +321,8 @@ class MQTTService {
     const topicParts = topic.split('/');
     const deviceId = topicParts[2];
 
-    const deviceName = this.processor.getDeviceName(deviceId);
+    const proc = this.regionRuntime.getProcessorForDevice(deviceId);
+    const deviceName = proc?.getDeviceName(deviceId) || deviceId;
 
     // 解析健康告警 - 格式: method: "hms", data.list
     const healthAlerts = [];
@@ -357,6 +358,7 @@ class MQTTService {
         topic: topic,
         deviceId: deviceId,
         deviceName: deviceName,
+        regionId: this.regionId || this.regionRuntime.resolveRegionIdForDevice(deviceId),
         healthAlerts: healthAlerts,
         timestamp: new Date().toISOString()
       });
@@ -402,6 +404,7 @@ class MQTTService {
   }
 
   handleAlerts(topic, processedData) {
+    const regionId = this.regionId || this.regionRuntime.resolveRegionIdForDevice(processedData.deviceId);
     processedData.alerts.forEach(alert => {
       if (this.wsService) {
         this.wsService.broadcast({
@@ -409,6 +412,7 @@ class MQTTService {
           topic: topic,
           deviceId: processedData.deviceId,
           deviceName: processedData.deviceName,
+          regionId,
           alert: alert,
           timestamp: new Date().toISOString()
         });

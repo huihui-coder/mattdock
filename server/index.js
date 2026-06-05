@@ -8,7 +8,6 @@ const { spawn } = require('child_process');
 const https = require('https');
 const http = require('http');
 
-const MQTTService = require('./mqtt-service');
 const WebSocketService = require('./ws-service');
 const DeviceProcessor = require('./device-processor');
 const AlertService = require('./alert-service');
@@ -29,6 +28,20 @@ const {
 const { getJobSecret } = require('./lib/lost-alert-mqtt-bridge');
 const { getLiveCameraPosition } = require('./lib/dock-live-state-store');
 const { appendAuditEntry, queryAuditLogs, getAuditStats } = require('./lib/audit-log-store');
+const {
+  RegionRuntime,
+  collectAlertConfigDeviceIds,
+  resolveRegionIdInScope,
+  getLeafProcessorsInScope,
+} = require('./lib/region-runtime');
+const { DEFAULT_REGION_ID, getRegionById } = require('./lib/region-store');
+const { buildRegionTree, countUsersByRegion } = require('./lib/region-tree');
+const { MQTTManager } = require('./lib/mqtt-manager');
+const {
+  buildStreamUrl,
+  sanitizeConnectivityForApi,
+  writeRegionConnectivity,
+} = require('./lib/region-connectivity');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -77,6 +90,13 @@ loadSessions();
 function sanitizeUser(user, { includePassword = false } = {}) {
   if (!user) return null;
   const { passwordHash, plainPassword, ...safe } = user;
+  if (!safe.regionId) safe.regionId = DEFAULT_REGION_ID;
+  if (regionRuntime) {
+    const scope = regionRuntime.getScopeForUser(safe);
+    safe.visibleRegionIds = scope.visibleRegionIds;
+    const regions = regionRuntime.listRegions();
+    safe.regionName = regions.find((r) => r.id === safe.regionId)?.name || safe.regionId;
+  }
   if (includePassword) safe.plainPassword = plainPassword || '';
   return safe;
 }
@@ -109,6 +129,7 @@ function readUsers() {
         passwordHash: hashPassword(AUTH_PASS),
         plainPassword: AUTH_PASS,
         role: 'admin',
+        regionId: (process.env.DEFAULT_ROOT_REGION_ID || 'gz-jhzd').trim(),
         permissions: ALL_PERMISSIONS,
         createdAt: new Date().toISOString()
       }];
@@ -208,6 +229,62 @@ function requirePermission(permission) {
   };
 }
 
+let regionRuntime;
+
+function processorFor(req) {
+  if (!regionRuntime) return null;
+  return regionRuntime.getProcessorForUser(req?.user) || regionRuntime.getDefaultProcessor();
+}
+
+function processorForDevice(deviceId) {
+  if (!regionRuntime) return null;
+  return regionRuntime.getProcessorForDevice(deviceId);
+}
+
+function attachRegionalProcessor(req, res, next) {
+  const scope = regionRuntime.getScopeForUser(req.user);
+  if (!scope.primaryProcessor) {
+    return res.status(403).json({ error: '账号未绑定有效区域，请联系管理员' });
+  }
+  req.processor = scope.primaryProcessor;
+  req.regionScope = scope;
+  req.visibleProcessors = scope.processors;
+  req.visibleRegionIds = scope.visibleRegionIds;
+  req.regionId = scope.regionId;
+  next();
+}
+
+function mergeDeviceRegistryGrouped(visibleProcessors) {
+  const pairs = [];
+  const singlePairs = [];
+  const unboundSingles = [];
+  const unboundRemotes = [];
+  const unboundDrones = [];
+  const devices = [];
+  const boundDroneSns = new Set();
+  const boundSingleSns = new Set();
+
+  for (const { regionId, regionName, processor } of visibleProcessors) {
+    const grouped = processor.getDeviceRegistryGrouped();
+    for (const p of grouped.pairs) {
+      pairs.push({ ...p, regionId, regionName, airport: { ...p.airport, regionId, regionName }, drone: p.drone ? { ...p.drone, regionId, regionName } : null });
+      if (p.droneSn) boundDroneSns.add(p.droneSn);
+    }
+    for (const p of grouped.singlePairs) {
+      singlePairs.push({ ...p, regionId, regionName, remote: { ...p.remote, regionId, regionName }, drone: p.drone ? { ...p.drone, regionId, regionName } : null });
+      if (p.droneSn) boundSingleSns.add(p.droneSn);
+    }
+    for (const d of grouped.unboundSingles) unboundSingles.push({ ...d, regionId, regionName });
+    for (const d of grouped.unboundRemotes) unboundRemotes.push({ ...d, regionId, regionName });
+    for (const d of grouped.unboundDrones) unboundDrones.push({ ...d, regionId, regionName });
+    for (const d of processor.getDeviceRegistryList()) {
+      devices.push({ ...d, regionId, regionName });
+    }
+  }
+
+  return { pairs, singlePairs, unboundSingles, unboundRemotes, unboundDrones, devices };
+}
+
 function getClientIp(req) {
   const xf = req.headers['x-forwarded-for'];
   if (xf) return String(xf).split(',')[0].trim();
@@ -246,6 +323,7 @@ const AUDIT_ACTION_LABELS = {
   'ai.image.download': 'AI 生图下载',
   'flight.export.records': '导出飞行记录',
   'flight.export.ranking': '导出设备排名',
+  'region.freeze_online': '固化区域线上配置',
 };
 
 // 中间件
@@ -395,7 +473,12 @@ app.post('/api/audit/client-event', requireLogin, (req, res) => {
 
 app.get('/api/users', requireAdmin, (req, res) => {
   const onlineStats = getOnlineUserStats();
+  const flat = regionRuntime ? regionRuntime.listRegions() : [];
+  const userCounts = countUsersByRegion(readUsers(), flat);
+  const regions = flat.map((r) => ({ ...r, userCount: userCounts[r.id] || 0 }));
   res.json({
+    regions,
+    tree: regionRuntime ? buildRegionTree(regions) : [],
     users: readUsers().map(u => {
       const stat = onlineStats.get(u.username);
       return {
@@ -410,14 +493,17 @@ app.get('/api/users', requireAdmin, (req, res) => {
 });
 
 app.post('/api/users', requireAdmin, (req, res) => {
-  const { username, password, permissions = [] } = req.body;
+  const { username, password, permissions = [], regionId } = req.body;
   if (!username || !password) return res.status(400).json({ error: '用户名和密码不能为空' });
+  const resolvedRegion = String(regionId || DEFAULT_REGION_ID).trim();
+  if (!getRegionById(resolvedRegion)) return res.status(400).json({ error: '所选区域不存在' });
   const users = readUsers();
   if (users.find(u => u.username === username)) return res.status(409).json({ error: '用户名已存在' });
   const safePermissions = permissions.filter(p => ALL_PERMISSIONS.includes(p));
   const user = {
     username,
     role: 'user',
+    regionId: resolvedRegion,
     permissions: safePermissions,
     createdAt: new Date().toISOString()
   };
@@ -429,12 +515,17 @@ app.post('/api/users', requireAdmin, (req, res) => {
 
 app.put('/api/users/:username', requireAdmin, (req, res) => {
   const target = req.params.username;
-  const { permissions, password } = req.body || {};
+  const { permissions, password, regionId } = req.body || {};
   const users = readUsers();
   const idx = users.findIndex(u => u.username === target);
   if (idx === -1) return res.status(404).json({ error: '用户不存在' });
 
   const user = users[idx];
+  if (regionId) {
+    const resolvedRegion = String(regionId).trim();
+    if (!getRegionById(resolvedRegion)) return res.status(400).json({ error: '所选区域不存在' });
+    user.regionId = resolvedRegion;
+  }
   if (user.role !== 'admin' && Array.isArray(permissions)) {
     user.permissions = permissions.filter(p => ALL_PERMISSIONS.includes(p));
   }
@@ -485,11 +576,18 @@ app.delete('/api/users/:username', requireAdmin, (req, res) => {
 });
 
 // 设备名称与分类管理（管理员）
-app.get('/api/device-registry', requirePermission('device-config'), (req, res) => {
+app.get('/api/device-registry', requirePermission('device-config'), attachRegionalProcessor, (req, res) => {
   res.set('Cache-Control', 'no-store');
   const { category, q } = req.query;
   const keyword = q ? String(q).trim().toLowerCase() : '';
-  const grouped = processor.getDeviceRegistryGrouped();
+  const regions = regionRuntime.listRegions();
+  const leafProcessors = getLeafProcessorsInScope(req.visibleProcessors, regions);
+  const grouped = leafProcessors.length > 1
+    ? mergeDeviceRegistryGrouped(leafProcessors)
+    : {
+      ...leafProcessors[0].processor.getDeviceRegistryGrouped(),
+      devices: leafProcessors[0].processor.getDeviceRegistryList(),
+    };
   const matchKeyword = (row) => !keyword || [
     row?.deviceId,
     row?.name,
@@ -510,7 +608,7 @@ app.get('/api/device-registry', requirePermission('device-config'), (req, res) =
     }
   }
 
-  const devices = processor.getDeviceRegistryList().filter((d) => {
+  const devices = (grouped.devices || req.processor.getDeviceRegistryList()).filter((d) => {
     const catOk = !category || category === 'all' || d.category === category
       || (category === 'airport_drone' && ['airport', 'airport_drone'].includes(d.category))
       || (category === 'remote' && ['single', 'remote'].includes(d.category));
@@ -527,52 +625,59 @@ app.get('/api/device-registry', requirePermission('device-config'), (req, res) =
     devices,
     categories: DeviceProcessor.DEVICE_CATEGORY_LABELS,
     unmappedCount: devices.filter((d) => d.source === 'unmapped').length,
+    regionId: req.regionId,
+    visibleRegionIds: req.visibleRegionIds,
   });
 });
 
-app.put('/api/device-registry/bindings/:airportSn', requirePermission('device-config'), (req, res) => {
+app.put('/api/device-registry/bindings/:airportSn', requirePermission('device-config'), attachRegionalProcessor, (req, res) => {
   const { droneSn, droneName } = req.body || {};
   try {
-    const pair = processor.upsertAirportBinding(req.params.airportSn, droneSn, { droneName });
+    const pair = req.processor.upsertAirportBinding(req.params.airportSn, droneSn, { droneName });
+    regionRuntime.rebuildDeviceIndex();
     res.json({ message: '机场绑定已保存', pair });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.put('/api/device-registry/remote-bindings/:remoteSn', requirePermission('device-config'), (req, res) => {
+app.put('/api/device-registry/remote-bindings/:remoteSn', requirePermission('device-config'), attachRegionalProcessor, (req, res) => {
   const { droneSn, droneName } = req.body || {};
   try {
-    const pair = processor.upsertRemoteBinding(req.params.remoteSn, droneSn, { droneName });
+    const pair = req.processor.upsertRemoteBinding(req.params.remoteSn, droneSn, { droneName });
+    regionRuntime.rebuildDeviceIndex();
     res.json({ message: '单兵绑定已保存', pair });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.post('/api/device-registry', requirePermission('device-config'), (req, res) => {
+app.post('/api/device-registry', requirePermission('device-config'), attachRegionalProcessor, (req, res) => {
   const { deviceId, name, category } = req.body || {};
   try {
-    const device = processor.upsertDeviceRegistry(deviceId, { name, category });
+    const device = req.processor.upsertDeviceRegistry(deviceId, { name, category });
+    regionRuntime.rebuildDeviceIndex();
     res.json({ message: '设备映射已添加', device });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.put('/api/device-registry/:deviceId', requirePermission('device-config'), (req, res) => {
+app.put('/api/device-registry/:deviceId', requirePermission('device-config'), attachRegionalProcessor, (req, res) => {
   const { name, category } = req.body || {};
   try {
-    const device = processor.upsertDeviceRegistry(req.params.deviceId, { name, category });
+    const device = req.processor.upsertDeviceRegistry(req.params.deviceId, { name, category });
+    regionRuntime.rebuildDeviceIndex();
     res.json({ message: '设备映射已保存', device });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
 });
 
-app.delete('/api/device-registry/:deviceId', requirePermission('device-config'), (req, res) => {
+app.delete('/api/device-registry/:deviceId', requirePermission('device-config'), attachRegionalProcessor, (req, res) => {
   try {
-    processor.removeDeviceRegistryOverride(req.params.deviceId);
+    req.processor.removeDeviceRegistryOverride(req.params.deviceId);
+    regionRuntime.rebuildDeviceIndex();
     res.json({ message: '已恢复为内置/环境配置' });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -673,33 +778,132 @@ const thresholdConfig = {
   }
 };
 
-const processor = new DeviceProcessor(thresholdConfig);
+regionRuntime = new RegionRuntime(thresholdConfig);
+regionRuntime.init();
+
 const { createAlertAiAnalyzer } = require('./lib/alert-ai-analyzer');
 let mqttService;
 const alertAiAnalyzer = createAlertAiAnalyzer({
   updateTokenUsage,
-  getDeviceState: (deviceId) => processor.getDeviceState(deviceId),
-  processor,
+  getDeviceState: (deviceId) => regionRuntime.getDeviceState(deviceId),
+  processor: regionRuntime.getDefaultProcessor(),
   getMqttService: () => mqttService,
+  resolveRegionId: (deviceId) => regionRuntime.resolveRegionIdForDevice(deviceId),
 });
 const alertService = new AlertService({
   aiAnalyzer: alertAiAnalyzer,
-  getDeviceState: (deviceId) => processor.getDeviceState(deviceId),
-  processor,
+  getDeviceState: (deviceId) => regionRuntime.getDeviceState(deviceId),
+  processor: regionRuntime.getDefaultProcessor(),
+  resolveRegionId: (deviceId) => regionRuntime.resolveRegionIdForDevice(deviceId),
   aiAnalysisEnabled: process.env.ALERT_AI_ENABLED !== '0',
 });
 
-mqttService = new MQTTService({
-  brokerUrl: process.env.MQTT_BROKER_URL || 'mqtt://localhost:1883',
-  username: process.env.MQTT_USERNAME || '',
-  password: process.env.MQTT_PASSWORD || '',
-  clientId: process.env.MQTT_CLIENT_ID || 'airport_monitor_',
-  topics: process.env.MQTT_TOPICS || 'airport/devices/#'
-}, wsService, alertService, processor);
+const mqttManager = new MQTTManager(wsService, alertService, regionRuntime);
+mqttService = mqttManager;
+
+app.get('/api/regions', requireAdmin, (req, res) => {
+  const flat = regionRuntime.listRegions();
+  const userCounts = countUsersByRegion(readUsers(), flat);
+  const regions = flat.map((region) => {
+    const proc = regionRuntime.getProcessor(region.id);
+    const registryPath = proc?.registryFile;
+    let frozen = false;
+    let mappingCount = 0;
+    let deviceCount = 0;
+    if (registryPath && fs.existsSync(registryPath)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+        frozen = !!raw?.meta?.frozen;
+        mappingCount = Object.keys(raw?.mappings || {}).length;
+      } catch {
+        frozen = false;
+      }
+    }
+    if (proc) deviceCount = proc.getAllDeviceStates().length;
+    return {
+      ...region,
+      frozen,
+      mappingCount,
+      deviceCount,
+      userCount: userCounts[region.id] || 0,
+    };
+  });
+  res.json({
+    regions,
+    tree: buildRegionTree(regions),
+    defaultRegionId: regionRuntime.defaultRegionId,
+  });
+});
+
+app.post('/api/regions', requireAdmin, (req, res) => {
+  try {
+    const region = regionRuntime.addRegion(req.body || {});
+    res.json({ message: '区域已创建', region });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/regions/:regionId/freeze-online', requireAdmin, (req, res) => {
+  try {
+    const result = regionRuntime.freezeOnlineToRegion(req.params.regionId);
+    auditLog(req, {
+      action: 'region.freeze_online',
+      resource: { type: 'region', id: req.params.regionId },
+      detail: result,
+    });
+    res.json({ message: '已将当前线上配置固化到区域', ...result });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/regions/:regionId/connectivity', requireAdmin, (req, res) => {
+  const region = getRegionById(req.params.regionId);
+  if (!region) return res.status(404).json({ error: '区域不存在' });
+  res.json(sanitizeConnectivityForApi(req.params.regionId));
+});
+
+app.put('/api/regions/:regionId/connectivity', requireAdmin, (req, res) => {
+  try {
+    const region = getRegionById(req.params.regionId);
+    if (!region) return res.status(404).json({ error: '区域不存在' });
+    const saved = writeRegionConnectivity(req.params.regionId, req.body || {});
+    mqttManager.reload();
+    auditLog(req, {
+      action: 'region.connectivity_update',
+      resource: { type: 'region', id: req.params.regionId },
+      detail: { broker: saved.mqtt?.brokerUrl, streamBase: saved.stream?.baseUrl },
+    });
+    res.json({
+      message: '区域连接配置已保存，MQTT 已重连',
+      connectivity: sanitizeConnectivityForApi(req.params.regionId),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/stream/url', requireLogin, attachRegionalProcessor, (req, res) => {
+  const deviceId = String(req.query.deviceId || '').trim();
+  const suffix = String(req.query.suffix || '_out').trim();
+  let regionId = String(req.query.regionId || '').trim();
+  if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
+  if (!regionId) regionId = regionRuntime.resolveRegionIdForDevice(deviceId);
+  if (!req.visibleRegionIds.includes(regionId)) {
+    return res.status(403).json({ error: '无权访问该区域推流' });
+  }
+  res.json({
+    url: buildStreamUrl(regionId, deviceId, suffix),
+    regionId,
+    deviceId,
+    suffix,
+  });
+});
 
 alertService.setMqttService(mqttService);
 
-mqttService.connect();
+mqttManager.connectAll();
 
 function requireLostAlertJobSecret(req, res, next) {
   if (req.headers['x-job-secret'] === getJobSecret()) return next();
@@ -722,16 +926,16 @@ app.post('/api/internal/lost-alert/service', requireLostAlertJobSecret, async (r
     }
     await mqttService.publishService(deviceId, method, data ?? null);
     if (method === METHOD_LIVE_CAMERA_CHANGE && data?.camera_position !== undefined) {
-      processor.patchDockControlState(deviceId, {
+      processorForDevice(deviceId)?.patchDockControlState(deviceId, {
         liveCameraPosition: data.camera_position,
         source: 'lost_alert',
       });
     }
     if (method === METHOD_SUPPLEMENT_LIGHT_OPEN) {
-      processor.patchDockControlState(deviceId, { supplementLightState: 1, source: 'lost_alert' });
+      processorForDevice(deviceId)?.patchDockControlState(deviceId, { supplementLightState: 1, source: 'lost_alert' });
     }
     if (method === METHOD_SUPPLEMENT_LIGHT_CLOSE) {
-      processor.patchDockControlState(deviceId, { supplementLightState: 0, source: 'lost_alert' });
+      processorForDevice(deviceId)?.patchDockControlState(deviceId, { supplementLightState: 0, source: 'lost_alert' });
     }
     res.json({ ok: true });
   } catch (e) {
@@ -751,15 +955,24 @@ registerAssistantRoutes(app, {
   requireAssistant: requirePermission('ai-assistant'),
   updateTokenUsage,
   auditLog,
-  enrichAssistantContext: (ctx) => {
+  enrichAssistantContext: (ctx, req) => {
+    const scope = regionRuntime.getScopeForUser(req?.user);
+    const procs = scope.processors;
     const flightView = ctx?.flightView;
-    const flightStats = getFlightStatsSnapshot(processor, flightView);
+    const flightStats = getFlightStatsSnapshot(scope.primaryProcessor, flightView);
+    const mergedHistory = regionRuntime.collectFlightHistoryFromScope(procs, regionRuntime.listRegions());
+    const active = buildActiveFlightSessions(flightView?.type, { visibleProcessors: procs });
     const opts = { flightView, selectedDevice: ctx?.selectedDevice };
     return {
       ...ctx,
       flightStats,
-      flightRecords: getFlightRecordsForAssistant(processor, () => buildActiveFlightSessions(), opts),
+      flightRecords: getFlightRecordsForAssistant(scope.primaryProcessor, () => active, {
+        ...opts,
+        historyOverride: mergedHistory,
+        scopeProcessors: procs,
+      }),
       flightRanking: flightStats.ranking,
+      regionScope: scope.visibleRegionIds,
     };
   },
 });
@@ -771,36 +984,75 @@ console.log(`[Assistant] Ark: key=${arkKey ? '已配置' : '未配置'}, model=$
 console.log(`[AlertAI] 告警多模态分析: ${alertAiOn ? '已启用' : '未启用'}`);
 console.log(`[Ark] 联网搜索: ${process.env.ARK_WEB_SEARCH || 'auto'}（有外网时自动开启）`);
 
-function buildAlertConfigPayload() {
-  const config = alertService.getConfig();
-  const ids = new Set(Object.keys(config.deviceConfigs || {}));
-  processor.getAllDeviceStates().forEach((d) => ids.add(d.deviceId));
-  const deviceNameMap = {};
-  ids.forEach((id) => {
-    const state = processor.getDeviceState(id);
-    deviceNameMap[id] = processor.getDeviceName(id, state?.gateway || null);
+function buildAlertConfigPayload(req) {
+  const procs = req?.visibleProcessors
+    || regionRuntime.getScopeForUser(req?.user).processors
+    || [{ processor: regionRuntime.getDefaultProcessor() }];
+  const regions = regionRuntime.listRegions();
+  const { ids: allowedIds } = collectAlertConfigDeviceIds(procs, regions);
+  const scoped = alertService.getScopedConfig({
+    visibleRegionIds: req.visibleRegionIds,
+    regionId: req.regionId,
+    processors: procs,
   });
-  return { ...config, deviceNameMap };
+  const deviceConfigs = {};
+  for (const id of allowedIds) {
+    deviceConfigs[id] = scoped.deviceConfigs[id] || {};
+  }
+  const deviceNameMap = {};
+  const leafProcs = collectAlertConfigDeviceIds(procs, regions).procs || procs;
+  allowedIds.forEach((id) => {
+    const found = regionRuntime.findDeviceInScope(id, leafProcs);
+    if (found) {
+      deviceNameMap[id] = found.deviceName || id;
+    } else {
+      const proc = regionRuntime.getProcessorForDevice(id);
+      const state = proc?.getDeviceState(id);
+      deviceNameMap[id] = proc?.getDeviceName(id, state?.gateway || null) || id;
+    }
+  });
+  const deviceRegionMap = {};
+  allowedIds.forEach((id) => {
+    deviceRegionMap[id] = resolveRegionIdInScope(id, leafProcs, regions)
+      || regionRuntime.resolveRegionIdForDevice(id);
+  });
+  return {
+    globalWebhookUrl: scoped.globalWebhookUrl,
+    regionWebhooks: scoped.regionWebhooks,
+    leafRegions: scoped.leafRegions,
+    deviceConfigs,
+    deviceNameMap,
+    deviceRegionMap,
+    regionId: req.regionId,
+    visibleRegionIds: req.visibleRegionIds,
+  };
 }
 
 // 获取离巢告警配置
-app.get('/api/alert-config', (req, res) => {
-  res.json(buildAlertConfigPayload());
+app.get('/api/alert-config', requireLogin, attachRegionalProcessor, (req, res) => {
+  res.json(buildAlertConfigPayload(req));
 });
 
 // 更新离巢告警配置
-app.post('/api/alert-config', (req, res) => {
-  alertService.updateConfigs(req.body);
-  res.json({ message: '告警配置已保存', config: alertService.getConfig() });
+app.post('/api/alert-config', requireLogin, attachRegionalProcessor, (req, res) => {
+  alertService.updateScopedConfigs(req.regionScope, req.body);
+  res.json({ message: '告警配置已保存', config: buildAlertConfigPayload(req) });
 });
 
 // 手动触发飞丢告警（测试截图 + AI + 企业微信推送）
-app.post('/api/alert-config/trigger-lost', (req, res) => {
+app.post('/api/alert-config/trigger-lost', requireLogin, attachRegionalProcessor, (req, res) => {
   const { deviceId } = req.body || {};
   if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
-  const state = processor.getDeviceState?.(deviceId);
-  const deviceName = processor.getDeviceName(deviceId, state?.gateway || null);
-  const result = alertService.triggerLostAlertTest(deviceId, deviceName);
+  if (!regionRuntime.findDeviceInScope(deviceId, req.visibleProcessors)) {
+    return res.status(403).json({ error: '无权操作该设备' });
+  }
+  const proc = processorForDevice(deviceId);
+  const state = proc?.getDeviceState?.(deviceId);
+  const deviceName = proc?.getDeviceName(deviceId, state?.gateway || null);
+  const regions = regionRuntime.listRegions();
+  const regionId = resolveRegionIdInScope(deviceId, req.visibleProcessors, regions)
+    || regionRuntime.resolveRegionIdForDevice(deviceId);
+  const result = alertService.triggerLostAlertTest(deviceId, deviceName, regionId);
   if (!result.ok) {
     return res.status(result.error?.includes('执行中') ? 409 : 400).json({ error: result.error });
   }
@@ -808,11 +1060,16 @@ app.post('/api/alert-config/trigger-lost', (req, res) => {
 });
 
 // 测试推送
-app.post('/api/alert-config/test', (req, res) => {
+app.post('/api/alert-config/test', requireLogin, attachRegionalProcessor, (req, res) => {
   const { webhookUrl, snapshotDeviceId, snapshotStream } = req.body;
   if (!webhookUrl) return res.status(400).json({ error: '缺少 webhookUrl' });
-  const testDeviceId = snapshotDeviceId || 'NEST44202512U014';
-  alertService._sendWecomWebhook(webhookUrl, '测试设备', testDeviceId, 99, 'lost');
+  const scopedDevices = regionRuntime.collectDevicesFromScope(req.visibleProcessors, regionRuntime.listRegions());
+  const fallback = scopedDevices.find((d) => d.deviceType === 'airport' || d.deviceType === 'remote');
+  const testDeviceId = snapshotDeviceId || fallback?.deviceId;
+  if (!testDeviceId || !regionRuntime.findDeviceInScope(testDeviceId, req.visibleProcessors)) {
+    return res.status(400).json({ error: '当前区域没有可用于测试的设备' });
+  }
+  alertService._sendWecomWebhook(webhookUrl, '测试设备', testDeviceId, 99, 'test');
   alertService._sendStreamSnapshot(webhookUrl, testDeviceId, '_out');
   alertService._sendStreamSnapshot(webhookUrl, testDeviceId, '_in');
   alertService._sendStreamSnapshot(webhookUrl, testDeviceId, '_flight');
@@ -821,10 +1078,11 @@ app.post('/api/alert-config/test', (req, res) => {
 
 // 获取连接状态
 app.get('/api/status', (req, res) => {
+  const mqttStatus = mqttManager.getStatus();
   res.json({
     mqtt: {
-      connected: mqttService.isConnected(),
-      broker: process.env.MQTT_BROKER_URL
+      ...mqttStatus,
+      broker: mqttStatus.regions[0]?.broker || process.env.MQTT_BROKER_URL,
     },
     websocket: {
       port: WS_PORT,
@@ -841,17 +1099,19 @@ function noCache(res) {
   res.set('Expires', '0')
 }
 
-app.get('/api/devices', (req, res) => {
-  const devices = processor.getAllDeviceStates();
+app.get('/api/devices', requireLogin, attachRegionalProcessor, (req, res) => {
+  const devices = regionRuntime.collectDevicesFromScope(req.visibleProcessors, regionRuntime.listRegions());
   res.json({
     count: devices.length,
-    devices
+    devices,
+    regionId: req.regionId,
+    visibleRegionIds: req.visibleRegionIds,
   });
 });
 
 // 获取单个设备状态
-app.get('/api/devices/:deviceId', (req, res) => {
-  const device = processor.getDeviceState(req.params.deviceId);
+app.get('/api/devices/:deviceId', requireLogin, attachRegionalProcessor, (req, res) => {
+  const device = regionRuntime.findDeviceInScope(req.params.deviceId, req.visibleProcessors);
   if (device) {
     res.json(device);
   } else {
@@ -862,16 +1122,17 @@ app.get('/api/devices/:deviceId', (req, res) => {
 // 更新阈值配置
 app.post('/api/thresholds', (req, res) => {
   const { thresholds } = req.body;
-  processor.updateThresholds(thresholds);
+  const proc = regionRuntime.getDefaultProcessor();
+  proc.updateThresholds(thresholds);
   res.json({ 
     message: '阈值配置已更新',
-    thresholds: processor.thresholds 
+    thresholds: proc.thresholds 
   });
 });
 
 // 获取当前阈值配置
 app.get('/api/thresholds', (req, res) => {
-  res.json(processor.thresholds);
+  res.json(regionRuntime.getDefaultProcessor().thresholds);
 });
 
 // Dock 系列直播相机切换（舱内/舱外共用 _out 流）
@@ -887,17 +1148,13 @@ app.post('/api/live/camera-change', requirePermission('monitor'), async (req, re
     return res.status(400).json({ error: 'camera_position 须为 0（舱内）或 1（舱外）' });
   }
 
-  const state = processor.getDeviceState(gatewaySn);
-  const checkDevice = {
-    deviceId: gatewaySn,
-    deviceType: state?.deviceType || 'airport',
-    deviceName: state?.deviceName || processor.getDeviceName(gatewaySn),
-  };
-  if (!isDockSharedOutAirport(checkDevice)) {
+  if (gatewaySn.startsWith('NEST')) {
     return res.status(400).json({
-      error: '该设备非 Dock 系列机场，不支持舱内/舱外 MQTT 切换',
+      error: '换电系列机场使用 _in/_out 独立推流，不支持 MQTT 切换',
     });
   }
+
+  const proc = processorForDevice(gatewaySn) || processorFor(req);
 
   const resolvedVideoId = resolveVideoId(gatewaySn, videoId);
   try {
@@ -905,16 +1162,16 @@ app.post('/api/live/camera-change', requirePermission('monitor'), async (req, re
       camera_position: pos,
       video_id: resolvedVideoId,
     });
-    const updated = processor.patchDockControlState(gatewaySn, {
+    const updated = proc.patchDockControlState(gatewaySn, {
       liveCameraPosition: pos,
       source: 'api',
     });
-    if (updated && mqttService.wsService) {
-      mqttService.wsService.broadcast({
+    if (updated && wsService) {
+      wsService.broadcast({
         type: 'device_data',
         topic: `thing/product/${gatewaySn}/osd`,
         raw: { data: updated.osdSnapshot || {} },
-        processed: updated,
+        processed: { ...updated, regionId: proc.regionId },
         timestamp: new Date().toISOString(),
       });
     }
@@ -932,9 +1189,9 @@ app.post('/api/live/camera-change', requirePermission('monitor'), async (req, re
   }
 });
 
-app.get('/api/live/dock3-config/:deviceId', (req, res) => {
+app.get('/api/live/dock3-config/:deviceId', requireLogin, attachRegionalProcessor, (req, res) => {
   const gatewaySn = req.params.deviceId;
-  const state = processor.getDeviceState(gatewaySn);
+  const state = req.processor.getDeviceState(gatewaySn);
   const dockSharedOut = isDockSharedOutAirport(state || { deviceId: gatewaySn, deviceType: 'airport' });
   const liveCameraPosition =
     state?.liveCameraPosition ?? getLiveCameraPosition(gatewaySn) ?? null;
@@ -963,27 +1220,23 @@ app.post('/api/dock/supplement-light', requirePermission('monitor'), async (req,
     return res.status(400).json({ error: 'action 须为 open 或 close' });
   }
 
-  const state = processor.getDeviceState(gatewaySn);
-  const checkDevice = {
-    deviceId: gatewaySn,
-    deviceType: state?.deviceType || 'airport',
-    deviceName: state?.deviceName || processor.getDeviceName(gatewaySn),
-  };
-  if (!isDockSeriesAirport(checkDevice)) {
-    return res.status(400).json({ error: '该设备非 Dock 系列机场，不支持补光灯控制' });
+  if (gatewaySn.startsWith('NEST')) {
+    return res.status(400).json({ error: '换电系列机场不支持补光灯 MQTT 控制' });
   }
+
+  const proc = processorForDevice(gatewaySn) || processorFor(req);
 
   try {
     const reply = await mqttService.invokeService(gatewaySn, method, null);
     const status = reply?.data?.output?.status;
     const lightState = act === 'open' ? 1 : 0;
-    const updated = processor.patchDockControlState(gatewaySn, { supplementLightState: lightState });
-    if (updated && mqttService.wsService) {
-      mqttService.wsService.broadcast({
+    const updated = proc.patchDockControlState(gatewaySn, { supplementLightState: lightState });
+    if (updated && wsService) {
+      wsService.broadcast({
         type: 'device_data',
         topic: `thing/product/${gatewaySn}/osd`,
         raw: { data: updated.osdSnapshot || {} },
-        processed: updated,
+        processed: { ...updated, regionId: proc.regionId },
         timestamp: new Date().toISOString(),
       });
     }
@@ -1003,11 +1256,8 @@ app.post('/api/dock/supplement-light', requirePermission('monitor'), async (req,
 
 // 手动重连MQTT
 app.post('/api/mqtt/reconnect', (req, res) => {
-  if (mqttService.isConnected()) {
-    mqttService.disconnect();
-  }
-  mqttService.connect();
-  res.json({ message: '正在重新连接MQTT...' });
+  mqttManager.reconnect();
+  res.json({ message: '正在重新连接各区域 MQTT...' });
 });
 
 // Python Pillow 绘制边界框接口
@@ -1090,48 +1340,35 @@ app.post('/api/ai/analyze', async (req, res) => {
   }
 });
 
-function buildActiveFlightSessions(type) {
-  let sessions = Array.from(processor.activeSessions.values()).map(s => {
-    const enriched = processor.enrichFlightRecord(s);
-    return {
-      ...enriched,
-      totalDuration: processor.calcFlightDuration(s),
-      totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
-      status: 'active'
-    };
-  });
-
-  for (const [deviceId, state] of processor.deviceStates.entries()) {
-    if (sessions.find(s => s.deviceId === deviceId)) continue;
-    const flightType = processor.resolveFlightDeviceType(deviceId, state.gateway);
-    if (!['drone', 'single', 'virtual'].includes(flightType)) continue;
-    if (!processor.isFlightMode(state.raw_mode_code)) continue;
-    sessions.push({
-      id: `${deviceId}_${new Date(state.lastSeen || Date.now()).getTime()}`,
-      deviceId,
-      deviceName: processor.getFlightDisplayName(deviceId, state.gateway) || deviceId,
-      deviceType: flightType,
-      startTime: new Date(state.lastSeen || Date.now()).toISOString(),
-      totalDuration: 0,
-      totalMileage: 0,
-      currentTotalFlightDistance: state.raw_total_flight_distance ?? null,
-      status: 'active'
-    });
+function buildActiveFlightSessions(type, reqOrProc) {
+  const regions = regionRuntime.listRegions();
+  if (reqOrProc?.visibleProcessors) {
+    return regionRuntime.buildActiveSessionsFromScope(type, reqOrProc.visibleProcessors, regions);
   }
+  const proc = reqOrProc?.primaryProcessor || reqOrProc || regionRuntime.getDefaultProcessor();
+  return regionRuntime.buildActiveSessionsFromScope(
+    type,
+    [{ regionId: proc.regionId, regionName: proc.regionId, processor: proc }],
+    regions,
+  );
+}
 
-  if (type && type !== 'all') {
-    sessions = sessions.filter(s => type === 'airport' ? s.deviceType === 'drone' : s.deviceType === type);
-  }
-  return sessions;
+function flightScopeMeta(req) {
+  const regions = regionRuntime.listRegions();
+  const leafProcs = getLeafProcessorsInScope(req.visibleProcessors, regions);
+  return {
+    regionId: req.regionId,
+    visibleRegionIds: req.visibleRegionIds,
+    leafRegions: leafProcs.map(({ regionId, regionName }) => ({ id: regionId, name: regionName || regionId })),
+  };
 }
 
 // 获取飞行统计历史
-app.get('/api/flight-history', (req, res) => {
+app.get('/api/flight-history', requireLogin, attachRegionalProcessor, (req, res) => {
   noCache(res)
   const { type, startTime, endTime } = req.query;
 
-  processor.syncFlightHistoryFromDisk();
-  let history = [...processor.flightHistory];
+  let history = regionRuntime.collectFlightHistoryFromScope(req.visibleProcessors, regionRuntime.listRegions());
 
   // 1. 类型筛选：airport TAB 只统计机场绑定无人机（drone），不统计机场本体（airport）
   if (type && type !== 'all') {
@@ -1152,22 +1389,21 @@ app.get('/api/flight-history', (req, res) => {
     });
   }
 
-  res.json(history);
+  res.json({ history, ...flightScopeMeta(req) });
 });
 
 // 获取飞行记录列表（已完成 + 进行中）
-app.get('/api/flight-records', (req, res) => {
+app.get('/api/flight-records', requireLogin, attachRegionalProcessor, (req, res) => {
   noCache(res)
   const { type, startTime, endTime } = req.query;
-  processor.syncFlightHistoryFromDisk();
   const start = startTime ? new Date(startTime).getTime() : 0;
   const end = endTime ? new Date(endTime).getTime() : Infinity;
-  let history = [...processor.flightHistory].filter(h => {
+  let history = regionRuntime.collectFlightHistoryFromScope(req.visibleProcessors, regionRuntime.listRegions()).filter(h => {
     const matchType = !type || type === 'all' || (type === 'airport' ? h.deviceType === 'drone' : h.deviceType === type);
     const time = new Date(h.startTime).getTime();
     return matchType && time >= start && time <= end;
   });
-  const active = buildActiveFlightSessions(type);
+  const active = buildActiveFlightSessions(type, req);
   // 进行中的架次还没写入 history，二者不会重复；
   // 之前用 deviceId 去重会把“正在飞行设备”的所有历史完成记录全部抹掉，导致列表条数变少/看似不刷新，已移除
   const records = [
@@ -1175,22 +1411,22 @@ app.get('/api/flight-records', (req, res) => {
     ...history
   ].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
   console.log(`[飞行记录接口] /api/flight-records type=${type || 'all'} completed=${history.length} active=${active.length} total=${records.length}: ${active.map(s => `${s.deviceName || s.deviceId}(${s.deviceType})`).join(', ') || '无进行中'}`);
-  res.json({ records, history, active });
+  res.json({ records, history, active, ...flightScopeMeta(req) });
 });
 
 // 获取进行中的飞行会话
-app.get('/api/flight-active', (req, res) => {
+app.get('/api/flight-active', requireLogin, attachRegionalProcessor, (req, res) => {
   noCache(res)
   const { type } = req.query;
-  const allSessions = Array.from(processor.activeSessions.values());
+  const allSessions = buildActiveFlightSessions(null, req);
   console.log(`[飞行记录接口] /api/flight-active type=${type || 'all'} activeSessions=${allSessions.length}`);
-  const sessions = buildActiveFlightSessions(type);
+  const sessions = buildActiveFlightSessions(type, req);
   console.log(`[飞行记录接口] 返回进行中=${sessions.length}: ${sessions.map(s => `${s.deviceName || s.deviceId}(${s.deviceType})`).join(', ') || '无'}`);
   res.json(sessions);
 });
 
 // 模拟飞行测试接口（仅供调试，触发后立刻生成一条已完成的虚拟飞行记录）
-app.post('/api/simulate-flight', (req, res) => {
+app.post('/api/simulate-flight', requireLogin, attachRegionalProcessor, (req, res) => {
   const deviceId = 'VIRTUAL_TEST_DOCK';
   const deviceName = '测试虚拟机场-模拟无人机';
   const durationSec = Math.floor(60 + Math.random() * 300); // 60~360s
@@ -1211,10 +1447,10 @@ app.post('/api/simulate-flight', (req, res) => {
     mileage,
     status: 'completed'
   };
-  processor.flightHistory.push(record);
-  if (processor.flightHistory.length > 1000) processor.flightHistory.shift();
-  processor.saveFlightHistory();
-  processor.logFlight(`[模拟飞行] 写入虚拟记录 ${deviceName} duration=${durationSec}s mileage=${mileage}m`);
+  req.processor.flightHistory.push(record);
+  if (req.processor.flightHistory.length > 1000) req.processor.flightHistory.shift();
+  req.processor.saveFlightHistory();
+  req.processor.logFlight(`[模拟飞行] 写入虚拟记录 ${deviceName} duration=${durationSec}s mileage=${mileage}m`);
   res.json({ ok: true, record });
 });
 
@@ -1238,7 +1474,7 @@ const server = app.listen(PORT, () => {
 // 优雅关闭
 process.on('SIGTERM', () => {
   console.log('正在关闭服务...');
-  mqttService.disconnect();
+  mqttManager.disconnect();
   wsService.close();
   server.close(() => {
     console.log('服务已关闭');

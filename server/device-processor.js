@@ -3,9 +3,7 @@ const path = require('path');
 const { mergeOsdSnapshot, buildDockTelemetry } = require('./lib/dock-osd');
 const { getLiveCameraPosition, setLiveCameraPosition } = require('./lib/dock-live-state-store');
 
-// 飞行统计持久化路径
-const FLIGHT_HISTORY_FILE = path.join(__dirname, '../haizhuDB/flight-history.json');
-const DEVICE_REGISTRY_FILE = path.join(__dirname, '../haizhuDB/device-registry.json');
+const { getRegionDeviceRegistryPath, getRegionFlightHistoryPath } = require('./lib/region-store');
 
 const DEVICE_CATEGORY_LABELS = {
   airport: '自动机场',
@@ -118,9 +116,12 @@ function resolveOperationalLink(mode, session) {
  */
 
 class DeviceProcessor {
-  constructor(customThresholds = {}) {
-    // 飞行统计持久化路径
-    this.historyFile = FLIGHT_HISTORY_FILE;
+  constructor(customThresholds = {}, options = {}) {
+    this.regionId = options.regionId || 'default';
+    this.regionName = options.regionName || this.regionId;
+    this.historyFile = options.historyFile || getRegionFlightHistoryPath(this.regionId);
+    this.registryFile = options.registryFile || getRegionDeviceRegistryPath(this.regionId);
+    this.registryFrozen = false;
     
     // 运行时飞行会话缓存 (deviceId -> sessionData)
     this.activeSessions = new Map();
@@ -252,8 +253,8 @@ class DeviceProcessor {
 
   loadFlightHistory() {
     try {
-      if (fs.existsSync(FLIGHT_HISTORY_FILE)) {
-        return JSON.parse(fs.readFileSync(FLIGHT_HISTORY_FILE, 'utf8'));
+      if (fs.existsSync(this.historyFile)) {
+        return JSON.parse(fs.readFileSync(this.historyFile, 'utf8'));
       }
     } catch (e) {
       console.error('[飞行统计] 加载历史失败:', e.message);
@@ -287,8 +288,9 @@ class DeviceProcessor {
 
   loadDeviceRegistryFromFile() {
     try {
-      if (!fs.existsSync(DEVICE_REGISTRY_FILE)) return;
-      const raw = JSON.parse(fs.readFileSync(DEVICE_REGISTRY_FILE, 'utf8'));
+      if (!fs.existsSync(this.registryFile)) return;
+      const raw = JSON.parse(fs.readFileSync(this.registryFile, 'utf8'));
+      this.registryFrozen = !!raw?.meta?.frozen;
       this.registryOverrides = raw?.mappings && typeof raw.mappings === 'object'
         ? { ...raw.mappings }
         : {};
@@ -312,18 +314,28 @@ class DeviceProcessor {
 
   saveDeviceRegistryToFile() {
     try {
-      fs.mkdirSync(path.dirname(DEVICE_REGISTRY_FILE), { recursive: true });
-      const temp = DEVICE_REGISTRY_FILE + '.tmp';
+      let meta = {};
+      if (fs.existsSync(this.registryFile)) {
+        try {
+          meta = JSON.parse(fs.readFileSync(this.registryFile, 'utf8'))?.meta || {};
+        } catch {
+          meta = {};
+        }
+      }
+      if (this.registryFrozen) meta.frozen = true;
+      fs.mkdirSync(path.dirname(this.registryFile), { recursive: true });
+      const temp = this.registryFile + '.tmp';
       fs.writeFileSync(
         temp,
         JSON.stringify({
+          meta,
           mappings: this.registryOverrides,
           bindings: this.registryBindings,
           remoteBindings: this.registryRemoteBindings,
           remoteBindingsCustom: [...this.customRemoteBindingKeys],
         }, null, 2)
       );
-      fs.renameSync(temp, DEVICE_REGISTRY_FILE);
+      fs.renameSync(temp, this.registryFile);
     } catch (e) {
       console.error('[设备管理] 保存映射文件失败:', e.message);
       throw e;
@@ -331,7 +343,7 @@ class DeviceProcessor {
   }
 
   applyDeviceRegistryOverrides() {
-    this.deviceNames = { ...this.builtinDeviceNames };
+    this.deviceNames = this.registryFrozen ? {} : { ...this.builtinDeviceNames };
     Object.keys(process.env).forEach((key) => {
       if (key.startsWith('DEVICE_')) {
         this.deviceNames[key.slice(7)] = process.env[key];
@@ -347,15 +359,15 @@ class DeviceProcessor {
   isAirportSn(deviceId) {
     const sn = String(deviceId || '');
     if (sn.startsWith('1581F') || sn.startsWith('9N9') || sn.startsWith('VIRTUAL')) return false;
-    return !!BUILTIN_AIRPORT_BINDINGS[sn]
-      || !!this.registryBindings[sn]
-      || !!this.builtinDeviceNames[sn]
+    if (!this.registryFrozen && BUILTIN_AIRPORT_BINDINGS[sn]) return true;
+    return !!this.registryBindings[sn]
+      || (!this.registryFrozen && !!this.builtinDeviceNames[sn])
       || !!this.deviceNames[sn];
   }
 
   /** 合并内置 / 自定义 / 在线学习的机场绑定 */
   resolveAllAirportBindings() {
-    const merged = { ...BUILTIN_AIRPORT_BINDINGS };
+    const merged = this.registryFrozen ? {} : { ...BUILTIN_AIRPORT_BINDINGS };
     for (const [airportSn, droneSn] of Object.entries(this.registryBindings)) {
       if (droneSn) merged[airportSn] = droneSn;
     }
@@ -370,6 +382,7 @@ class DeviceProcessor {
       if (this.registryBindings[airportSn]) source = 'custom';
       else if (
         this.deviceStates.get(airportSn)?.boundDroneSn === droneSn
+        && (!this.registryFrozen || this.registryBindings[airportSn])
         && BUILTIN_AIRPORT_BINDINGS[airportSn] !== droneSn
       ) {
         source = 'learned';
@@ -397,7 +410,7 @@ class DeviceProcessor {
 
   /** 合并内置 / 自定义 / OSD 学习的遥控器绑定 */
   resolveAllRemoteBindings() {
-    const merged = { ...BUILTIN_REMOTE_BINDINGS };
+    const merged = this.registryFrozen ? {} : { ...BUILTIN_REMOTE_BINDINGS };
     for (const [remoteSn, droneSn] of Object.entries(this.registryRemoteBindings)) {
       if (droneSn) merged[remoteSn] = droneSn;
     }
@@ -441,7 +454,7 @@ class DeviceProcessor {
   autoPersistRemoteBinding(remoteSn, droneSn) {
     if (!this.isRemoteSn(remoteSn) || !String(droneSn).startsWith('1581F')) return;
     if (this.inferDeviceCategory(droneSn) !== 'single') return;
-    if (BUILTIN_REMOTE_BINDINGS[remoteSn] === droneSn) return;
+    if (!this.registryFrozen && BUILTIN_REMOTE_BINDINGS[remoteSn] === droneSn) return;
     if (this.customRemoteBindingKeys.has(remoteSn)) return;
     if (this.registryRemoteBindings[remoteSn] === droneSn) return;
     this.registryRemoteBindings[remoteSn] = droneSn;
@@ -468,7 +481,7 @@ class DeviceProcessor {
     if (this.registryOverrides[deviceId]) return 'custom';
     const envKey = `DEVICE_${deviceId}`;
     if (process.env[envKey]) return 'env';
-    if (this.builtinDeviceNames[deviceId]) return 'builtin';
+    if (!this.registryFrozen && this.builtinDeviceNames[deviceId]) return 'builtin';
     return 'unmapped';
   }
 
@@ -524,10 +537,10 @@ class DeviceProcessor {
   saveFlightHistory() {
     try {
       // 原子写入：先写临时文件再重命名
-      fs.mkdirSync(path.dirname(FLIGHT_HISTORY_FILE), { recursive: true });
-      const tempFile = FLIGHT_HISTORY_FILE + '.tmp';
+      fs.mkdirSync(path.dirname(this.historyFile), { recursive: true });
+      const tempFile = this.historyFile + '.tmp';
       fs.writeFileSync(tempFile, JSON.stringify(this.flightHistory, null, 2));
-      fs.renameSync(tempFile, FLIGHT_HISTORY_FILE);
+      fs.renameSync(tempFile, this.historyFile);
       this.logFlight(`[飞行统计] 文件保存成功: ${this.flightHistory.length} 条记录`);
     } catch (e) {
       this.logFlight(`[飞行统计] 保存历史失败: ${e.message}`);
@@ -707,6 +720,10 @@ class DeviceProcessor {
     const base = this.getBoundDroneDisplayName(droneSn);
     if (!base) return null;
     return `${base}-遥控器`;
+  }
+
+  regionMeta() {
+    return { regionId: this.regionId, regionName: this.regionName };
   }
 
   /**
@@ -1158,6 +1175,7 @@ class DeviceProcessor {
       osdSnapshot: result.deviceType === 'airport' ? osdSnapshot : prevState?.osdSnapshot || null,
       supplementLightState,
       liveCameraPosition,
+      ...this.regionMeta(),
     };
 
     // 更新设备状态缓存
@@ -1392,7 +1410,8 @@ class DeviceProcessor {
   getAllDeviceStates() {
     return Array.from(this.deviceStates.entries()).map(([id, state]) => ({
       deviceId: id,
-      ...state
+      ...state,
+      ...this.regionMeta(),
     }));
   }
 
@@ -1455,6 +1474,7 @@ class DeviceProcessor {
       statusText: state?.statusText || null,
       boundAirportSn: category === 'airport_drone' ? this.getAirportBoundDroneSn(deviceId) : null,
       boundRemoteSn: category === 'single' ? this.getRemoteBoundDroneSn(deviceId) : null,
+      ...this.regionMeta(),
     };
   }
 
@@ -1609,6 +1629,72 @@ class DeviceProcessor {
     return this.getDeviceRegistryList().find((r) => r.deviceId === sn);
   }
 
+  collectKnownDeviceIds() {
+    const ids = new Set([
+      ...Object.keys(this.deviceNames),
+      ...Object.keys(this.registryOverrides),
+      ...Object.keys(this.registryBindings),
+      ...Object.keys(this.registryRemoteBindings),
+      ...this.deviceStates.keys(),
+    ]);
+    return ids;
+  }
+
+  isDeviceInRegion(deviceId) {
+    const id = String(deviceId || '');
+    if (!id) return false;
+    if (this.registryOverrides[id]) return true;
+    if (this.registryBindings[id]) return true;
+    if (Object.values(this.registryBindings).includes(id)) return true;
+    if (this.registryRemoteBindings[id]) return true;
+    if (Object.values(this.registryRemoteBindings).includes(id)) return true;
+    if (this.deviceNames[id]) return true;
+    if (this.deviceStates.has(id)) return true;
+    return false;
+  }
+
+  freezeOnlineSnapshot() {
+    const mappings = {};
+    for (const deviceId of this.collectKnownDeviceIds()) {
+      const name = this.deviceNames[deviceId];
+      if (!name || name === deviceId) continue;
+      mappings[deviceId] = {
+        name,
+        category: this.inferDeviceCategory(deviceId),
+      };
+    }
+    const bindings = {};
+    for (const [airportSn, binding] of Object.entries(this.resolveAllAirportBindings())) {
+      if (binding?.droneSn) bindings[airportSn] = binding.droneSn;
+    }
+    const remoteBindings = {};
+    for (const [remoteSn, binding] of Object.entries(this.resolveAllRemoteBindings())) {
+      if (binding?.droneSn) remoteBindings[remoteSn] = binding.droneSn;
+    }
+    const payload = {
+      meta: {
+        frozen: true,
+        frozenAt: new Date().toISOString(),
+        regionId: this.regionId,
+        source: 'online-snapshot',
+      },
+      mappings,
+      bindings,
+      remoteBindings,
+      remoteBindingsCustom: [...this.customRemoteBindingKeys],
+    };
+    fs.mkdirSync(path.dirname(this.registryFile), { recursive: true });
+    const temp = this.registryFile + '.tmp';
+    fs.writeFileSync(temp, JSON.stringify(payload, null, 2), 'utf8');
+    fs.renameSync(temp, this.registryFile);
+    this.registryFrozen = true;
+    this.registryOverrides = { ...mappings };
+    this.registryBindings = { ...bindings };
+    this.registryRemoteBindings = { ...remoteBindings };
+    this.applyDeviceRegistryOverrides();
+    return payload;
+  }
+
   removeDeviceRegistryOverride(deviceId) {
     const sn = String(deviceId || '').trim();
     if (!sn || !this.registryOverrides[sn]) {
@@ -1627,3 +1713,5 @@ module.exports = DeviceProcessor;
 module.exports.MODE_CODE_TEXT = MODE_CODE_TEXT;
 module.exports.FLIGHT_MODES = FLIGHT_MODES;
 module.exports.NON_FLIGHT_MODES = NON_FLIGHT_MODES;
+module.exports.BUILTIN_AIRPORT_BINDINGS = BUILTIN_AIRPORT_BINDINGS;
+module.exports.BUILTIN_REMOTE_BINDINGS = BUILTIN_REMOTE_BINDINGS;

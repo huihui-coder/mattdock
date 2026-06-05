@@ -138,17 +138,32 @@ function App() {
   }, [])  // 只在组件挂载时执行一次
 
   // 处理WebSocket消息 - 直接覆盖，不累积
+  const visibleRegionIds = useMemo(() => {
+    const ids = user?.visibleRegionIds
+    if (Array.isArray(ids) && ids.length) return ids
+    return user?.regionId ? [user.regionId] : null
+  }, [user?.visibleRegionIds, user?.regionId])
+
+  const isInRegionScope = useCallback((regionId) => {
+    if (!visibleRegionIds?.length) return false
+    return !!regionId && visibleRegionIds.includes(regionId)
+  }, [visibleRegionIds])
+
   const handleMessage = useCallback((data) => {
     switch (data.type) {
       case 'connection':
         setMqttConnected(data.status === 'connected')
         break
       case 'device_data':
+        if (!isInRegionScope(data.processed?.regionId)) break
         // 直接更新设备数据，覆盖之前的
         setDevices(prev => {
           const index = prev.findIndex(d => d.deviceId === data.processed.deviceId)
+          const prevDevice = index >= 0 ? prev[index] : null
           const newDevice = {
             ...data.processed,
+            regionId: data.processed.regionId || prevDevice?.regionId,
+            regionName: data.processed.regionName || prevDevice?.regionName,
             raw: data.raw,
             topic: data.topic
           }
@@ -163,12 +178,14 @@ function App() {
         })
         break
       case 'alert':
+        if (!isInRegionScope(data.regionId)) break
         // 将告警放入缓冲区，等待定时更新
         setAlertsBuffer(prev => {
           const newAlert = {
             ...data.alert,
             deviceId: data.deviceId,
             deviceName: data.deviceName,
+            regionId: data.regionId,
             topic: data.topic,
             timestamp: data.timestamp,
             id: Date.now()
@@ -186,6 +203,7 @@ function App() {
         })
         break
       case 'health_alert':
+        if (!isInRegionScope(data.regionId)) break
         // 存储健康告警，按设备ID分组，限制数量
         setHealthAlerts(prev => {
           const existing = prev[data.deviceId] || []
@@ -204,7 +222,7 @@ function App() {
       default:
         break
     }
-  }, [])
+  }, [isInRegionScope])
 
   // 详情弹窗打开时，跟随 WebSocket 实时刷新同一设备
   useEffect(() => {
@@ -215,7 +233,7 @@ function App() {
     }
   }, [devices, selectedDevice?.deviceId, selectedDevice?.lastUpdate])
 
-  // 获取初始设备列表
+  // 获取初始设备列表（区域切换时清理跨区缓存）
   useEffect(() => {
     if (!token) return
 
@@ -238,6 +256,12 @@ function App() {
       return
     }
 
+    setDevices([])
+    setAlerts([])
+    setAlertsBuffer([])
+    setHealthAlerts({})
+    setSelectedDevice(null)
+
     apiFetch('/api/devices')
       .then(res => { if (res.status === 401) { setToken(''); setUser(null); localStorage.removeItem('auth_token'); localStorage.removeItem('auth_user') } return res.json() })
       .then(data => setDevices(data.devices || []))
@@ -247,7 +271,7 @@ function App() {
       .then(res => res.json())
       .then(data => setMqttConnected(data.mqtt?.connected || false))
       .catch(err => console.error('获取状态失败:', err))
-  }, [token, user])
+  }, [token, user?.regionId, user?.visibleRegionIds?.join('|'), user?.username])
 
   // 统计数据
   const airportDevices = devices.filter(d => d.deviceType === 'airport' || d.deviceType === 'remote')
@@ -357,6 +381,15 @@ function App() {
         {/* 监控内容（仅 monitor tab 显示） */}
         {activeTab === 'monitor' && hasPermission('monitor') && (
         <section aria-labelledby="monitor-heading">
+          <div className="mb-4 ui-card px-4 py-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-dji-ink">
+              数据范围：<span className="font-medium">{user.regionName}</span>
+              {(user.visibleRegionIds?.length || 0) > 1 && (
+                <span className="text-dji-muted">（含下属 {user.visibleRegionIds.filter((id) => id !== user.regionId).length} 个子区域）</span>
+              )}
+            </p>
+            <p className="text-xs text-dji-muted tabular-nums">仅显示本范围内的设备与实时告警</p>
+          </div>
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 id="monitor-heading" className="text-xl font-semibold text-slate-800 tracking-tight">实时监控</h2>
@@ -425,12 +458,12 @@ function App() {
 
         {/* 告警配置页 */}
         {activeTab === 'alert-config' && hasPermission('alert-config') && (
-          <AlertConfig devices={devices} />
+          <AlertConfig devices={devices} user={user} />
         )}
 
         {/* 飞行记录页 */}
         {activeTab === 'flight-records' && hasPermission('flight-records') && (
-          <FlightDashboard onFlightViewChange={setFlightView} />
+          <FlightDashboard onFlightViewChange={setFlightView} user={user} />
         )}
 
         {activeTab === 'devices' && hasPermission('device-config') && (

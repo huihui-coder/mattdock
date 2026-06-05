@@ -22,6 +22,8 @@ pencil-new.pen
 # haizhuDB 运行时数据（各环境独立：本地/服务器互不影响，勿提交、pull 不覆盖）
 haizhuDB/*.json
 !haizhuDB/*.example.json
+haizhuDB/regions/*/
+!haizhuDB/regions/connectivity.example.json
 haizhuDB/avatars/
 haizhuDB/sessions.json
 server/data/
