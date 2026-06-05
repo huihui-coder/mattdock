@@ -1,0 +1,9 @@
+[
+  {
+    "username": "admin",
+    "passwordHash": "",
+    "role": "admin",
+    "permissions": ["monitor", "alert-config", "flight-records", "image-studio", "ai-assistant"],
+    "createdAt": ""
+  }
+]
