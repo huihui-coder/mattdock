@@ -9,7 +9,9 @@
     "server:stable": "node server/index.js",
     "client": "cd client && npm run dev",
     "build": "cd client && npm run build",
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "init:db": "bash scripts/init-haizhuDB.sh",
+    "deploy:server": "bash scripts/server-deploy.sh"
   },
   "dependencies": {
     "cors": "^2.8.5",
