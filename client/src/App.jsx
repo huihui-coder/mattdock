@@ -9,10 +9,12 @@ import FlightDashboard from './components/FlightDashboard'
 import Login from './components/Login'
 import VirtualCockpit from './components/VirtualCockpit'
 import AccountManager from './components/AccountManager'
+import DeviceManager from './components/DeviceManager'
 import UserProfile from './components/UserProfile'
 import ImageStudio from './components/ImageStudio'
+import AuditLogViewer from './components/AuditLogViewer'
 import FloatingAssistant from './components/FloatingAssistant'
-import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users, Sparkles } from 'lucide-react'
+import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users, Sparkles, HardDrive, ScrollText } from 'lucide-react'
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
 function getStoredUser() {
@@ -274,8 +276,10 @@ function App() {
     hasPermission('monitor') && { key: 'monitor', label: '实时监控', icon: LayoutDashboard },
     hasPermission('alert-config') && { key: 'alert-config', label: '离巢告警配置', icon: Bell },
     hasPermission('flight-records') && { key: 'flight-records', label: '飞行记录', icon: History },
+    hasPermission('device-config') && { key: 'devices', label: '设备管理', icon: HardDrive },
     user?.role === 'admin' && { key: 'accounts', label: '账号管理', icon: Users },
     hasPermission('image-studio') && { key: 'image-studio', label: 'AI 生图', icon: Sparkles },
+    hasPermission('audit-log') && { key: 'audit-log', label: '操作日志', icon: ScrollText },
   ].filter(Boolean)
 
   useEffect(() => {
@@ -429,12 +433,20 @@ function App() {
           <FlightDashboard onFlightViewChange={setFlightView} />
         )}
 
+        {activeTab === 'devices' && hasPermission('device-config') && (
+          <DeviceManager />
+        )}
+
         {activeTab === 'accounts' && user?.role === 'admin' && (
           <AccountManager />
         )}
 
         {activeTab === 'image-studio' && hasPermission('image-studio') && (
           <ImageStudio />
+        )}
+
+        {activeTab === 'audit-log' && hasPermission('audit-log') && (
+          <AuditLogViewer />
         )}
 
         {/* 设备详情弹窗 */}

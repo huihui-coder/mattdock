@@ -82,7 +82,7 @@ function pickUploadedImage(req) {
   );
 }
 
-function registerImageRoutes(app, { requireImageStudio }) {
+function registerImageRoutes(app, { requireImageStudio, auditLog }) {
   app.get('/api/image/config', requireImageStudio, (_req, res) => {
     const model = getImageModel();
     const hasApiKey = !!getApiKey();
@@ -115,6 +115,19 @@ function registerImageRoutes(app, { requireImageStudio }) {
     }
     const size = sizeOverride || resolveImageSize(resolution, aspectRatio);
     const count = clampCount(n);
+    if (auditLog) {
+      auditLog(req, {
+        action: 'ai.image.generate',
+        detail: {
+          promptPreview: prompt.trim().slice(0, 80),
+          promptLength: prompt.trim().length,
+          n: count,
+          resolution,
+          aspectRatio,
+          model,
+        },
+      });
+    }
     try {
       const body = {
         model,
@@ -174,6 +187,21 @@ function registerImageRoutes(app, { requireImageStudio }) {
     const quality = req.body?.quality || DEFAULT_EDIT_QUALITY;
     const outputFormat = req.body?.output_format || 'png';
     const count = clampCount(req.body?.n);
+
+    if (auditLog) {
+      auditLog(req, {
+        action: 'ai.image.edit',
+        detail: {
+          promptPreview: prompt.slice(0, 80),
+          promptLength: prompt.length,
+          n: count,
+          resolution,
+          aspectRatio,
+          model,
+          fileKb: Math.round(uploadFile.buffer.length / 1024),
+        },
+      });
+    }
 
     try {
       console.log('[ImageAPI] 图生图 upstream', {

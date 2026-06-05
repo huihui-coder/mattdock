@@ -1,0 +1,15 @@
+{
+  "mappings": {
+    "1581F9HEC259S00C6YKP": {
+      "name": "巡特警二中队—M4T（2号机）",
+      "category": "single"
+    }
+  },
+  "bindings": {
+    "AHRXN9600A00R6": "1581F9F4X25AF00A00X0"
+  },
+  "remoteBindings": {
+    "9N9CN960016LZZ": "1581F9HEC259S00CFP71"
+  },
+  "remoteBindingsCustom": []
+}

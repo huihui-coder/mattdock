@@ -6,6 +6,7 @@ import {
   clearImageStudioTasks,
   buildStoredReferences,
 } from '../lib/image-studio-storage'
+import { logClientAudit } from '../lib/audit-client'
 
 function getToken() {
   return localStorage.getItem('auth_token') || ''
@@ -211,7 +212,7 @@ function TaskCard({
                         <button
                           type="button"
                           className="image-action-btn"
-                          onClick={() => downloadUrl(slot.url, task.id)}
+                          onClick={() => downloadUrl(slot.url, task)}
                         >
                           ⇩ 下载
                         </button>
@@ -238,13 +239,19 @@ function TaskCard({
   )
 }
 
-function downloadUrl(url, id) {
+function downloadUrl(url, task) {
+  const id = task?.id || 'unknown'
   const a = document.createElement('a')
   a.href = url
   a.download = `image-${id}-${Date.now()}.png`
   a.target = '_blank'
   a.rel = 'noopener'
   a.click()
+  logClientAudit('ai.image.download', {
+    taskId: id,
+    mode: task?.mode || null,
+    promptPreview: task?.prompt ? String(task.prompt).slice(0, 80) : null,
+  })
 }
 
 function ImagePreviewModal({ url, onClose }) {

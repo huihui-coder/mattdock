@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Plane, Navigation, Clock, RefreshCw, CheckCircle2, ListChecks, Loader2, CalendarRange, ChevronDown, Download, ChevronLeft, ChevronRight, FlaskConical, Trophy, ArrowUpDown, Inbox } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import { logClientAudit } from '../lib/audit-client'
 
 const pad = (n) => String(n).padStart(2, '0')
 const toDatetimeLocal = (d) => {
@@ -212,7 +213,9 @@ export default function FlightDashboard({ onFlightViewChange }) {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '飞行记录')
     const dateStr = new Date().toLocaleDateString('zh-CN').split('/').join('-')
-    XLSX.writeFile(wb, `飞行记录_${tabLabel}_${dateStr}.xlsx`)
+    const filename = `飞行记录_${tabLabel}_${dateStr}.xlsx`
+    XLSX.writeFile(wb, filename)
+    logClientAudit('flight.export.records', { tabLabel, recordCount: records.length, filename })
   }
 
   const exportRankingExcel = () => {
@@ -229,7 +232,9 @@ export default function FlightDashboard({ onFlightViewChange }) {
     XLSX.utils.book_append_sheet(wb, ws, '设备排名')
     const dateStr = new Date().toLocaleDateString('zh-CN').split('/').join('-')
     const tabLabel = { airport: '自动机场', single: '单兵无人机', virtual: '虚拟机场', all: '全部设备' }[activeTab]
-    XLSX.writeFile(wb, `设备排名_${tabLabel}_${dateStr}.xlsx`)
+    const filename = `设备排名_${tabLabel}_${dateStr}.xlsx`
+    XLSX.writeFile(wb, filename)
+    logClientAudit('flight.export.ranking', { tabLabel, rankCount: sorted.length, filename })
   }
 
   const sortedRanking = () => {

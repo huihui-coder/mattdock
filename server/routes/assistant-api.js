@@ -69,7 +69,7 @@ function buildAssistantMessages({ history, prompt, imageDataUrl, context }) {
   return messages;
 }
 
-function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enrichAssistantContext }) {
+function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enrichAssistantContext, auditLog }) {
   app.get('/api/assistant/config', requireAssistant, (_req, res) => {
     const hasApiKey = !!getApiKey();
     res.json({
@@ -108,6 +108,18 @@ function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enri
       imageDataUrl,
       context: enrichAssistantContext ? enrichAssistantContext(context || {}) : context || {},
     });
+
+    if (auditLog) {
+      auditLog(req, {
+        action: 'ai.assistant.chat',
+        detail: {
+          promptPreview: text.slice(0, 120),
+          promptLength: text.length,
+          hasImage: !!imageBase64,
+          historyCount: (history || []).length,
+        },
+      });
+    }
 
     try {
       const upstream = await fetchArkStreamResponse({

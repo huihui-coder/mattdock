@@ -5,6 +5,15 @@ const { getLiveCameraPosition, setLiveCameraPosition } = require('./lib/dock-liv
 
 // 飞行统计持久化路径
 const FLIGHT_HISTORY_FILE = path.join(__dirname, '../haizhuDB/flight-history.json');
+const DEVICE_REGISTRY_FILE = path.join(__dirname, '../haizhuDB/device-registry.json');
+
+const DEVICE_CATEGORY_LABELS = {
+  airport: '自动机场',
+  single: '单兵无人机',
+  airport_drone: '机库无人机',
+  remote: '遥控器',
+  unknown: '未分类',
+};
 
 /** DJI mode_code 飞行器状态（enum_int 官方枚举） */
 const MODE_CODE_TEXT = {
@@ -34,6 +43,51 @@ const MODE_CODE_TEXT = {
 const FLIGHT_MODES = new Set([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19]);
 const NON_FLIGHT_MODES = new Set([0, 1, 2, 13, 14]);
 const FLIGHT_STALE_TIMEOUT_MS = 90 * 1000;
+
+/** 机场 SN -> 绑定无人机 SN（与 DJI 司空平台一致） */
+const BUILTIN_AIRPORT_BINDINGS = {
+  AHRXN9600A00R6: '1581F9F4X25AF00A00X0',
+  '8UUXP3B00A10VD': '1581F9F4X25AF00A00TN',
+  '7CTDM1200B453R': '1581F6Q8D242S00C9DS2',
+  NEST44202512U014: '1581F9HEC259S00CVJW1',
+  AHRXNAH00A01C6: '1581F9F4X25AF00A00TB',
+  AHRXNAH00A01CE: '1581F9F4X25AF00A00ZZ',
+  'NEST15202602U001-2': '1581F9HEC259S00CKTBC',
+  AHRXNAH00A01DM: '1581F9F4X25AF00A0146',
+  AHRXNAH00A019D: '1581F9F4X25AF00A00SW',
+  AHRXNAH00A018Z: '1581F9F4X25AF00A00ZQ',
+  NEST20202412U002: '1581F5FJD239G00D0JNT',
+  AHRXNAH00A01DF: '1581F9F4X258L00A00R5',
+  'NEST15202602U001-1': '1581F9HEC258T00CSGJJ',
+  AHRXNAH00A019F: '1581F9F4X25AF00A011W',
+  NEST44202602U002: '1581F9HEC258V00CGDVG',
+  AHRXNAH00A0192: '1581F9F4X25AF00A00ZG',
+};
+
+/** 遥控器 SN -> 绑定单兵无人机 SN */
+const BUILTIN_REMOTE_BINDINGS = {
+  '9N9CN960016LZZ': '1581F9HEC259S00CFP71',
+};
+
+function inferDockModel(airportSn, name = '') {
+  const n = String(name);
+  if (n.includes('Dock3') || String(airportSn).startsWith('AHRX')) return 'DJI Dock3';
+  if (n.includes('Dock2') || String(airportSn).startsWith('7CTD')) return 'DJI Dock2';
+  if (String(airportSn).startsWith('NEST4420')) return 'XNest 4Plus';
+  if (String(airportSn).startsWith('NEST1520')) return 'XNest 4DPlus';
+  if (String(airportSn).startsWith('NEST2020')) return 'XNest 3E';
+  return '自动机场';
+}
+
+function inferDroneModel(name = '', sn = '') {
+  const n = String(name);
+  if (n.includes('M3TD') || n.includes('M3T')) return 'Matrice 3TD';
+  if (n.includes('M4TD')) return 'Matrice 4TD';
+  if (n.includes('M4T')) return 'Matrice 4T';
+  if (n.includes('M400')) return 'Matrice 400';
+  if (String(sn).startsWith('1581F5')) return 'Mavic 3T';
+  return '无人机';
+}
 
 function resolveOperationalLink(mode, session) {
   const modeNum = mode !== undefined && mode !== null ? Number(mode) : undefined;
@@ -109,8 +163,15 @@ class DeviceProcessor {
     this.deviceStates = new Map();
     /** 单兵遥控器 SN -> 绑定无人机 SN（由 OSD gateway / sub_device 自动学习） */
     this.remoteDroneBindings = new Map();
+    /** 用户自定义映射（device-registry.json，优先级最高） */
+    this.registryOverrides = {};
+    this.registryBindings = {};
+    this.registryRemoteBindings = {};
+    this.customRemoteBindingKeys = new Set();
+    this.deviceCategoryOverrides = {};
+
     // 设备名称映射 - 海珠机场设备
-    this.deviceNames = {
+    const builtinDeviceNames = {
       '8UUXP3B00A10VD': '南洲-Dock3-M4TD',
       '7CTDM1200B453R': '华洲-Dock2-M3TD',
       'NEST20202412U002': '江南中-充电-M3T',
@@ -128,6 +189,21 @@ class DeviceProcessor {
       'AHRXNAH00A018Z': '分局-Dock3-M4TD',
       'AHRXN9600A00R6': '市局（凤阳）-Dock3-M4TD',
       '1581F9F4X25AF00A00X0': '市局（凤阳）-M4TD-无人机',
+      '1581F9F4X25AF00A00TN': '南洲充电机场-M4TD无人机',
+      '1581F6Q8D242S00C9DS2': '华洲充电机场-M3TD无人机',
+      '1581F9HEC259S00CVJW1': '区府换电机场-M4T无人机',
+      '1581F9F4X25AF00A00TB': '凤阳充电机场-M4TD无人机',
+      '1581F9F4X25AF00A00ZZ': '金碧二中-无人机',
+      '1581F9HEC259S00CKTBC': '会展双机2号-无人机',
+      '1581F9F4X25AF00A0146': '新看守充电机场-M4TD无人机',
+      '1581F9F4X25AF00A00SW': '三中充电机场-M4TD无人机',
+      '1581F9F4X25AF00A00ZQ': '分局充电机场-M4TD无人机',
+      '1581F5FJD239G00D0JNT': '江南中-充电-M3T-无人机',
+      '1581F9F4X258L00A00R5': '华洲充电机场-M4TD无人机',
+      '1581F9HEC258T00CSGJJ': '会展双机1号-无人机',
+      '1581F9F4X25AF00A011W': '官洲充电机场-M4TD无人机',
+      '1581F9HEC258V00CGDVG': '艺术博物馆换电机场-M4T无人机',
+      '1581F9F4X25AF00A00ZG': '中大充电机场-M4TD无人机',
       '1581F9HEC259S00CFP71': '昌岗派出所-M4T',
       '1581F9HEC259S00CTR1C': '南华西派出所-M4T',
       '1581F9HEC259S00CSJ05': '南石头派出所-M4T',
@@ -158,6 +234,8 @@ class DeviceProcessor {
       '1581F9HEC259S00CLZ33': '禁毒支队-M4T',
       '9N9CN960016LZZ': '昌岗派出所-M4T-遥控器',
     };
+    this.builtinDeviceNames = builtinDeviceNames;
+    this.deviceNames = { ...builtinDeviceNames };
 
     // 从 process.env 动态合并 DEVICE_* 配置（优先级高于硬编码）
     Object.keys(process.env).forEach(key => {
@@ -166,6 +244,10 @@ class DeviceProcessor {
         this.deviceNames[deviceId] = process.env[key];
       }
     });
+
+    this.loadDeviceRegistryFromFile();
+    this.applyDeviceRegistryOverrides();
+    this.repairFlightHistory();
   }
 
   loadFlightHistory() {
@@ -199,13 +281,248 @@ class DeviceProcessor {
     if (merged.length !== before) {
       this.logFlight(`[飞行统计] 从磁盘同步: ${before} -> ${merged.length} 条记录`);
     }
-    return merged;
+    this.repairFlightHistory();
+    return this.flightHistory;
+  }
+
+  loadDeviceRegistryFromFile() {
+    try {
+      if (!fs.existsSync(DEVICE_REGISTRY_FILE)) return;
+      const raw = JSON.parse(fs.readFileSync(DEVICE_REGISTRY_FILE, 'utf8'));
+      this.registryOverrides = raw?.mappings && typeof raw.mappings === 'object'
+        ? { ...raw.mappings }
+        : {};
+      this.registryBindings = raw?.bindings && typeof raw.bindings === 'object'
+        ? { ...raw.bindings }
+        : {};
+      this.registryRemoteBindings = raw?.remoteBindings && typeof raw.remoteBindings === 'object'
+        ? { ...raw.remoteBindings }
+        : {};
+      this.customRemoteBindingKeys = new Set(
+        Array.isArray(raw?.remoteBindingsCustom) ? raw.remoteBindingsCustom : []
+      );
+    } catch (e) {
+      console.error('[设备管理] 加载映射文件失败:', e.message);
+      this.registryOverrides = {};
+      this.registryBindings = {};
+      this.registryRemoteBindings = {};
+      this.customRemoteBindingKeys = new Set();
+    }
+  }
+
+  saveDeviceRegistryToFile() {
+    try {
+      fs.mkdirSync(path.dirname(DEVICE_REGISTRY_FILE), { recursive: true });
+      const temp = DEVICE_REGISTRY_FILE + '.tmp';
+      fs.writeFileSync(
+        temp,
+        JSON.stringify({
+          mappings: this.registryOverrides,
+          bindings: this.registryBindings,
+          remoteBindings: this.registryRemoteBindings,
+          remoteBindingsCustom: [...this.customRemoteBindingKeys],
+        }, null, 2)
+      );
+      fs.renameSync(temp, DEVICE_REGISTRY_FILE);
+    } catch (e) {
+      console.error('[设备管理] 保存映射文件失败:', e.message);
+      throw e;
+    }
+  }
+
+  applyDeviceRegistryOverrides() {
+    this.deviceNames = { ...this.builtinDeviceNames };
+    Object.keys(process.env).forEach((key) => {
+      if (key.startsWith('DEVICE_')) {
+        this.deviceNames[key.slice(7)] = process.env[key];
+      }
+    });
+    this.deviceCategoryOverrides = {};
+    for (const [deviceId, entry] of Object.entries(this.registryOverrides)) {
+      if (entry?.name) this.deviceNames[deviceId] = entry.name;
+      if (entry?.category) this.deviceCategoryOverrides[deviceId] = entry.category;
+    }
+  }
+
+  isAirportSn(deviceId) {
+    const sn = String(deviceId || '');
+    if (sn.startsWith('1581F') || sn.startsWith('9N9') || sn.startsWith('VIRTUAL')) return false;
+    return !!BUILTIN_AIRPORT_BINDINGS[sn]
+      || !!this.registryBindings[sn]
+      || !!this.builtinDeviceNames[sn]
+      || !!this.deviceNames[sn];
+  }
+
+  /** 合并内置 / 自定义 / 在线学习的机场绑定 */
+  resolveAllAirportBindings() {
+    const merged = { ...BUILTIN_AIRPORT_BINDINGS };
+    for (const [airportSn, droneSn] of Object.entries(this.registryBindings)) {
+      if (droneSn) merged[airportSn] = droneSn;
+    }
+    for (const [airportSn, state] of this.deviceStates.entries()) {
+      if (!this.isAirportSn(airportSn)) continue;
+      const learned = state.boundDroneSn || state.metrics?.boundDrone?.sn;
+      if (learned) merged[airportSn] = learned;
+    }
+    const result = {};
+    for (const [airportSn, droneSn] of Object.entries(merged)) {
+      let source = 'builtin';
+      if (this.registryBindings[airportSn]) source = 'custom';
+      else if (
+        this.deviceStates.get(airportSn)?.boundDroneSn === droneSn
+        && BUILTIN_AIRPORT_BINDINGS[airportSn] !== droneSn
+      ) {
+        source = 'learned';
+      }
+      result[airportSn] = { droneSn, source };
+    }
+    return result;
+  }
+
+  getAirportBoundDroneSn(droneSn) {
+    if (!droneSn) return null;
+    for (const [airportSn, binding] of Object.entries(this.resolveAllAirportBindings())) {
+      if (binding.droneSn === droneSn) return airportSn;
+    }
+    return null;
+  }
+
+  isAirportBoundDrone(deviceId) {
+    return !!this.getAirportBoundDroneSn(deviceId);
+  }
+
+  isRemoteSn(deviceId) {
+    return String(deviceId || '').startsWith('9N9');
+  }
+
+  /** 合并内置 / 自定义 / OSD 学习的遥控器绑定 */
+  resolveAllRemoteBindings() {
+    const merged = { ...BUILTIN_REMOTE_BINDINGS };
+    for (const [remoteSn, droneSn] of Object.entries(this.registryRemoteBindings)) {
+      if (droneSn) merged[remoteSn] = droneSn;
+    }
+    for (const [remoteSn, droneSn] of this.remoteDroneBindings.entries()) {
+      if (droneSn && this.isMappedSingleDrone(droneSn)) {
+        merged[remoteSn] = droneSn;
+      }
+    }
+    for (const [droneId, state] of this.deviceStates.entries()) {
+      if (!this.isMappedSingleDrone(droneId)) continue;
+      const gw = state.gateway;
+      if (gw && this.isRemoteSn(gw)) merged[gw] = droneId;
+    }
+    const result = {};
+    for (const [remoteSn, droneSn] of Object.entries(merged)) {
+      let source = 'builtin';
+      if (this.customRemoteBindingKeys.has(remoteSn)) source = 'custom';
+      else if (this.registryRemoteBindings[remoteSn] && BUILTIN_REMOTE_BINDINGS[remoteSn] !== droneSn) {
+        source = 'learned';
+      } else if (
+        this.remoteDroneBindings.get(remoteSn) === droneSn
+        && !this.registryRemoteBindings[remoteSn]
+        && BUILTIN_REMOTE_BINDINGS[remoteSn] !== droneSn
+      ) {
+        source = 'learned';
+      }
+      result[remoteSn] = { droneSn, source };
+    }
+    return result;
+  }
+
+  getRemoteBoundDroneSn(droneSn) {
+    if (!droneSn) return null;
+    for (const [remoteSn, binding] of Object.entries(this.resolveAllRemoteBindings())) {
+      if (binding.droneSn === droneSn) return remoteSn;
+    }
+    return null;
+  }
+
+  /** OSD 学习到单兵-遥控器绑定后写入 device-registry.json */
+  autoPersistRemoteBinding(remoteSn, droneSn) {
+    if (!this.isRemoteSn(remoteSn) || !String(droneSn).startsWith('1581F')) return;
+    if (this.inferDeviceCategory(droneSn) !== 'single') return;
+    if (BUILTIN_REMOTE_BINDINGS[remoteSn] === droneSn) return;
+    if (this.customRemoteBindingKeys.has(remoteSn)) return;
+    if (this.registryRemoteBindings[remoteSn] === droneSn) return;
+    this.registryRemoteBindings[remoteSn] = droneSn;
+    try {
+      this.saveDeviceRegistryToFile();
+      console.log(`[设备管理] OSD 学习单兵绑定: ${remoteSn} -> ${droneSn}`);
+    } catch (e) {
+      console.warn('[设备管理] 保存单兵绑定失败:', e.message);
+    }
+  }
+
+  inferDeviceCategory(deviceId) {
+    if (this.deviceCategoryOverrides[deviceId]) return this.deviceCategoryOverrides[deviceId];
+    if (this.isAirportBoundDrone(deviceId)) return 'airport_drone';
+    if (String(deviceId).startsWith('9N9')) return 'remote';
+    if (String(deviceId).startsWith('1581F')) {
+      return this.deviceNames[deviceId] ? 'single' : 'airport_drone';
+    }
+    if (this.deviceNames[deviceId]) return 'airport';
+    return 'unknown';
+  }
+
+  resolveDeviceNameSource(deviceId) {
+    if (this.registryOverrides[deviceId]) return 'custom';
+    const envKey = `DEVICE_${deviceId}`;
+    if (process.env[envKey]) return 'env';
+    if (this.builtinDeviceNames[deviceId]) return 'builtin';
+    return 'unmapped';
+  }
+
+  /** 是否在 deviceNames 中单兵直映射（非机场机库无人机） */
+  isMappedSingleDrone(deviceId) {
+    return this.inferDeviceCategory(deviceId) === 'single';
+  }
+
+  /** 飞行统计用设备类型：airport 页=机库无人机(drone)，single 页=单兵 */
+  resolveFlightDeviceType(deviceId, gateway = null) {
+    if (String(deviceId).startsWith('VIRTUAL')) return 'virtual';
+    if (this.isMappedSingleDrone(deviceId)) return 'single';
+    if (String(deviceId).startsWith('1581F')) return 'drone';
+    return 'airport';
+  }
+
+  /** 输出前修正历史记录的展示名与分类 */
+  enrichFlightRecord(record) {
+    if (!record?.deviceId) return record;
+    const state = this.deviceStates.get(record.deviceId);
+    const gateway = state?.gateway || null;
+    const deviceType = this.resolveFlightDeviceType(record.deviceId, gateway);
+    const deviceName = this.getFlightDisplayName(record.deviceId, gateway);
+    const airportSn = this.getAirportBoundDroneSn(record.deviceId)
+      || (gateway && this.isAirportSn(gateway) ? gateway : null);
+    return {
+      ...record,
+      deviceType,
+      deviceName,
+      airportSn: airportSn || record.airportSn || null,
+    };
+  }
+
+  /** 启动时修正已落盘记录的单兵误分类与 SN 展示名 */
+  repairFlightHistory() {
+    let changed = false;
+    this.flightHistory = this.flightHistory.map((record) => {
+      const next = this.enrichFlightRecord(record);
+      if (
+        next.deviceType !== record.deviceType ||
+        next.deviceName !== record.deviceName
+      ) {
+        changed = true;
+      }
+      return next;
+    });
+    if (changed) {
+      this.saveFlightHistory();
+      this.logFlight('[飞行统计] 已修正历史记录中的单兵分类/设备名称');
+    }
   }
 
   saveFlightHistory() {
     try {
-      this.mergeFlightHistoryWithDisk();
-
       // 原子写入：先写临时文件再重命名
       fs.mkdirSync(path.dirname(FLIGHT_HISTORY_FILE), { recursive: true });
       const tempFile = FLIGHT_HISTORY_FILE + '.tmp';
@@ -281,7 +598,7 @@ class DeviceProcessor {
       status: 'completed'
     };
     if (finalRecord.totalDuration > 5 || finalRecord.totalMileage > 2) {
-      this.flightHistory.push(finalRecord);
+      this.flightHistory.push(this.enrichFlightRecord(finalRecord));
       if (this.flightHistory.length > 1000) this.flightHistory.shift();
       this.saveFlightHistory();
       this.logFlight(`[飞行统计] 已写入历史记录 ${session.deviceName || deviceId} reason=${reason} mileage=${finalRecord.totalMileage}m duration=${finalRecord.totalDuration}s`);
@@ -320,6 +637,18 @@ class DeviceProcessor {
     return deviceId;
   }
 
+  /** 飞行记录/排名展示名：机库无人机显示绑定机场名称 */
+  getFlightDisplayName(deviceId, gateway = null) {
+    const airportSn = this.getAirportBoundDroneSn(deviceId);
+    if (airportSn) {
+      return this.normalizeFlightDisplayName(this.getDeviceName(airportSn));
+    }
+    if (gateway && this.isAirportSn(gateway)) {
+      return this.normalizeFlightDisplayName(this.getDeviceName(gateway));
+    }
+    return this.normalizeFlightDisplayName(this.getDeviceName(deviceId, gateway));
+  }
+
   /** 从 OSD 载荷解析绑定的无人机 SN */
   extractBoundDroneSn(payload) {
     const sn =
@@ -333,7 +662,9 @@ class DeviceProcessor {
   /** 单兵机上报的 gateway 为遥控器 SN 时记录绑定关系 */
   rememberSingleDroneRemoteLink(droneId, gateway) {
     if (!droneId?.startsWith('1581F') || !gateway || !String(gateway).startsWith('9N9')) return;
-    this.remoteDroneBindings.set(String(gateway), droneId);
+    const remoteId = String(gateway);
+    this.remoteDroneBindings.set(remoteId, droneId);
+    this.autoPersistRemoteBinding(remoteId, droneId);
   }
 
   /**
@@ -343,6 +674,7 @@ class DeviceProcessor {
     const fromPayload = this.extractBoundDroneSn(payload);
     if (fromPayload) {
       this.remoteDroneBindings.set(remoteId, fromPayload);
+      this.autoPersistRemoteBinding(remoteId, fromPayload);
       return fromPayload;
     }
     const cached = this.remoteDroneBindings.get(remoteId) || prevState?.boundDroneSn;
@@ -412,17 +744,7 @@ class DeviceProcessor {
     } else if (isRemoteController) {
       result.deviceType = 'remote';
     } else if (isDrone) {
-      const hasDirectName = !!this.deviceNames[deviceId];
-      const isAirportStylePayload =
-        payload.drone_in_dock !== undefined ||
-        (payload.dock_batteries && Array.isArray(payload.dock_batteries));
-      const gatewayIsAirport =
-        gateway &&
-        !!this.deviceNames[gateway] &&
-        !String(gateway).startsWith('1581F') &&
-        !String(gateway).startsWith('9N9');
-      result.deviceType =
-        hasDirectName && (!gatewayIsAirport || !isAirportStylePayload) ? 'single' : 'drone';
+      result.deviceType = this.resolveFlightDeviceType(deviceId, gateway);
       this.rememberSingleDroneRemoteLink(deviceId, gateway);
     } else {
       result.deviceType = 'airport';
@@ -452,7 +774,7 @@ class DeviceProcessor {
         session = {
           id: `${deviceId}_${Date.now()}`,
           deviceId,
-          deviceName: this.normalizeFlightDisplayName(result.deviceName || deviceId),
+          deviceName: this.getFlightDisplayName(deviceId, gateway) || deviceId,
           startTime: new Date().toISOString(),
           startLocation: result.location ? { ...result.location } : null,
           lastLocation: result.location ? { ...result.location } : null,
@@ -463,7 +785,7 @@ class DeviceProcessor {
           lastUpdateTime: new Date().toISOString(),
           mileage: 0,
           duration: 0,
-          deviceType: result.deviceType
+          deviceType: this.resolveFlightDeviceType(deviceId, gateway)
         };
         this.activeSessions.set(deviceId, session);
       } 
@@ -522,7 +844,7 @@ class DeviceProcessor {
       const droneTfd = rawTfd != null ? Number(rawTfd) : null;
       const rawTft = payload.sub_device.total_flight_time;
       const droneTft = rawTft != null ? Number(rawTft) : null;
-      const droneName = this.normalizeFlightDisplayName(this.getDeviceName(droneSn, deviceId));
+      const droneName = this.getFlightDisplayName(droneSn, deviceId);
       const dronePrev = this.deviceStates.get(droneSn);
       const droneLastMode = dronePrev ? dronePrev.raw_mode_code : undefined;
       let droneSession = this.activeSessions.get(droneSn);
@@ -1116,7 +1438,190 @@ class DeviceProcessor {
   updateThresholds(newThresholds) {
     this.thresholds = { ...this.thresholds, ...newThresholds };
   }
+
+  buildRegistryRow(deviceId) {
+    const state = this.deviceStates.get(deviceId);
+    const category = this.inferDeviceCategory(deviceId);
+    const name = this.deviceNames[deviceId] || deviceId;
+    return {
+      deviceId,
+      name,
+      category,
+      categoryLabel: DEVICE_CATEGORY_LABELS[category] || category,
+      source: this.resolveDeviceNameSource(deviceId),
+      online: !!state,
+      lastSeen: state?.lastSeen || state?.lastUpdate || null,
+      gateway: state?.gateway || null,
+      statusText: state?.statusText || null,
+      boundAirportSn: category === 'airport_drone' ? this.getAirportBoundDroneSn(deviceId) : null,
+      boundRemoteSn: category === 'single' ? this.getRemoteBoundDroneSn(deviceId) : null,
+    };
+  }
+
+  getDeviceRegistryList() {
+    const ids = new Set([
+      ...Object.keys(this.deviceNames),
+      ...Object.keys(this.registryOverrides),
+      ...this.deviceStates.keys(),
+    ]);
+    const categoryOrder = ['airport', 'airport_drone', 'single', 'remote', 'unknown'];
+    return Array.from(ids)
+      .map((deviceId) => this.buildRegistryRow(deviceId))
+      .sort((a, b) => {
+        const ca = categoryOrder.indexOf(a.category);
+        const cb = categoryOrder.indexOf(b.category);
+        if (ca !== cb) return ca - cb;
+        return (a.name || a.deviceId).localeCompare(b.name || b.deviceId, 'zh-CN');
+      });
+  }
+
+  getDeviceRegistryGrouped() {
+    const bindings = this.resolveAllAirportBindings();
+    const boundDroneSns = new Set();
+    const airportSns = new Set();
+
+    const pairs = Object.entries(bindings).map(([airportSn, binding]) => {
+      airportSns.add(airportSn);
+      if (binding.droneSn) boundDroneSns.add(binding.droneSn);
+      const airport = this.buildRegistryRow(airportSn);
+      const drone = binding.droneSn ? this.buildRegistryRow(binding.droneSn) : null;
+      return {
+        airportSn,
+        droneSn: binding.droneSn || null,
+        bindingSource: binding.source,
+        dockModel: inferDockModel(airportSn, airport.name),
+        droneModel: drone ? inferDroneModel(drone.name, binding.droneSn) : null,
+        airport,
+        drone,
+      };
+    }).sort((a, b) => (a.airport.name || a.airportSn).localeCompare(b.airport.name || b.airportSn, 'zh-CN'));
+
+    const remoteBindings = this.resolveAllRemoteBindings();
+    const boundSingleSns = new Set();
+    const remoteSns = new Set();
+
+    const singlePairs = Object.entries(remoteBindings).map(([remoteSn, binding]) => {
+      remoteSns.add(remoteSn);
+      if (binding.droneSn) boundSingleSns.add(binding.droneSn);
+      const remote = this.buildRegistryRow(remoteSn);
+      const drone = binding.droneSn ? this.buildRegistryRow(binding.droneSn) : null;
+      return {
+        remoteSn,
+        droneSn: binding.droneSn || null,
+        bindingSource: binding.source,
+        remoteModel: 'DJI 遥控器',
+        droneModel: drone ? inferDroneModel(drone.name, binding.droneSn) : null,
+        remote,
+        drone,
+      };
+    }).sort((a, b) => (a.remote.name || a.remoteSn).localeCompare(b.remote.name || b.remoteSn, 'zh-CN'));
+
+    const all = this.getDeviceRegistryList();
+    const unboundSingles = all.filter(
+      (d) => d.category === 'single' && !boundSingleSns.has(d.deviceId)
+    );
+    const unboundRemotes = all.filter(
+      (d) => d.category === 'remote' && !remoteSns.has(d.deviceId)
+    );
+    const unboundDrones = all.filter(
+      (d) => d.category === 'airport_drone' && !boundDroneSns.has(d.deviceId)
+    );
+    const orphanAirports = all.filter(
+      (d) => d.category === 'airport' && !airportSns.has(d.deviceId)
+    );
+
+    return { pairs, singlePairs, unboundSingles, unboundRemotes, unboundDrones, orphanAirports };
+  }
+
+  upsertRemoteBinding(remoteSn, droneSn, { droneName } = {}) {
+    const remote = String(remoteSn || '').trim();
+    const drone = String(droneSn || '').trim();
+    if (!remote) throw new Error('遥控器 SN 不能为空');
+    if (!this.isRemoteSn(remote) && !this.deviceNames[remote]) {
+      throw new Error('请先为遥控器配置名称映射');
+    }
+    if (drone) {
+      this.registryRemoteBindings[remote] = drone;
+      this.customRemoteBindingKeys.add(remote);
+      this.remoteDroneBindings.set(remote, drone);
+      if (droneName) {
+        this.registryOverrides[drone] = {
+          ...(this.registryOverrides[drone] || {}),
+          name: String(droneName).trim(),
+          category: 'single',
+        };
+      } else if (!this.registryOverrides[drone]) {
+        this.registryOverrides[drone] = { category: 'single' };
+      } else {
+        this.registryOverrides[drone].category = 'single';
+      }
+    } else {
+      delete this.registryRemoteBindings[remote];
+      this.customRemoteBindingKeys.delete(remote);
+      this.remoteDroneBindings.delete(remote);
+    }
+    this.applyDeviceRegistryOverrides();
+    this.saveDeviceRegistryToFile();
+    this.repairFlightHistory();
+    return this.getDeviceRegistryGrouped().singlePairs.find((p) => p.remoteSn === remote);
+  }
+
+  upsertAirportBinding(airportSn, droneSn, { droneName } = {}) {
+    const airport = String(airportSn || '').trim();
+    const drone = String(droneSn || '').trim();
+    if (!airport) throw new Error('机场 SN 不能为空');
+    if (!this.isAirportSn(airport) && !this.deviceNames[airport]) {
+      throw new Error('请先为机场配置名称映射');
+    }
+    if (drone) {
+      this.registryBindings[airport] = drone;
+      if (droneName) {
+        this.registryOverrides[drone] = {
+          ...(this.registryOverrides[drone] || {}),
+          name: String(droneName).trim(),
+          category: 'airport_drone',
+        };
+      } else if (!this.registryOverrides[drone]) {
+        this.registryOverrides[drone] = { category: 'airport_drone' };
+      } else {
+        this.registryOverrides[drone].category = 'airport_drone';
+      }
+    } else {
+      delete this.registryBindings[airport];
+    }
+    this.applyDeviceRegistryOverrides();
+    this.saveDeviceRegistryToFile();
+    this.repairFlightHistory();
+    return this.getDeviceRegistryGrouped().pairs.find((p) => p.airportSn === airport);
+  }
+
+  upsertDeviceRegistry(deviceId, { name, category }) {
+    const sn = String(deviceId || '').trim();
+    const displayName = String(name || '').trim();
+    if (!sn) throw new Error('设备 SN 不能为空');
+    if (!displayName) throw new Error('显示名称不能为空');
+    const allowed = ['airport', 'single', 'airport_drone', 'remote'];
+    if (!allowed.includes(category)) throw new Error('无效的设备类型');
+    this.registryOverrides[sn] = { name: displayName, category };
+    this.applyDeviceRegistryOverrides();
+    this.saveDeviceRegistryToFile();
+    this.repairFlightHistory();
+    return this.getDeviceRegistryList().find((r) => r.deviceId === sn);
+  }
+
+  removeDeviceRegistryOverride(deviceId) {
+    const sn = String(deviceId || '').trim();
+    if (!sn || !this.registryOverrides[sn]) {
+      throw new Error('该设备没有可删除的自定义映射');
+    }
+    delete this.registryOverrides[sn];
+    this.applyDeviceRegistryOverrides();
+    this.saveDeviceRegistryToFile();
+    this.repairFlightHistory();
+  }
 }
+
+DeviceProcessor.DEVICE_CATEGORY_LABELS = DEVICE_CATEGORY_LABELS;
 
 module.exports = DeviceProcessor;
 module.exports.MODE_CODE_TEXT = MODE_CODE_TEXT;

@@ -28,6 +28,7 @@ const {
 } = require('./lib/dock-service');
 const { getJobSecret } = require('./lib/lost-alert-mqtt-bridge');
 const { getLiveCameraPosition } = require('./lib/dock-live-state-store');
+const { appendAuditEntry, queryAuditLogs, getAuditStats } = require('./lib/audit-log-store');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -41,7 +42,7 @@ const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const USER_FILE = path.join(__dirname, '../haizhuDB/users.json');
 const SESSION_FILE = path.join(__dirname, '../haizhuDB/sessions.json');
 const AVATAR_DIR = path.join(__dirname, '../haizhuDB/avatars');
-const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records', 'image-studio', 'ai-assistant'];
+const ALL_PERMISSIONS = ['monitor', 'alert-config', 'flight-records', 'device-config', 'image-studio', 'ai-assistant', 'audit-log'];
 const sessions = new Map();
 
 function loadSessions() {
@@ -207,6 +208,46 @@ function requirePermission(permission) {
   };
 }
 
+function getClientIp(req) {
+  const xf = req.headers['x-forwarded-for'];
+  if (xf) return String(xf).split(',')[0].trim();
+  return req.socket?.remoteAddress || null;
+}
+
+function auditLog(req, { action, status = 'success', detail, resource, actor } = {}) {
+  const user = actor || req?.user;
+  appendAuditEntry({
+    action,
+    status,
+    actor: user
+      ? { username: user.username, role: user.role }
+      : { username: detail?.username || '(未知)', role: null },
+    resource: resource || null,
+    detail: detail || null,
+    ip: req ? getClientIp(req) : null,
+  });
+}
+
+const CLIENT_AUDIT_ACTIONS = new Set([
+  'flight.export.records',
+  'flight.export.ranking',
+  'ai.image.generate',
+  'ai.image.edit',
+  'ai.image.download',
+]);
+
+const AUDIT_ACTION_LABELS = {
+  'auth.login': '登录',
+  'auth.login_failed': '登录失败',
+  'auth.logout': '退出登录',
+  'ai.assistant.chat': 'AI 飞行助手对话',
+  'ai.image.generate': 'AI 文生图',
+  'ai.image.edit': 'AI 图生图',
+  'ai.image.download': 'AI 生图下载',
+  'flight.export.records': '导出飞行记录',
+  'flight.export.ranking': '导出设备排名',
+};
+
 // 中间件
 app.use(cors());
 app.use(express.json({ limit: '25mb' }));
@@ -297,8 +338,14 @@ app.post('/api/login', (req, res) => {
     const user = readUsers().find((u) => u.username === username);
     if (user && verifyPassword(password, user.passwordHash)) {
       const token = signToken(user);
+      auditLog(req, { action: 'auth.login', actor: sanitizeUser(user) });
       return res.json({ token, user: sanitizeUser(user), expiresIn: TOKEN_TTL_MS });
     }
+    auditLog(req, {
+      action: 'auth.login_failed',
+      status: 'denied',
+      detail: { username: username || '(空)' },
+    });
     return res.status(401).json({ error: '用户名或密码错误' });
   } catch (e) {
     console.error('[Auth] 登录失败:', e.message);
@@ -307,6 +354,7 @@ app.post('/api/login', (req, res) => {
 });
 
 app.post('/api/logout', requireLogin, (req, res) => {
+  auditLog(req, { action: 'auth.logout' });
   sessions.delete(req.token);
   persistSessions();
   res.json({ success: true });
@@ -316,6 +364,33 @@ app.get('/api/me', requireLogin, (req, res) => {
   const user = readUsers().find(u => u.username === req.user.username);
   if (user) updateSessionUser(req.token, user);
   res.json({ user: sanitizeUser(user || req.user) });
+});
+
+app.get('/api/audit-logs', requirePermission('audit-log'), (req, res) => {
+  const { startTime, endTime, action, category, username, limit, offset } = req.query || {};
+  const result = queryAuditLogs({
+    startTime,
+    endTime,
+    action,
+    category,
+    username,
+    limit: limit ? Number(limit) : 50,
+    offset: offset ? Number(offset) : 0,
+  });
+  res.json({
+    ...result,
+    actionLabels: AUDIT_ACTION_LABELS,
+    stats: getAuditStats({ hours: 24 }),
+  });
+});
+
+app.post('/api/audit/client-event', requireLogin, (req, res) => {
+  const { action, detail } = req.body || {};
+  if (!CLIENT_AUDIT_ACTIONS.has(action)) {
+    return res.status(400).json({ error: '无效的操作类型' });
+  }
+  auditLog(req, { action, detail: detail || null });
+  res.json({ ok: true });
 });
 
 app.get('/api/users', requireAdmin, (req, res) => {
@@ -407,6 +482,101 @@ app.delete('/api/users/:username', requireAdmin, (req, res) => {
   } catch {}
 
   res.json({ success: true });
+});
+
+// 设备名称与分类管理（管理员）
+app.get('/api/device-registry', requirePermission('device-config'), (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const { category, q } = req.query;
+  const keyword = q ? String(q).trim().toLowerCase() : '';
+  const grouped = processor.getDeviceRegistryGrouped();
+  const matchKeyword = (row) => !keyword || [
+    row?.deviceId,
+    row?.name,
+    row?.statusText,
+  ].some((v) => String(v || '').toLowerCase().includes(keyword));
+
+  const matchPair = (pair) => !keyword || matchKeyword(pair.airport) || matchKeyword(pair.drone);
+  const matchSinglePair = (pair) => !keyword || matchKeyword(pair.remote) || matchKeyword(pair.drone);
+
+  let pairs = grouped.pairs.filter(matchPair);
+  let singlePairs = grouped.singlePairs.filter(matchSinglePair);
+
+  if (category && category !== 'all') {
+    if (category === 'airport' || category === 'airport_drone') {
+      singlePairs = [];
+    } else if (category === 'single' || category === 'remote') {
+      pairs = [];
+    }
+  }
+
+  const devices = processor.getDeviceRegistryList().filter((d) => {
+    const catOk = !category || category === 'all' || d.category === category
+      || (category === 'airport_drone' && ['airport', 'airport_drone'].includes(d.category))
+      || (category === 'remote' && ['single', 'remote'].includes(d.category));
+    const kwOk = matchKeyword(d);
+    return catOk && kwOk;
+  });
+
+  res.json({
+    pairs,
+    singlePairs,
+    unboundSingles: grouped.unboundSingles.filter(matchKeyword),
+    unboundRemotes: grouped.unboundRemotes.filter(matchKeyword),
+    unboundDrones: grouped.unboundDrones.filter(matchKeyword),
+    devices,
+    categories: DeviceProcessor.DEVICE_CATEGORY_LABELS,
+    unmappedCount: devices.filter((d) => d.source === 'unmapped').length,
+  });
+});
+
+app.put('/api/device-registry/bindings/:airportSn', requirePermission('device-config'), (req, res) => {
+  const { droneSn, droneName } = req.body || {};
+  try {
+    const pair = processor.upsertAirportBinding(req.params.airportSn, droneSn, { droneName });
+    res.json({ message: '机场绑定已保存', pair });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/device-registry/remote-bindings/:remoteSn', requirePermission('device-config'), (req, res) => {
+  const { droneSn, droneName } = req.body || {};
+  try {
+    const pair = processor.upsertRemoteBinding(req.params.remoteSn, droneSn, { droneName });
+    res.json({ message: '单兵绑定已保存', pair });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/device-registry', requirePermission('device-config'), (req, res) => {
+  const { deviceId, name, category } = req.body || {};
+  try {
+    const device = processor.upsertDeviceRegistry(deviceId, { name, category });
+    res.json({ message: '设备映射已添加', device });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/device-registry/:deviceId', requirePermission('device-config'), (req, res) => {
+  const { name, category } = req.body || {};
+  try {
+    const device = processor.upsertDeviceRegistry(req.params.deviceId, { name, category });
+    res.json({ message: '设备映射已保存', device });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/device-registry/:deviceId', requirePermission('device-config'), (req, res) => {
+  try {
+    processor.removeDeviceRegistryOverride(req.params.deviceId);
+    res.json({ message: '已恢复为内置/环境配置' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.put('/api/me/password', requireLogin, (req, res) => {
@@ -573,10 +743,14 @@ app.post('/api/internal/lost-alert/service', requireLostAlertJobSecret, async (r
 setInterval(() => alertService.checkAirportOffline(), 60 * 1000);
 
 // API路由
-registerImageRoutes(app, { requireImageStudio: requirePermission('image-studio') });
+registerImageRoutes(app, {
+  requireImageStudio: requirePermission('image-studio'),
+  auditLog,
+});
 registerAssistantRoutes(app, {
   requireAssistant: requirePermission('ai-assistant'),
   updateTokenUsage,
+  auditLog,
   enrichAssistantContext: (ctx) => {
     const flightView = ctx?.flightView;
     const flightStats = getFlightStatsSnapshot(processor, flightView);
@@ -917,23 +1091,26 @@ app.post('/api/ai/analyze', async (req, res) => {
 });
 
 function buildActiveFlightSessions(type) {
-  let sessions = Array.from(processor.activeSessions.values()).map(s => ({
-    ...s,
-    deviceName: processor.normalizeFlightDisplayName(s.deviceName || s.deviceId),
-    totalDuration: processor.calcFlightDuration(s),
-    totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
-    status: 'active'
-  }));
+  let sessions = Array.from(processor.activeSessions.values()).map(s => {
+    const enriched = processor.enrichFlightRecord(s);
+    return {
+      ...enriched,
+      totalDuration: processor.calcFlightDuration(s),
+      totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
+      status: 'active'
+    };
+  });
 
   for (const [deviceId, state] of processor.deviceStates.entries()) {
     if (sessions.find(s => s.deviceId === deviceId)) continue;
-    if (!['drone', 'single', 'virtual'].includes(state.deviceType)) continue;
+    const flightType = processor.resolveFlightDeviceType(deviceId, state.gateway);
+    if (!['drone', 'single', 'virtual'].includes(flightType)) continue;
     if (!processor.isFlightMode(state.raw_mode_code)) continue;
     sessions.push({
       id: `${deviceId}_${new Date(state.lastSeen || Date.now()).getTime()}`,
       deviceId,
-      deviceName: processor.normalizeFlightDisplayName(state.deviceName || deviceId),
-      deviceType: state.deviceType,
+      deviceName: processor.getFlightDisplayName(deviceId, state.gateway) || deviceId,
+      deviceType: flightType,
       startTime: new Date(state.lastSeen || Date.now()).toISOString(),
       totalDuration: 0,
       totalMileage: 0,

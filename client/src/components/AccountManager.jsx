@@ -5,8 +5,10 @@ const PERMISSION_LABELS = {
   monitor: '实时监控',
   'alert-config': '离巢告警配置',
   'flight-records': '飞行记录',
+  'device-config': '设备管理',
   'image-studio': 'AI 生图',
   'ai-assistant': '飞行助手',
+  'audit-log': '操作日志',
 }
 
 function getToken() { return localStorage.getItem('auth_token') || '' }

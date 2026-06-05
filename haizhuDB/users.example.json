@@ -3,7 +3,7 @@
     "username": "admin",
     "passwordHash": "",
     "role": "admin",
-    "permissions": ["monitor", "alert-config", "flight-records", "image-studio", "ai-assistant"],
+    "permissions": ["monitor", "alert-config", "flight-records", "device-config", "image-studio", "ai-assistant"],
     "createdAt": ""
   }
 ]
