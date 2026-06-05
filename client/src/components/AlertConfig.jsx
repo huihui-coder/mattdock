@@ -192,6 +192,7 @@ export default function AlertConfig({ devices }) {
   const [message, setMessage] = useState(null)
   const [expandedLost, setExpandedLost] = useState({})
   const [expandedOffline, setExpandedOffline] = useState({})
+  const [deviceNameMap, setDeviceNameMap] = useState({})
 
   useEffect(() => {
     fetch(`${API}/api/alert-config`)
@@ -199,6 +200,7 @@ export default function AlertConfig({ devices }) {
       .then(data => {
         setGlobalWebhookUrl(data.globalWebhookUrl || '')
         setDeviceConfigs(data.deviceConfigs || {})
+        setDeviceNameMap(data.deviceNameMap || {})
       })
       .catch(() => {})
   }, [])
@@ -282,8 +284,10 @@ export default function AlertConfig({ devices }) {
   ]
 
   const getDeviceName = (deviceId) => {
-    const d = devices.find(d => d.deviceId === deviceId)
-    return d ? (d.deviceName || deviceId) : deviceId
+    const live = devices.find((d) => d.deviceId === deviceId)
+    if (live?.deviceName && live.deviceName !== deviceId) return live.deviceName
+    if (deviceNameMap[deviceId]) return deviceNameMap[deviceId]
+    return deviceId
   }
 
   const selectAll = useCallback((key, val) => {

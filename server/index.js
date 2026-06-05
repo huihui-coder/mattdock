@@ -597,9 +597,21 @@ console.log(`[Assistant] Ark: key=${arkKey ? '已配置' : '未配置'}, model=$
 console.log(`[AlertAI] 告警多模态分析: ${alertAiOn ? '已启用' : '未启用'}`);
 console.log(`[Ark] 联网搜索: ${process.env.ARK_WEB_SEARCH || 'auto'}（有外网时自动开启）`);
 
+function buildAlertConfigPayload() {
+  const config = alertService.getConfig();
+  const ids = new Set(Object.keys(config.deviceConfigs || {}));
+  processor.getAllDeviceStates().forEach((d) => ids.add(d.deviceId));
+  const deviceNameMap = {};
+  ids.forEach((id) => {
+    const state = processor.getDeviceState(id);
+    deviceNameMap[id] = processor.getDeviceName(id, state?.gateway || null);
+  });
+  return { ...config, deviceNameMap };
+}
+
 // 获取离巢告警配置
 app.get('/api/alert-config', (req, res) => {
-  res.json(alertService.getConfig());
+  res.json(buildAlertConfigPayload());
 });
 
 // 更新离巢告警配置
@@ -613,7 +625,7 @@ app.post('/api/alert-config/trigger-lost', (req, res) => {
   const { deviceId } = req.body || {};
   if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
   const state = processor.getDeviceState?.(deviceId);
-  const deviceName = state?.deviceName || deviceId;
+  const deviceName = processor.getDeviceName(deviceId, state?.gateway || null);
   const result = alertService.triggerLostAlertTest(deviceId, deviceName);
   if (!result.ok) {
     return res.status(result.error?.includes('执行中') ? 409 : 400).json({ error: result.error });
