@@ -140,8 +140,8 @@ cd /home/ubuntu/haizhu-monitor
 # 拉取新代码
 git pull
 
-# 重新构建前端（如有前端改动）
-cd client && npm run build && cd ..
+# 安装新依赖并重新构建前端（package.json 有变动时必须 npm install）
+cd client && npm install && npm run build && cd ..
 
 # 重启服务
 pm2 restart haizhu-monitor

@@ -25,6 +25,7 @@ import {
   X,
 } from 'lucide-react'
 import { clearStreamUrlCache } from '../lib/stream-url'
+import { isScopeAll, isScopeUnmapped } from '../lib/scope-query'
 import MqttProfilesPanel from './MqttProfilesPanel'
 
 const PERMISSION_LABELS = {
@@ -817,7 +818,11 @@ function RegionAccountTable({
   )
 }
 
-export default function RegionSettings() {
+export default function RegionSettings({
+  scopeRegionId = '',
+  onScopeRegionChange,
+  onRegionsChanged,
+}) {
   const [tree, setTree] = useState([])
   const [regions, setRegions] = useState([])
   const [users, setUsers] = useState([])
@@ -838,6 +843,15 @@ export default function RegionSettings() {
   const [editForm, setEditForm] = useState({ permissions: [], password: '', regionId: '' })
   const [editLoading, setEditLoading] = useState(false)
   const [adminTab, setAdminTab] = useState('orgs')
+
+  const notifyRegionsChanged = useCallback(async () => {
+    await onRegionsChanged?.()
+  }, [onRegionsChanged])
+
+  const handleSelectRegion = useCallback((regionId) => {
+    setSelectedRegionId(regionId)
+    onScopeRegionChange?.(regionId)
+  }, [onScopeRegionChange])
 
   const loadRegions = useCallback(async () => {
     const [regionsRes, usersRes] = await Promise.all([
@@ -865,6 +879,15 @@ export default function RegionSettings() {
       })
       .catch((err) => setError(err.message))
   }, [loadRegions])
+
+  useEffect(() => {
+    if (!tree.length || !scopeRegionId || isScopeUnmapped(scopeRegionId)) return
+    const rootId = tree[0]?.id
+    const nextId = isScopeAll(scopeRegionId) && rootId ? rootId : scopeRegionId
+    if (nextId && findTreeNode(tree, nextId)) {
+      setSelectedRegionId(nextId)
+    }
+  }, [scopeRegionId, tree])
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -915,6 +938,7 @@ export default function RegionSettings() {
       if (!res.ok) throw new Error(data.error || '更新失败')
       setEditing(null)
       await loadRegions()
+      await notifyRegionsChanged()
     } catch (err) {
       setError(err.message)
     }
@@ -929,6 +953,7 @@ export default function RegionSettings() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '删除失败')
       await loadRegions()
+      await notifyRegionsChanged()
     } catch (err) {
       setError(err.message)
     }
@@ -975,9 +1000,11 @@ export default function RegionSettings() {
       if (!res.ok) throw new Error(data.error || '创建区域失败')
       setForm({ id: '', name: '', parentId: '' })
       setShowForm(false)
+      const createdId = form.id
       const loadedTree = await loadRegions()
       setExpandedIds(new Set(collectAllIds(loadedTree)))
-      if (form.id) setSelectedRegionId(form.id)
+      if (createdId) handleSelectRegion(createdId)
+      await notifyRegionsChanged()
     } catch (err) {
       setError(err.message)
     }
@@ -996,6 +1023,7 @@ export default function RegionSettings() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '固化失败')
       await loadRegions()
+      await notifyRegionsChanged()
     } catch (err) {
       setError(err.message)
     }
@@ -1013,6 +1041,7 @@ export default function RegionSettings() {
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || '修改名称失败')
       await loadRegions()
+      await notifyRegionsChanged()
     } catch (err) {
       setError(err.message)
       throw err
@@ -1035,6 +1064,7 @@ export default function RegionSettings() {
       if (parentId) {
         setExpandedIds((prev) => new Set([...prev, parentId, ...collectAllIds(loadedTree)]))
       }
+      await notifyRegionsChanged()
     } catch (err) {
       setError(err.message)
       throw err
@@ -1104,7 +1134,7 @@ export default function RegionSettings() {
 
       {adminTab === 'mqtt' ? (
         <div className="p-5 bg-white">
-          <MqttProfilesPanel onChanged={loadRegions} />
+          <MqttProfilesPanel onChanged={async () => { await loadRegions(); await notifyRegionsChanged() }} />
         </div>
       ) : (
       <>
@@ -1130,7 +1160,7 @@ export default function RegionSettings() {
                 selectedId={selectedRegionId}
                 expandedIds={expandedIds}
                 onToggleExpand={toggleExpand}
-                onSelect={setSelectedRegionId}
+                onSelect={handleSelectRegion}
               />
             ))
           ) : (
@@ -1158,7 +1188,7 @@ export default function RegionSettings() {
               />
               <RegionChildrenSection
                 node={selectedNode}
-                onSelect={setSelectedRegionId}
+                onSelect={handleSelectRegion}
                 onAddChild={openAddChild}
                 onFreeze={freezeOnline}
                 freezingId={freezingId}
@@ -1173,7 +1203,7 @@ export default function RegionSettings() {
                   regionId={selectedRegionId}
                   regionName={selectedNode.name}
                   permissions={permissions}
-                  onCreated={loadRegions}
+                  onCreated={async () => { await loadRegions(); await notifyRegionsChanged() }}
                   onError={setError}
                 />
               </CollapsibleSection>

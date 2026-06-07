@@ -220,6 +220,30 @@ function App() {
     setCockpitDevice(null)
   }, [user?.username])
 
+  const refreshUserSession = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/me')
+      if (!res.ok) return
+      const data = await res.json()
+      const nextUser = data.user
+      if (!nextUser) return
+      localStorage.setItem('auth_user', JSON.stringify(nextUser))
+      setUser(nextUser)
+
+      const nextTree = nextUser.regionTree || []
+      const nextRootId = nextTree[0]?.id || ''
+      const validIds = collectAllIds(nextTree)
+      setScopeRegionId((prev) => {
+        if (isScopeUnmapped(prev)) return prev
+        if (prev && validIds.includes(prev)) return prev
+        const fallback = readStoredScopeRegion(nextUser.username, validIds, nextRootId)
+        return fallback || validIds[0] || ''
+      })
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
   const isInActiveScope = useCallback((regionId) => {
     if (isScopeUnmapped(scopeRegionId)) {
       return (regionId == null || regionId === '') && isAdmin
@@ -698,7 +722,11 @@ function App() {
         )}
 
         {activeTab === 'accounts' && user?.role === 'admin' && (
-          <AccountManager />
+          <AccountManager
+            scopeRegionId={scopeRegionId}
+            onScopeRegionChange={handleScopeRegionChange}
+            onRegionsChanged={refreshUserSession}
+          />
         )}
 
         {hasPermission('image-studio') && (
