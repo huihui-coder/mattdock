@@ -8,7 +8,9 @@ import {
   EyeOff,
   Folder,
   FolderOpen,
+  Link2,
   MapPin,
+  Move,
   Network,
   Pencil,
   Plus,
@@ -23,6 +25,7 @@ import {
   X,
 } from 'lucide-react'
 import { clearStreamUrlCache } from '../lib/stream-url'
+import MqttProfilesPanel from './MqttProfilesPanel'
 
 const PERMISSION_LABELS = {
   monitor: '实时监控',
@@ -182,17 +185,71 @@ function StatChip({ label, value }) {
   )
 }
 
-function RegionDetailHeader({ node, onAddChild, onFreeze, freezingId }) {
+function RegionDetailHeader({ node, onAddChild, onFreeze, freezingId, onRename, renamingId }) {
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState(node.name || '')
+
+  useEffect(() => {
+    setNameDraft(node.name || '')
+    setEditingName(false)
+  }, [node.id, node.name])
+
+  const submitRename = async (e) => {
+    e?.preventDefault?.()
+    const trimmed = nameDraft.trim()
+    if (!trimmed || trimmed === node.name) {
+      setEditingName(false)
+      setNameDraft(node.name || '')
+      return
+    }
+    await onRename?.(node.id, trimmed)
+    setEditingName(false)
+  }
+
   return (
     <div className="rounded-xl border border-dji-border bg-white p-4 shadow-dji-sm">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-start gap-3 min-w-0">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-slate-100 border border-dji-border">
             <Building2 size={22} className="text-slate-600" aria-hidden />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-lg font-semibold text-dji-black truncate">{node.name}</h3>
+              {editingName ? (
+                <form onSubmit={submitRename} className="flex flex-wrap items-center gap-2 min-w-0 flex-1">
+                  <input
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    className="ui-input !py-1.5 text-base font-semibold min-w-[160px] flex-1 max-w-md"
+                    autoFocus
+                    required
+                  />
+                  <button type="submit" disabled={renamingId === node.id} className="ui-btn-primary !py-1.5 !text-xs cursor-pointer disabled:opacity-50">
+                    <Save size={13} aria-hidden />
+                    {renamingId === node.id ? '保存中…' : '保存'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setEditingName(false); setNameDraft(node.name || '') }}
+                    className="ui-btn-secondary !py-1.5 !text-xs cursor-pointer"
+                  >
+                    取消
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <h3 className="text-lg font-semibold text-dji-black truncate">{node.name}</h3>
+                  <button
+                    type="button"
+                    onClick={() => setEditingName(true)}
+                    className="p-1.5 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 cursor-pointer transition-colors duration-200"
+                    title="修改名称"
+                    aria-label="修改组织名称"
+                  >
+                    <Pencil size={14} />
+                  </button>
+                </>
+              )}
               {node.frozen && (
                 <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                   已固化
@@ -229,6 +286,84 @@ function RegionDetailHeader({ node, onAddChild, onFreeze, freezingId }) {
         <StatChip label="下级区域" value={node.children?.length ?? 0} />
       </div>
     </div>
+  )
+}
+
+function collectDescendantIds(regionId, regions) {
+  const ids = [regionId]
+  for (const r of regions) {
+    if (r.parentId === regionId) ids.push(...collectDescendantIds(r.id, regions))
+  }
+  return ids
+}
+
+function RegionMoveSection({ regionId, regions, regionOptions, onMove, movingId }) {
+  const current = regions.find((r) => r.id === regionId)
+  const currentParentId = current?.parentId || ''
+  const [parentDraft, setParentDraft] = useState(currentParentId)
+
+  useEffect(() => {
+    setParentDraft(current?.parentId || '')
+  }, [regionId, current?.parentId])
+
+  const invalidIds = useMemo(
+    () => new Set(collectDescendantIds(regionId, regions)),
+    [regionId, regions],
+  )
+
+  const parentOptions = useMemo(() => {
+    const opts = [{ id: '', name: '无（顶级）', depth: 0 }]
+    for (const opt of regionOptions) {
+      if (!invalidIds.has(opt.id)) opts.push(opt)
+    }
+    return opts
+  }, [regionOptions, invalidIds])
+
+  const currentParentName = currentParentId
+    ? regions.find((r) => r.id === currentParentId)?.name || currentParentId
+    : '无（顶级）'
+
+  const changed = (parentDraft || null) !== (current?.parentId || null)
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!changed) return
+    await onMove?.(regionId, parentDraft || null)
+  }
+
+  return (
+    <CollapsibleSection icon={Move} title="移动组织" defaultOpen={false}>
+      <form onSubmit={submit} className="space-y-3 max-w-md">
+        <p className="text-sm text-dji-muted">
+          当前上级：
+          <span className="text-dji-ink font-medium ml-1">{currentParentName}</span>
+        </p>
+        <label className="block text-sm">
+          <span className="text-dji-muted mb-1.5 block">移动到</span>
+          <select
+            value={parentDraft}
+            onChange={(e) => setParentDraft(e.target.value)}
+            className="ui-input w-full cursor-pointer"
+          >
+            {parentOptions.map((opt) => (
+              <option key={opt.id || '__root__'} value={opt.id}>
+                {`${'\u00A0'.repeat(opt.depth * 2)}${opt.depth > 0 ? '└ ' : ''}${opt.name}`}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="text-xs text-dji-subtle">
+          可将组织挂到任意上级下，不能移动到自身或其下级（避免形成环）。
+        </p>
+        <button
+          type="submit"
+          disabled={!changed || movingId === regionId}
+          className="ui-btn-primary !text-xs cursor-pointer disabled:opacity-50"
+        >
+          {movingId === regionId ? '移动中…' : '确认移动'}
+        </button>
+      </form>
+    </CollapsibleSection>
   )
 }
 
@@ -313,70 +448,62 @@ function RegionChildrenSection({ node, onSelect, onAddChild, onFreeze, freezingI
   )
 }
 
-function RegionConnectivityForm({ regionId, regionName, defaultRegionId, onSaved }) {
-  const [connForm, setConnForm] = useState({
-    mqttBroker: '',
-    mqttUser: '',
-    mqttPass: '',
-    mqttClientId: '',
-    mqttTopics: '',
-    streamBase: '',
-    streamToken: '',
-  })
-  const [connMeta, setConnMeta] = useState({ usesEnvDefaults: false, passwordSet: false, tokenSet: false })
+function RegionMqttBindingForm({ regionId, regionName, defaultRegionId, onSaved }) {
+  const [profiles, setProfiles] = useState([])
+  const [selectedProfileId, setSelectedProfileId] = useState('')
+  const [streamBase, setStreamBase] = useState('')
+  const [streamToken, setStreamToken] = useState('')
+  const [connMeta, setConnMeta] = useState({ usesEnvDefaults: false, tokenSet: false, mqttProfileName: '' })
   const [connLoading, setConnLoading] = useState(false)
   const [connSaving, setConnSaving] = useState(false)
   const [connError, setConnError] = useState('')
   const [expanded, setExpanded] = useState(true)
+
+  const selectedProfile = useMemo(
+    () => profiles.find((p) => p.id === selectedProfileId) || null,
+    [profiles, selectedProfileId],
+  )
 
   useEffect(() => {
     if (!regionId) return undefined
     let cancelled = false
     setConnLoading(true)
     setConnError('')
-    apiFetch(`/api/regions/${encodeURIComponent(regionId)}/connectivity`)
-      .then(async (res) => {
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || '加载连接配置失败')
+    Promise.all([
+      apiFetch('/api/mqtt-profiles').then((r) => r.json()),
+      apiFetch(`/api/regions/${encodeURIComponent(regionId)}/connectivity`).then((r) => r.json()),
+    ])
+      .then(([profileData, connData]) => {
         if (cancelled) return
+        setProfiles(profileData.profiles || [])
         setConnMeta({
-          usesEnvDefaults: !!data.usesEnvDefaults,
-          passwordSet: !!data.mqtt?.passwordSet,
-          tokenSet: !!data.stream?.tokenSet,
+          usesEnvDefaults: !!connData.usesEnvDefaults,
+          tokenSet: !!connData.stream?.tokenSet,
+          mqttProfileName: connData.mqttProfileName || '',
         })
-        setConnForm({
-          mqttBroker: data.mqtt?.brokerUrl || '',
-          mqttUser: data.mqtt?.username || '',
-          mqttPass: '',
-          mqttClientId: data.mqtt?.clientId || '',
-          mqttTopics: data.mqtt?.topics || '',
-          streamBase: data.stream?.baseUrl || '',
-          streamToken: '',
-        })
+        setSelectedProfileId(connData.mqttProfileId || '')
+        setStreamBase(connData.stream?.baseUrl || '')
+        setStreamToken('')
       })
       .catch((err) => { if (!cancelled) setConnError(err.message) })
       .finally(() => { if (!cancelled) setConnLoading(false) })
     return () => { cancelled = true }
   }, [regionId])
 
-  const saveConnectivity = async (e) => {
+  const saveBinding = async (e) => {
     e.preventDefault()
+    if (!selectedProfileId) {
+      setConnError('请选择 MQTT 配置')
+      return
+    }
     setConnSaving(true)
     setConnError('')
     try {
       const body = {
-        mqtt: {
-          brokerUrl: connForm.mqttBroker,
-          username: connForm.mqttUser,
-          clientId: connForm.mqttClientId,
-          topics: connForm.mqttTopics,
-        },
-        stream: {
-          baseUrl: connForm.streamBase,
-        },
+        mqttProfileId: selectedProfileId,
+        stream: { baseUrl: streamBase },
       }
-      if (connForm.mqttPass.trim()) body.mqtt.password = connForm.mqttPass.trim()
-      if (connForm.streamToken.trim()) body.stream.token = connForm.streamToken.trim()
+      if (streamToken.trim()) body.stream.token = streamToken.trim()
       const res = await apiFetch(`/api/regions/${encodeURIComponent(regionId)}/connectivity`, {
         method: 'PUT',
         body: JSON.stringify(body),
@@ -386,10 +513,10 @@ function RegionConnectivityForm({ regionId, regionName, defaultRegionId, onSaved
       clearStreamUrlCache()
       setConnMeta({
         usesEnvDefaults: false,
-        passwordSet: data.connectivity?.mqtt?.passwordSet ?? true,
-        tokenSet: data.connectivity?.stream?.tokenSet ?? !!connForm.streamToken.trim(),
+        tokenSet: data.connectivity?.stream?.tokenSet ?? !!streamToken.trim(),
+        mqttProfileName: data.connectivity?.mqttProfileName || selectedProfile?.name || '',
       })
-      setConnForm((prev) => ({ ...prev, mqttPass: '', streamToken: '' }))
+      setStreamToken('')
       onSaved?.()
     } catch (err) {
       setConnError(err.message)
@@ -407,9 +534,13 @@ function RegionConnectivityForm({ regionId, regionName, defaultRegionId, onSaved
         className="flex w-full items-center justify-between gap-3 px-4 py-3 border-b border-dji-border bg-slate-50/50 text-left cursor-pointer hover:bg-slate-50 transition-colors duration-200"
       >
         <div className="flex items-center gap-2 min-w-0">
-          <Radio size={16} className="text-dji-black shrink-0" aria-hidden />
-          <h3 className="ui-section-title text-sm">数据连接</h3>
-          <span className="text-xs text-dji-subtle truncate hidden sm:inline">MQTT · 推流</span>
+          <Link2 size={16} className="text-dji-black shrink-0" aria-hidden />
+          <h3 className="ui-section-title text-sm">绑定 MQTT 配置</h3>
+          {connMeta.mqttProfileName && (
+            <span className="text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded-md px-2 py-0.5 truncate hidden sm:inline">
+              {connMeta.mqttProfileName}
+            </span>
+          )}
         </div>
         <ChevronDown
           size={16}
@@ -421,93 +552,73 @@ function RegionConnectivityForm({ regionId, regionName, defaultRegionId, onSaved
       {expanded && (
         <div className="p-4">
           <p className="text-xs text-dji-subtle mb-4 leading-relaxed">
-            叶子区域需单独配置 MQTT 与推流；上级区域仅作组织汇总，通常无需连接。
-            推流示例：<span className="font-mono text-[11px] text-dji-muted">…/live/设备SN_out.live.flv?token=…</span>
+            从平台 MQTT 连接池选择配置绑定到本组织。MQTT 参数在「MQTT 连接池」Tab 统一维护；此处仅需选择并可选覆盖推流地址。
           </p>
           {isDefaultEnv && (
             <p className="text-xs text-blue-700 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-4">
-              当前使用全局 .env。Client ID 须与 <span className="font-mono">MQTT_CLIENT_ID</span> 一致，保存后写入本区域独立文件。
+              默认区域当前使用全局 .env。绑定后将切换为所选 MQTT 配置。
             </p>
           )}
           {connError && (
             <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{connError}</p>
           )}
           {connLoading ? (
-            <p className="text-sm text-dji-subtle py-4 text-center">加载连接配置…</p>
+            <p className="text-sm text-dji-subtle py-4 text-center">加载绑定信息…</p>
           ) : (
-            <form onSubmit={saveConnectivity} className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <div className="md:col-span-2">
-                <label className="block text-xs text-dji-muted mb-1">MQTT 地址</label>
-                <input
-                  value={connForm.mqttBroker}
-                  onChange={(e) => setConnForm({ ...connForm, mqttBroker: e.target.value })}
-                  placeholder="tcp://smartcity.zhifei.tech:1883"
-                  className="ui-input w-full font-mono text-sm"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-dji-muted mb-1">MQTT 账号</label>
-                <input
-                  value={connForm.mqttUser}
-                  onChange={(e) => setConnForm({ ...connForm, mqttUser: e.target.value })}
-                  className="ui-input w-full"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-dji-muted mb-1">
-                  MQTT 密码{connMeta.passwordSet && !connForm.mqttPass ? '（已设置，留空不修改）' : ''}
+            <form onSubmit={saveBinding} className="space-y-4">
+              <label className="block">
+                <span className="text-xs font-medium text-dji-muted">选择 MQTT 配置</span>
+                <select
+                  value={selectedProfileId}
+                  onChange={(e) => setSelectedProfileId(e.target.value)}
+                  className="ui-input mt-1 w-full cursor-pointer"
+                >
+                  <option value="">— 请选择 —</option>
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name} · {p.mqtt?.brokerUrl}</option>
+                  ))}
+                </select>
+              </label>
+
+              {selectedProfile && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 text-xs space-y-1.5">
+                  <p className="font-medium text-slate-700">配置预览</p>
+                  <p className="font-mono text-slate-600 break-all">{selectedProfile.mqtt?.brokerUrl}</p>
+                  <p className="text-slate-600">账号：{selectedProfile.mqtt?.username || '—'} · Client ID：{selectedProfile.mqtt?.clientId || '—'}</p>
+                  {selectedProfile.stream?.baseUrl && (
+                    <p className="text-slate-500">默认推流：{selectedProfile.stream.baseUrl}</p>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 border-t border-dji-border pt-3">
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium text-dji-muted">推流基址（可选覆盖）</span>
+                  <input
+                    value={streamBase}
+                    onChange={(e) => setStreamBase(e.target.value)}
+                    placeholder={selectedProfile?.stream?.baseUrl || '留空则使用配置默认值'}
+                    className="ui-input mt-1 w-full font-mono text-sm"
+                  />
                 </label>
-                <input
-                  type="password"
-                  value={connForm.mqttPass}
-                  onChange={(e) => setConnForm({ ...connForm, mqttPass: e.target.value })}
-                  className="ui-input w-full"
-                  autoComplete="new-password"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-dji-muted mb-1">Client ID</label>
-                <input
-                  value={connForm.mqttClientId}
-                  onChange={(e) => setConnForm({ ...connForm, mqttClientId: e.target.value })}
-                  placeholder={`monitor-${regionId}`}
-                  className="ui-input w-full font-mono text-sm"
-                />
-                <p className="text-[11px] text-dji-subtle mt-1">须与平台登记一致（如 666）。</p>
-              </div>
-              <div>
-                <label className="block text-xs text-dji-muted mb-1">订阅主题</label>
-                <input
-                  value={connForm.mqttTopics}
-                  onChange={(e) => setConnForm({ ...connForm, mqttTopics: e.target.value })}
-                  placeholder="thing/product/+/osd,..."
-                  className="ui-input w-full font-mono text-sm"
-                />
-              </div>
-              <div className="md:col-span-2 border-t border-dji-border pt-3 mt-1">
-                <label className="block text-xs text-dji-muted mb-1">推流基址</label>
-                <input
-                  value={connForm.streamBase}
-                  onChange={(e) => setConnForm({ ...connForm, streamBase: e.target.value })}
-                  placeholder="https://live.zhifei.tech:24143/live"
-                  className="ui-input w-full font-mono text-sm"
-                />
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-xs text-dji-muted mb-1">
-                  推流 Token{connMeta.tokenSet && !connForm.streamToken ? '（已设置，留空不修改）' : ''}
+                <label className="block md:col-span-2">
+                  <span className="text-xs font-medium text-dji-muted">
+                    推流 Token{connMeta.tokenSet && !streamToken ? '（已设置，留空不修改）' : ''}
+                  </span>
+                  <input
+                    type="password"
+                    value={streamToken}
+                    onChange={(e) => setStreamToken(e.target.value)}
+                    className="ui-input mt-1 w-full font-mono text-sm"
+                    autoComplete="new-password"
+                  />
                 </label>
-                <input
-                  value={connForm.streamToken}
-                  onChange={(e) => setConnForm({ ...connForm, streamToken: e.target.value })}
-                  placeholder="HYw7R8A8KQRGD7kURsBqKZx0PMZIZKAO"
-                  className="ui-input w-full font-mono text-sm"
-                />
               </div>
-              <div className="md:col-span-2 flex justify-end pt-1">
-                <button type="submit" disabled={connSaving} className="ui-btn-primary disabled:opacity-50 cursor-pointer">
+
+              <div className="flex justify-end">
+                <button type="submit" disabled={connSaving || !profiles.length} className="ui-btn-primary disabled:opacity-50 cursor-pointer">
                   <Save size={14} aria-hidden />
-                  {connSaving ? '保存并重连…' : '保存连接配置'}
+                  {connSaving ? '绑定中…' : '绑定配置'}
                 </button>
               </div>
             </form>
@@ -719,11 +830,14 @@ export default function RegionSettings() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [freezingId, setFreezingId] = useState('')
+  const [renamingId, setRenamingId] = useState('')
+  const [movingId, setMovingId] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [showPasswords, setShowPasswords] = useState(false)
   const [editing, setEditing] = useState(null)
   const [editForm, setEditForm] = useState({ permissions: [], password: '', regionId: '' })
   const [editLoading, setEditLoading] = useState(false)
+  const [adminTab, setAdminTab] = useState('orgs')
 
   const loadRegions = useCallback(async () => {
     const [regionsRes, usersRes] = await Promise.all([
@@ -888,6 +1002,47 @@ export default function RegionSettings() {
     setFreezingId('')
   }
 
+  const renameRegion = async (regionId, name) => {
+    setRenamingId(regionId)
+    setError('')
+    try {
+      const res = await apiFetch(`/api/regions/${encodeURIComponent(regionId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ name }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || '修改名称失败')
+      await loadRegions()
+    } catch (err) {
+      setError(err.message)
+      throw err
+    } finally {
+      setRenamingId('')
+    }
+  }
+
+  const moveRegion = async (regionId, parentId) => {
+    setMovingId(regionId)
+    setError('')
+    try {
+      const res = await apiFetch(`/api/regions/${encodeURIComponent(regionId)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ parentId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || '移动失败')
+      const loadedTree = await loadRegions()
+      if (parentId) {
+        setExpandedIds((prev) => new Set([...prev, parentId, ...collectAllIds(loadedTree)]))
+      }
+    } catch (err) {
+      setError(err.message)
+      throw err
+    } finally {
+      setMovingId('')
+    }
+  }
+
   const parentLabel = form.parentId
     ? regions.find((r) => r.id === form.parentId)?.name || form.parentId
     : '无（顶级）'
@@ -901,25 +1056,58 @@ export default function RegionSettings() {
             <h2 className="ui-section-title">账号管理</h2>
           </div>
           <p className="text-sm text-dji-muted mt-1">
-            左侧选择组织，右侧管理该区域账号与连接配置
+            MQTT 连接池独立管理；组织与账号 Tab 中仅为各组织选择绑定
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => openAddChild(null)}
-          className="ui-btn-primary shrink-0 cursor-pointer"
-        >
-          <Plus size={14} aria-hidden />
-          新建顶级区域
-        </button>
+        {adminTab === 'orgs' && (
+          <button
+            type="button"
+            onClick={() => openAddChild(null)}
+            className="ui-btn-primary shrink-0 cursor-pointer"
+          >
+            <Plus size={14} aria-hidden />
+            新建顶级区域
+          </button>
+        )}
       </div>
 
-      {error && (
+      <div className="px-5 pt-4 border-b border-dji-border bg-white">
+        <div className="ui-nav-bar-full max-w-md" role="tablist" aria-label="管理模块">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={adminTab === 'mqtt'}
+            onClick={() => setAdminTab('mqtt')}
+            className={`ui-tab flex-1 justify-center cursor-pointer ${adminTab === 'mqtt' ? 'ui-tab-active' : 'ui-tab-inactive'}`}
+          >
+            <Radio size={14} aria-hidden />
+            MQTT 连接池
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={adminTab === 'orgs'}
+            onClick={() => setAdminTab('orgs')}
+            className={`ui-tab flex-1 justify-center cursor-pointer ${adminTab === 'orgs' ? 'ui-tab-active' : 'ui-tab-inactive'}`}
+          >
+            <Building2 size={14} aria-hidden />
+            组织与账号
+          </button>
+        </div>
+      </div>
+
+      {error && adminTab === 'orgs' && (
         <div className="mx-5 mt-4">
           <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
         </div>
       )}
 
+      {adminTab === 'mqtt' ? (
+        <div className="p-5 bg-white">
+          <MqttProfilesPanel onChanged={loadRegions} />
+        </div>
+      ) : (
+      <>
       <div className="flex flex-col lg:flex-row min-h-[480px]">
         <aside className="w-full lg:w-[240px] shrink-0 border-b lg:border-b-0 lg:border-r border-dji-border bg-slate-50/40 p-3 overflow-y-auto max-h-[280px] lg:max-h-none lg:min-h-[480px]">
           <div className="relative mb-2">
@@ -958,6 +1146,15 @@ export default function RegionSettings() {
                 onAddChild={openAddChild}
                 onFreeze={freezeOnline}
                 freezingId={freezingId}
+                onRename={renameRegion}
+                renamingId={renamingId}
+              />
+              <RegionMoveSection
+                regionId={selectedRegionId}
+                regions={regions}
+                regionOptions={regionOptions}
+                onMove={moveRegion}
+                movingId={movingId}
               />
               <RegionChildrenSection
                 node={selectedNode}
@@ -966,7 +1163,7 @@ export default function RegionSettings() {
                 onFreeze={freezeOnline}
                 freezingId={freezingId}
               />
-              <RegionConnectivityForm
+              <RegionMqttBindingForm
                 regionId={selectedRegionId}
                 regionName={selectedNode.name}
                 defaultRegionId={defaultRegionId}
@@ -1002,12 +1199,14 @@ export default function RegionSettings() {
 
       <div className="px-5 py-3 border-t border-dji-border bg-slate-50/50">
         <p className="text-xs text-dji-subtle leading-relaxed">
-          支队账号可见全部下级设备；分局/叶子账号仅见本区数据。MQTT 与推流请在叶子区域（如海珠、增城）配置。
+          支队账号可见全部下级设备；分局/叶子账号仅见本区数据。MQTT 在「连接池」统一维护，组织侧仅选择绑定。
           {defaultRegionId && (
             <span className="text-slate-400"> 默认区域：{defaultRegionId}</span>
           )}
         </p>
       </div>
+      </>
+      )}
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowForm(false)}>

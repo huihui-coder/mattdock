@@ -6,7 +6,7 @@ import {
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import RegionLabel from './RegionLabel'
 import ListPagination, { paginateSlice } from './ListPagination'
-import { isScopeAll } from '../lib/scope-query'
+import { isScopeAll, isScopeUnmapped, deviceScopeKey } from '../lib/scope-query'
 import * as XLSX from 'xlsx'
 
 const CATEGORY_LABELS = {
@@ -40,7 +40,7 @@ const ONLINE_TABS = [
   { id: 'offline', label: '离线' },
 ]
 
-const PAGE_SIZE_DEFAULT = 20
+const PAGE_SIZE_DEFAULT = 10
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
 function apiFetch(url, opts = {}) {
@@ -263,7 +263,7 @@ function buildFilteredRows(pairs, singlePairs, unboundDevices, applied, statusFi
     unboundDevices.forEach((d) => {
       if (!deviceMatchesSearch(d, q)) return
       if (!deviceMatchesFilters(d, applied)) return
-      const row = { type: 'device', id: d.deviceId, device: d }
+      const row = { type: 'device', id: deviceScopeKey(d), device: d }
       if (!matchesStatus(row)) return
       rows.push(row)
     })
@@ -357,11 +357,31 @@ function BindingPairRow({
   )
 }
 
-function SimpleDeviceRow({ device, selected, onToggleSelect, onEdit, onDelete }) {
+function MqttSourceBadge({ device }) {
+  const label = device?.mqttProfileName || device?.mqttSourceRegionName
+  const id = device?.mqttProfileId || device?.mqttSourceRegionId
+  if (!label && !id) return null
+  return (
+    <span
+      className="inline-flex flex-col gap-0.5 text-[10px]"
+      title={device.mqttBroker || undefined}
+    >
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-medium w-fit">
+        <Radio size={10} aria-hidden />
+        {label || id}
+      </span>
+      {device.mqttBroker && (
+        <span className="text-slate-400 truncate max-w-[140px]">{device.mqttBroker}</span>
+      )}
+    </span>
+  )
+}
+
+function SimpleDeviceRow({ device, selected, onToggleSelect, onEdit, onDelete, showMqttSource = false }) {
   return (
     <tr className={`hover:bg-slate-50/80 transition-colors ${isAlertDevice(device) ? 'bg-amber-50/40' : ''}`}>
       <td className="px-4 py-2.5">
-        <input type="checkbox" checked={selected} onChange={() => onToggleSelect(device.deviceId)}
+        <input type="checkbox" checked={selected} onChange={() => onToggleSelect(deviceScopeKey(device))}
           className="rounded border-slate-300 cursor-pointer" />
       </td>
       <td className="px-3 py-2.5 hidden lg:table-cell text-xs text-slate-600">
@@ -374,7 +394,9 @@ function SimpleDeviceRow({ device, selected, onToggleSelect, onEdit, onDelete })
         {device.source === 'unmapped' ? <span className="text-amber-700">{device.deviceId}</span> : device.name}
       </td>
       <td className="px-3 py-2.5 hidden sm:table-cell">
-        <RegionLabel regionName={device.regionName} regionId={device.regionId} />
+        {showMqttSource ? <MqttSourceBadge device={device} /> : (
+          <RegionLabel regionName={device.regionName} regionId={device.regionId} />
+        )}
       </td>
       <td className="px-3 py-2.5 hidden lg:table-cell"><SourceBadge source={device.source} /></td>
       <td className="px-3 py-2.5"><OnlineBadge online={device.online} statusText={device.statusText} /></td>
@@ -424,7 +446,10 @@ export default function DeviceManager({ scopeRegionId }) {
     region: 'all',
   })
   const [onlineTab, setOnlineTab] = useState('all')
+  const [mqttTab, setMqttTab] = useState('all')
+  const [mqttProfiles, setMqttProfiles] = useState([])
   const [alertOnly, setAlertOnly] = useState(false)
+  const unmappedScope = isScopeUnmapped(scopeRegionId)
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(PAGE_SIZE_DEFAULT)
   const [selectedIds, setSelectedIds] = useState(new Set())
@@ -462,6 +487,34 @@ export default function DeviceManager({ scopeRegionId }) {
   }, [scopeRegionId])
 
   useEffect(() => { refresh() }, [refresh])
+  useEffect(() => { setMqttTab('all') }, [scopeRegionId])
+
+  useEffect(() => {
+    if (!unmappedScope) {
+      setMqttProfiles([])
+      return
+    }
+    apiFetch('/api/mqtt-profiles')
+      .then((res) => res.json())
+      .then((data) => setMqttProfiles(data.profiles || []))
+      .catch(() => setMqttProfiles([]))
+  }, [unmappedScope])
+
+  const mqttSources = useMemo(() => {
+    const map = new Map()
+    mqttProfiles.forEach((p) => map.set(p.id, p.name || p.id))
+    allDevices.forEach((d) => {
+      const id = d.mqttProfileId || d.mqttSourceRegionId
+      const name = d.mqttProfileName || d.mqttSourceRegionName || id
+      if (id) map.set(id, name)
+    })
+    return [...map.entries()].map(([id, name]) => ({ id, name }))
+  }, [allDevices, mqttProfiles])
+
+  const scopedDevices = useMemo(() => {
+    if (!unmappedScope || mqttTab === 'all') return allDevices
+    return allDevices.filter((d) => (d.mqttProfileId || d.mqttSourceRegionId) === mqttTab)
+  }, [allDevices, unmappedScope, mqttTab])
 
   const regions = useMemo(() => {
     const map = new Map()
@@ -472,7 +525,7 @@ export default function DeviceManager({ scopeRegionId }) {
   }, [allDevices])
 
   const stats = useMemo(() => {
-    const byCat = (cat) => allDevices.filter((d) => d.category === cat)
+    const byCat = (cat) => scopedDevices.filter((d) => d.category === cat)
     const online = (list) => list.filter((d) => d.online).length
     return {
       airport: { total: byCat('airport').length, online: online(byCat('airport')) },
@@ -480,7 +533,7 @@ export default function DeviceManager({ scopeRegionId }) {
       single: { total: byCat('single').length, online: online(byCat('single')) },
       remote: { total: byCat('remote').length, online: online(byCat('remote')) },
     }
-  }, [allDevices])
+  }, [scopedDevices])
 
   const boundDeviceIds = useMemo(
     () => buildBoundDeviceIds(pairs, singlePairs),
@@ -488,8 +541,8 @@ export default function DeviceManager({ scopeRegionId }) {
   )
 
   const unboundDevices = useMemo(
-    () => allDevices.filter((d) => !boundDeviceIds.has(d.deviceId)),
-    [allDevices, boundDeviceIds],
+    () => scopedDevices.filter((d) => !boundDeviceIds.has(d.deviceId)),
+    [scopedDevices, boundDeviceIds],
   )
 
   const filteredRowsBase = useMemo(
@@ -716,8 +769,14 @@ export default function DeviceManager({ scopeRegionId }) {
       {/* 页头 */}
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-slate-800 tracking-tight">设备管理</h1>
-          <p className="text-sm text-slate-500 mt-0.5">统一管理自动机场、机库无人机、单兵与遥控器设备映射</p>
+          <h1 className="text-lg font-semibold text-slate-800 tracking-tight">
+            {unmappedScope ? '无归属设备' : '设备管理'}
+          </h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            {unmappedScope
+              ? '未归属任何组织的设备，按 MQTT 连接池配置分类（组织为空）'
+              : '统一管理自动机场、机库无人机、单兵与遥控器设备映射'}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[200px]">
@@ -754,6 +813,43 @@ export default function DeviceManager({ scopeRegionId }) {
         <StatCard label="遥控器" total={stats.remote.total} online={stats.remote.online} icon={Radio} accent="amber" />
       </div>
 
+      {unmappedScope && mqttSources.length > 0 && (
+        <div className="ui-card px-3 py-2.5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-dji-muted shrink-0">MQTT 连接</p>
+            <div className="ui-nav-bar w-full sm:w-auto overflow-x-auto" role="tablist" aria-label="MQTT 来源">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mqttTab === 'all'}
+                onClick={() => setMqttTab('all')}
+                className={`ui-tab whitespace-nowrap cursor-pointer ${mqttTab === 'all' ? 'ui-tab-active !bg-amber-600 !shadow-amber-600/25' : 'ui-tab-inactive'}`}
+              >
+                全部
+                <span className={`ml-1 tabular-nums ${mqttTab === 'all' ? 'text-white/85' : 'text-slate-400'}`}>
+                  {allDevices.length}
+                </span>
+              </button>
+              {mqttSources.map((src) => (
+                <button
+                  key={src.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={mqttTab === src.id}
+                  onClick={() => setMqttTab(src.id)}
+                  className={`ui-tab whitespace-nowrap cursor-pointer ${mqttTab === src.id ? 'ui-tab-active !bg-amber-600 !shadow-amber-600/25' : 'ui-tab-inactive'}`}
+                >
+                  {src.name}
+                  <span className={`ml-1 tabular-nums ${mqttTab === src.id ? 'text-white/85' : 'text-slate-400'}`}>
+                    {allDevices.filter((d) => (d.mqttProfileId || d.mqttSourceRegionId) === src.id).length}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 筛选栏 */}
       <div className="ui-card px-4 py-3">
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -780,7 +876,7 @@ export default function DeviceManager({ scopeRegionId }) {
               <option value="learned">在线学习</option>
               <option value="unmapped">未映射</option>
             </select>
-            {regions.length > 1 && (
+            {!unmappedScope && regions.length > 1 && (
               <select
                 value={applied.region}
                 onChange={(e) => setApplied((p) => ({ ...p, region: e.target.value }))}
@@ -881,7 +977,9 @@ export default function DeviceManager({ scopeRegionId }) {
                         <th className="px-3 py-2.5 text-left font-medium hidden lg:table-cell">类型</th>
                         <th className="px-3 py-2.5 text-left font-medium">SN</th>
                         <th className="px-3 py-2.5 text-left font-medium">名称</th>
-                        <th className="px-3 py-2.5 text-left font-medium hidden sm:table-cell w-20">区域</th>
+                        <th className="px-3 py-2.5 text-left font-medium hidden sm:table-cell w-20">
+                          {unmappedScope ? 'MQTT' : '区域'}
+                        </th>
                         <th className="px-3 py-2.5 text-left font-medium hidden lg:table-cell w-20">来源</th>
                         <th className="px-3 py-2.5 text-left font-medium w-20">在线</th>
                       </>
@@ -927,6 +1025,7 @@ export default function DeviceManager({ scopeRegionId }) {
                         onToggleSelect={toggleSelect}
                         onEdit={openEditDevice}
                         onDelete={removeOverride}
+                        showMqttSource={unmappedScope}
                       />
                     )
                   })}

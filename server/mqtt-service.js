@@ -149,8 +149,13 @@ class MQTTService {
 
         // 广播到WebSocket客户端
         if (this.wsService) {
-          const regionId = this.regionId || this.regionRuntime.resolveRegionIdForDevice(processedData.deviceId);
-          const proc = this.regionRuntime.getProcessor(regionId);
+          const { regionId, regionName } = this.regionRuntime.resolveDeviceRegionForBroadcast(
+            processedData.deviceId,
+            this.regionId,
+          );
+          const unmappedMeta = regionId == null
+            ? this.regionRuntime._flightUnmappedMeta(this.regionId)
+            : {};
           this.wsService.broadcast({
             type: 'device_data',
             topic: topic,
@@ -158,7 +163,8 @@ class MQTTService {
             processed: {
               ...processedData,
               regionId,
-              regionName: processedData.regionName || proc?.regionName || regionId,
+              regionName: regionId ? (processedData.regionName || regionName) : null,
+              ...unmappedMeta,
             },
             timestamp: new Date().toISOString()
           });
@@ -253,7 +259,7 @@ class MQTTService {
   publishService(gatewaySn, method, data) {
     return new Promise((resolve, reject) => {
       if (!this.client || !this.connected) {
-        reject(new Error('MQTT 未连接'));
+        reject(new Error(`MQTT 未连接（${this.regionId}）`));
         return;
       }
 
@@ -284,7 +290,7 @@ class MQTTService {
   invokeService(gatewaySn, method, data, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       if (!this.client || !this.connected) {
-        reject(new Error('MQTT 未连接'));
+        reject(new Error(`MQTT 未连接（${this.regionId}）`));
         return;
       }
 
@@ -360,12 +366,13 @@ class MQTTService {
 
     // 广播健康告警
     if (healthAlerts.length > 0 && this.wsService) {
+      const { regionId } = this.regionRuntime.resolveDeviceRegionForBroadcast(deviceId, this.regionId);
       this.wsService.broadcast({
         type: 'health_alert',
         topic: topic,
         deviceId: deviceId,
         deviceName: deviceName,
-        regionId: this.regionRuntime.resolveRegionIdForDevice(deviceId),
+        regionId,
         healthAlerts: healthAlerts,
         timestamp: new Date().toISOString()
       });
@@ -411,7 +418,10 @@ class MQTTService {
   }
 
   handleAlerts(topic, processedData) {
-    const regionId = this.regionRuntime.resolveRegionIdForDevice(processedData.deviceId);
+    const { regionId } = this.regionRuntime.resolveDeviceRegionForBroadcast(
+      processedData.deviceId,
+      this.regionId,
+    );
     processedData.alerts.forEach(alert => {
       if (this.wsService) {
         this.wsService.broadcast({

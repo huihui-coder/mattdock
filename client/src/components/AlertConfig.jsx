@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from 'react'
 import {
   Bell, Save, Send, Settings, WifiOff, Search, Download, ChevronRight,
-  ChevronDown, PanelLeftClose, PanelLeft, Pencil, FlaskConical,
+  ChevronDown, PanelLeftClose, PanelLeft, Pencil, FlaskConical, Webhook,
 } from 'lucide-react'
 import ListPagination, { paginateSlice } from './ListPagination'
+import WebhookProfilesPanel from './WebhookProfilesPanel'
+import { TYPE_LABELS, WebhookTypeIcon } from './WebhookTypeIcon'
 import { withScopeQuery } from '../lib/scope-query'
 
 const API = ''
@@ -90,7 +92,7 @@ function getStrategySummary(cfg, alertType) {
   return parts.join(' · ')
 }
 
-function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerTest, triggering }) {
+function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerTest, triggering, webhookProfiles }) {
   if (alertType === 'lost') {
     return (
       <div className="px-4 py-4 space-y-3 bg-slate-50 border-t border-slate-100">
@@ -114,11 +116,21 @@ function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerT
         </div>
         <AiAnalysisToggle deviceId={deviceId} cfg={cfg} onUpdate={onUpdate} />
         <div>
-          <label className="text-xs font-medium text-slate-700">设备专属 Webhook（选填）</label>
+          <label className="text-xs font-medium text-slate-700">推送 Webhook（选填）</label>
+          <select
+            className="ui-input mt-1 !py-1.5 cursor-pointer"
+            value={cfg.webhookProfileId || ''}
+            onChange={(e) => onUpdate(deviceId, 'webhookProfileId', e.target.value || undefined)}
+          >
+            <option value="">继承组织默认</option>
+            {webhookProfiles.filter((p) => p.enabled !== false).map((p) => (
+              <option key={p.id} value={p.id}>{p.name}（{TYPE_LABELS[p.type] || p.type}）</option>
+            ))}
+          </select>
           <input
             type="text"
-            className="ui-input mt-1 !py-1.5"
-            placeholder="留空则使用全局 Webhook"
+            className="ui-input mt-2 !py-1.5"
+            placeholder="或填写设备专属 URL（优先级高于上方选择）"
             value={cfg.webhookUrl || ''}
             onChange={(e) => onUpdate(deviceId, 'webhookUrl', e.target.value)}
           />
@@ -166,11 +178,21 @@ function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerT
         hint="告警后 AI 分析网络/市电稳定性，并结合历史记录推送结论"
       />
       <div>
-        <label className="text-xs font-medium text-slate-700">设备专属 Webhook（选填）</label>
+        <label className="text-xs font-medium text-slate-700">推送 Webhook（选填）</label>
+        <select
+          className="ui-input mt-1 !py-1.5 cursor-pointer"
+          value={cfg.webhookProfileId || ''}
+          onChange={(e) => onUpdate(deviceId, 'webhookProfileId', e.target.value || undefined)}
+        >
+          <option value="">继承组织默认</option>
+            {webhookProfiles.filter((p) => p.enabled !== false).map((p) => (
+            <option key={p.id} value={p.id}>{p.name}（{TYPE_LABELS[p.type] || p.type}）</option>
+          ))}
+        </select>
         <input
           type="text"
-          className="ui-input mt-1 !py-1.5"
-          placeholder="留空则使用全局 Webhook"
+          className="ui-input mt-2 !py-1.5"
+          placeholder="或填写设备专属 URL（优先级高于上方选择）"
           value={cfg.webhookUrl || ''}
           onChange={(e) => onUpdate(deviceId, 'webhookUrl', e.target.value)}
         />
@@ -292,7 +314,10 @@ function DeviceGroupSidebar({
 export default function AlertConfig({ devices, user, scopeRegionId }) {
   const [alertType, setAlertType] = useState('lost')
   const [globalWebhookUrl, setGlobalWebhookUrl] = useState('')
+  const [globalWebhookProfileId, setGlobalWebhookProfileId] = useState('')
   const [regionWebhooks, setRegionWebhooks] = useState({})
+  const [regionWebhookProfileIds, setRegionWebhookProfileIds] = useState({})
+  const [webhookProfiles, setWebhookProfiles] = useState([])
   const [leafRegions, setLeafRegions] = useState([])
   const [deviceRegionMap, setDeviceRegionMap] = useState({})
   const [deviceConfigs, setDeviceConfigs] = useState({})
@@ -308,16 +333,28 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const [webhookEditing, setWebhookEditing] = useState(false)
+  const [profilesVersion, setProfilesVersion] = useState(0)
+  const [configTab, setConfigTab] = useState('rules')
 
   const isMultiRegion = leafRegions.length > 1
+
+  const loadWebhookProfiles = useCallback(() => {
+    apiFetch('/api/webhook-profiles')
+      .then((r) => r.json())
+      .then((data) => setWebhookProfiles(data.profiles || []))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => { loadWebhookProfiles() }, [loadWebhookProfiles, profilesVersion])
 
   useEffect(() => {
     apiFetch(withScopeQuery('/api/alert-config', scopeRegionId))
       .then((r) => r.json())
       .then((data) => {
         setGlobalWebhookUrl(data.globalWebhookUrl || '')
+        setGlobalWebhookProfileId(data.globalWebhookProfileId || '')
         setRegionWebhooks(data.regionWebhooks || {})
+        setRegionWebhookProfileIds(data.regionWebhookProfileIds || {})
         setLeafRegions(data.leafRegions || [])
         setDeviceRegionMap(data.deviceRegionMap || {})
         setDeviceConfigs(data.deviceConfigs || {})
@@ -335,14 +372,41 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
     return deviceId
   }, [devices, deviceNameMap])
 
+  const profileById = useMemo(() => {
+    const map = {}
+    webhookProfiles.forEach((p) => { map[p.id] = p })
+    return map
+  }, [webhookProfiles])
+
   const resolveWebhookForDevice = useCallback((deviceId) => {
     const cfg = deviceConfigs[deviceId] || {}
     if (cfg.webhookUrl) return cfg.webhookUrl
+    if (cfg.webhookProfileId && profileById[cfg.webhookProfileId]?.url) {
+      return profileById[cfg.webhookProfileId].url
+    }
     const rid = deviceRegionMap[deviceId]
       || devices.find((d) => d.deviceId === deviceId)?.regionId
+    const regionProfileId = rid ? regionWebhookProfileIds[rid] : globalWebhookProfileId
+    if (regionProfileId && profileById[regionProfileId]?.url) {
+      return profileById[regionProfileId].url
+    }
     if (rid && regionWebhooks[rid]) return regionWebhooks[rid]
     return globalWebhookUrl
-  }, [deviceConfigs, deviceRegionMap, devices, regionWebhooks, globalWebhookUrl])
+  }, [deviceConfigs, deviceRegionMap, devices, regionWebhooks, globalWebhookUrl, regionWebhookProfileIds, globalWebhookProfileId, profileById])
+
+  const getPushProfile = useCallback((deviceId) => {
+    const cfg = deviceConfigs[deviceId] || {}
+    if (cfg.webhookUrl) return { type: 'custom', name: '设备 URL' }
+    if (cfg.webhookProfileId && profileById[cfg.webhookProfileId]) {
+      return profileById[cfg.webhookProfileId]
+    }
+    const rid = deviceRegionMap[deviceId]
+    const regionProfileId = rid ? regionWebhookProfileIds[rid] : globalWebhookProfileId
+    if (regionProfileId && profileById[regionProfileId]) {
+      return profileById[regionProfileId]
+    }
+    return { type: null, name: '组织默认' }
+  }, [deviceConfigs, deviceRegionMap, profileById, regionWebhookProfileIds, globalWebhookProfileId])
 
   const isDeviceEnabled = useCallback((deviceId) => {
     const cfg = deviceConfigs[deviceId] || {}
@@ -382,9 +446,11 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
     [filteredDeviceIds, page, pageSize],
   )
 
-  const webhookConfigured = isMultiRegion
-    ? leafRegions.some((r) => regionWebhooks[r.id])
-    : !!globalWebhookUrl.trim()
+
+  const enabledProfiles = useMemo(
+    () => webhookProfiles.filter((p) => p.enabled !== false),
+    [webhookProfiles],
+  )
 
   const showMsg = useCallback((text, type = 'success') => {
     setMessage({ text, type })
@@ -395,19 +461,18 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
     setSaving(true)
     try {
       const payload = isMultiRegion
-        ? { regionWebhooks, deviceConfigs }
-        : { globalWebhookUrl, deviceConfigs }
+        ? { regionWebhookProfileIds, regionWebhooks, deviceConfigs }
+        : { globalWebhookProfileId, globalWebhookUrl, deviceConfigs }
       await apiFetch(withScopeQuery('/api/alert-config', scopeRegionId), {
         method: 'POST',
         body: JSON.stringify(payload),
       })
       showMsg('配置已保存')
-      setWebhookEditing(false)
     } catch {
       showMsg('保存失败', 'error')
     }
     setSaving(false)
-  }, [globalWebhookUrl, regionWebhooks, deviceConfigs, isMultiRegion, showMsg, scopeRegionId])
+  }, [globalWebhookUrl, globalWebhookProfileId, regionWebhooks, regionWebhookProfileIds, deviceConfigs, isMultiRegion, showMsg, scopeRegionId])
 
   const handleTriggerLost = useCallback(async (deviceId) => {
     const webhookUrl = resolveWebhookForDevice(deviceId)
@@ -435,8 +500,26 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
   }, [resolveWebhookForDevice, showMsg])
 
   const handleTest = useCallback(async (regionId) => {
+    const profileId = isMultiRegion ? regionWebhookProfileIds[regionId] : globalWebhookProfileId
+    if (profileId) {
+      setTestingRegion(regionId || 'single')
+      try {
+        const res = await apiFetch(`/api/webhook-profiles/${encodeURIComponent(profileId)}/test`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error)
+        showMsg('测试消息已发送，请查看对应群聊')
+        setProfilesVersion((v) => v + 1)
+      } catch (err) {
+        showMsg(err.message || '发送失败', 'error')
+      }
+      setTestingRegion(null)
+      return
+    }
     const webhookUrl = isMultiRegion ? regionWebhooks[regionId] : globalWebhookUrl
-    if (!webhookUrl) return showMsg('请先填写 Webhook URL', 'error')
+    if (!webhookUrl) return showMsg('请先选择 Webhook 或填写推送地址', 'error')
     setTestingRegion(regionId || 'single')
     try {
       await apiFetch('/api/alert-config/test', {
@@ -448,7 +531,7 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
       showMsg('发送失败', 'error')
     }
     setTestingRegion(null)
-  }, [globalWebhookUrl, regionWebhooks, isMultiRegion, showMsg])
+  }, [globalWebhookUrl, globalWebhookProfileId, regionWebhooks, regionWebhookProfileIds, isMultiRegion, showMsg])
 
   const updateDevice = useCallback((deviceId, key, value) => {
     setDeviceConfigs((prev) => ({
@@ -467,8 +550,8 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
 
   const exportConfig = useCallback(() => {
     const payload = isMultiRegion
-      ? { regionWebhooks, deviceConfigs }
-      : { globalWebhookUrl, deviceConfigs }
+      ? { regionWebhookProfileIds, regionWebhooks, deviceConfigs }
+      : { globalWebhookProfileId, globalWebhookUrl, deviceConfigs }
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -476,7 +559,7 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
     a.download = `告警配置_${new Date().toLocaleDateString('zh-CN').replace(/\//g, '-')}.json`
     a.click()
     URL.revokeObjectURL(url)
-  }, [globalWebhookUrl, regionWebhooks, deviceConfigs, isMultiRegion])
+  }, [globalWebhookUrl, globalWebhookProfileId, regionWebhooks, regionWebhookProfileIds, deviceConfigs, isMultiRegion])
 
   const enabledKey = alertType === 'lost' ? 'enabled' : 'offlineAlertEnabled'
 
@@ -486,7 +569,9 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
       <div>
         <h1 className="text-lg font-semibold text-slate-800 tracking-tight">告警配置</h1>
         <p className="text-sm text-slate-500 mt-0.5">
-          管理飞丢与机场离线告警规则，配置企业微信推送与 AI 分析策略
+          {configTab === 'webhook'
+            ? '集中管理 Webhook 连接池，并为各组织绑定告警推送方式'
+            : '管理飞丢与机场离线告警规则，配置 AI 分析策略'}
         </p>
       </div>
 
@@ -498,101 +583,149 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
         </div>
       )}
 
-      {/* 全局 Webhook */}
-      {isMultiRegion ? (
-        <div className="space-y-3">
-          {leafRegions.map((region) => (
-            <div key={region.id} className="ui-card p-4">
-              <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-                <div className="flex items-start gap-3 flex-1 min-w-0">
-                  <span className="w-9 h-9 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0">
-                    <Settings size={16} className="text-blue-600" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-slate-800">{region.name} · 告警推送方式</p>
-                    <p className="text-xs text-slate-500 mt-0.5">仅该区域设备未单独配置时使用此地址</p>
-                    {(webhookEditing || !regionWebhooks[region.id]) ? (
+      <div className="ui-card px-3 py-2.5">
+        <div className="ui-nav-bar w-full sm:w-auto overflow-x-auto" role="tablist" aria-label="告警配置模块">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={configTab === 'rules'}
+            onClick={() => setConfigTab('rules')}
+            className={`ui-tab whitespace-nowrap cursor-pointer inline-flex items-center gap-1.5 ${
+              configTab === 'rules' ? 'ui-tab-active' : 'ui-tab-inactive'
+            }`}
+          >
+            <Bell size={14} aria-hidden />
+            告警规则
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={configTab === 'webhook'}
+            onClick={() => setConfigTab('webhook')}
+            className={`ui-tab whitespace-nowrap cursor-pointer inline-flex items-center gap-1.5 ${
+              configTab === 'webhook' ? 'ui-tab-active' : 'ui-tab-inactive'
+            }`}
+          >
+            <Webhook size={14} aria-hidden />
+            Webhook 配置
+          </button>
+        </div>
+      </div>
+
+      {configTab === 'webhook' && (
+        <>
+          <WebhookProfilesPanel onChanged={() => setProfilesVersion((v) => v + 1)} />
+
+          {/* 告警推送方式绑定 */}
+          <section className="ui-card overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100 flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Settings size={16} className="text-blue-600" aria-hidden />
+                  <h2 className="text-sm font-semibold text-slate-800">告警推送方式</h2>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  为各组织选择 Webhook 配置；设备未单独指定时将继承此处设置。仍可直接填写 URL 作为兼容备用。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="ui-btn-primary !text-xs !py-2 shrink-0 cursor-pointer disabled:opacity-50"
+              >
+                <Save size={14} />
+                {saving ? '保存中…' : '保存推送配置'}
+              </button>
+            </div>
+            <div className="p-4 space-y-3">
+          {(isMultiRegion ? leafRegions : (leafRegions.length ? leafRegions : [{ id: 'default', name: user?.regionName || '当前区域' }])).map((region) => {
+            const rid = region.id
+            const profileId = isMultiRegion ? (regionWebhookProfileIds[rid] || '') : globalWebhookProfileId
+            const legacyUrl = isMultiRegion ? (regionWebhooks[rid] || '') : globalWebhookUrl
+            const selectedProfile = profileId ? profileById[profileId] : null
+            const configured = !!(profileId || legacyUrl.trim())
+            const setProfileId = (value) => {
+              if (isMultiRegion) {
+                setRegionWebhookProfileIds((prev) => ({ ...prev, [rid]: value }))
+              } else {
+                setGlobalWebhookProfileId(value)
+              }
+            }
+            const setLegacyUrl = (value) => {
+              if (isMultiRegion) {
+                setRegionWebhooks((prev) => ({ ...prev, [rid]: value }))
+              } else {
+                setGlobalWebhookUrl(value)
+              }
+            }
+            return (
+              <div key={rid} className="rounded-lg border border-slate-200 bg-slate-50/40 p-4">
+                <div className="flex flex-col lg:flex-row lg:items-start gap-3">
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <p className="text-sm font-medium text-slate-800">{region.name}</p>
+                    <label className="block">
+                      <span className="text-xs text-slate-500">关联 Webhook</span>
+                      <select
+                        value={profileId}
+                        onChange={(e) => setProfileId(e.target.value)}
+                        className="ui-input mt-1 !py-1.5 text-sm cursor-pointer"
+                      >
+                        <option value="">未选择</option>
+                        {enabledProfiles.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}（{TYPE_LABELS[p.type] || p.type}）</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-xs text-slate-500">备用 URL（可选，兼容旧配置）</span>
                       <input
                         type="text"
-                        className="ui-input mt-2 !py-1.5 text-sm"
-                        placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
-                        value={regionWebhooks[region.id] || ''}
-                        onChange={(e) => setRegionWebhooks((prev) => ({ ...prev, [region.id]: e.target.value }))}
+                        className="ui-input mt-1 !py-1.5 text-sm font-mono"
+                        placeholder="未选 Webhook 时可直接填写 URL"
+                        value={legacyUrl}
+                        onChange={(e) => setLegacyUrl(e.target.value)}
                       />
-                    ) : (
-                      <p className="text-xs text-slate-600 mt-2 truncate font-mono">{regionWebhooks[region.id]}</p>
+                    </label>
+                    {selectedProfile && (
+                      <div className="flex items-center gap-1.5 text-xs text-slate-600">
+                        <WebhookTypeIcon type={selectedProfile.type} size={16} />
+                        <span>{selectedProfile.name}</span>
+                      </div>
                     )}
-                    <p className="text-xs mt-1.5 flex items-center gap-1.5">
-                      <span className={`w-1.5 h-1.5 rounded-full ${regionWebhooks[region.id] ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                      <span className={regionWebhooks[region.id] ? 'text-emerald-700' : 'text-slate-400'}>
-                        {regionWebhooks[region.id] ? '连接正常' : '未配置'}
+                    <p className="text-xs flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full ${configured ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                      <span className={configured ? 'text-emerald-700' : 'text-slate-400'}>
+                        {selectedProfile
+                          ? `已绑定：${selectedProfile.name}`
+                          : legacyUrl.trim()
+                            ? '使用备用 URL'
+                            : '未配置推送'}
                       </span>
                     </p>
                   </div>
-                </div>
-                <div className="flex gap-2 shrink-0">
-                  <button type="button" onClick={() => handleTest(region.id)} disabled={testingRegion === region.id}
-                    className="ui-btn-secondary !text-xs cursor-pointer disabled:opacity-50">
-                    <Send size={13} />
-                    {testingRegion === region.id ? '发送中…' : '测试'}
-                  </button>
-                  <button type="button" onClick={() => setWebhookEditing((v) => !v)}
-                    className="ui-btn-ghost !text-xs cursor-pointer">
-                    {webhookEditing ? '收起' : '修改配置'}
-                  </button>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleTest(isMultiRegion ? rid : null)}
+                      disabled={testingRegion === (isMultiRegion ? rid : 'single') || !configured}
+                      className="ui-btn-secondary !text-xs cursor-pointer disabled:opacity-50"
+                    >
+                      <Send size={13} />
+                      {testingRegion === (isMultiRegion ? rid : 'single') ? '发送中…' : '测试'}
+                    </button>
+                  </div>
                 </div>
               </div>
+            )
+          })}
             </div>
-          ))}
-        </div>
-      ) : (
-        <div className="ui-card p-4">
-          <div className="flex flex-col sm:flex-row sm:items-start gap-3">
-            <div className="flex items-start gap-3 flex-1 min-w-0">
-              <span className="w-9 h-9 rounded-lg bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0">
-                <Settings size={16} className="text-blue-600" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-slate-800">
-                  {leafRegions[0]?.name || user?.regionName || '当前区域'} · 告警推送方式
-                </p>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  本区域设备未单独配置时使用此地址。AI 分析需在服务端配置 ARK_API_KEY。
-                </p>
-                {(webhookEditing || !globalWebhookUrl) ? (
-                  <input
-                    type="text"
-                    className="ui-input mt-2 !py-1.5 text-sm"
-                    placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
-                    value={globalWebhookUrl}
-                    onChange={(e) => setGlobalWebhookUrl(e.target.value)}
-                  />
-                ) : (
-                  <p className="text-xs text-slate-600 mt-2 truncate font-mono">{globalWebhookUrl}</p>
-                )}
-                <p className="text-xs mt-1.5 flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${webhookConfigured ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                  <span className={webhookConfigured ? 'text-emerald-700' : 'text-slate-400'}>
-                    {webhookConfigured ? '连接正常' : '未配置'}
-                  </span>
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2 shrink-0">
-              <button type="button" onClick={() => handleTest(null)} disabled={testingRegion === 'single'}
-                className="ui-btn-secondary !text-xs cursor-pointer disabled:opacity-50">
-                <Send size={13} />
-                {testingRegion === 'single' ? '发送中…' : '测试'}
-              </button>
-              <button type="button" onClick={() => setWebhookEditing((v) => !v)}
-                className="ui-btn-ghost !text-xs cursor-pointer">
-                {webhookEditing ? '收起' : '修改配置'}
-              </button>
-            </div>
-          </div>
-        </div>
+          </section>
+        </>
       )}
 
+      {configTab === 'rules' && (
+        <>
       {/* 筛选与批量操作 */}
       <div className="ui-card px-4 py-3">
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -705,7 +838,8 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
                       const enabled = isDeviceEnabled(deviceId)
                       const isExpanded = expandedId === deviceId
                       const isHighlighted = selectedNodeId === deviceId
-                      const pushLabel = cfg.webhookUrl ? '设备 Webhook' : '企业微信'
+                      const pushProfile = getPushProfile(deviceId)
+                      const pushLabel = pushProfile.name
 
                       return (
                         <Fragment key={deviceId}>
@@ -734,7 +868,14 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
                             <td className="px-3 py-2.5 text-slate-600 text-xs hidden lg:table-cell max-w-[200px] truncate" title={getStrategySummary(cfg, alertType)}>
                               {getStrategySummary(cfg, alertType)}
                             </td>
-                            <td className="px-3 py-2.5 text-slate-600 text-xs hidden sm:table-cell">{pushLabel}</td>
+                            <td className="px-3 py-2.5 text-slate-600 text-xs hidden sm:table-cell">
+                              <span className="inline-flex items-center gap-1.5 max-w-[120px]">
+                                {pushProfile.type && pushProfile.type !== 'custom' && (
+                                  <WebhookTypeIcon type={pushProfile.type} size={14} />
+                                )}
+                                <span className="truncate" title={pushLabel}>{pushLabel}</span>
+                              </span>
+                            </td>
                             <td className="px-4 py-2.5">
                               <div className="flex items-center justify-end">
                                 <button
@@ -758,6 +899,7 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
                                   onUpdate={updateDevice}
                                   onTriggerTest={handleTriggerLost}
                                   triggering={!!triggeringLost[deviceId]}
+                                  webhookProfiles={webhookProfiles}
                                 />
                               </td>
                             </tr>
@@ -781,6 +923,8 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   )
 }

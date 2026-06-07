@@ -1,8 +1,41 @@
-/** 组织 Tab「全部」：不传 scopeRegionId，加载所有可见叶子区域 */
+/** 兼容旧会话：等价于选中组织树根节点 */
 export const SCOPE_ALL = '__all__'
+/** 管理员 Tab「无归属」：仅未映射设备，按 MQTT 连接区分 */
+export const SCOPE_UNMAPPED = '__unmapped__'
+
+let scopeRootRegionId = ''
+
+/** 由 App 在加载 regionTree 后注入，根组织即「全部」 */
+export function setScopeRootRegionId(regionId) {
+  scopeRootRegionId = String(regionId || '').trim()
+}
+
+export function getScopeRootRegionId() {
+  return scopeRootRegionId
+}
 
 export function isScopeAll(scopeRegionId) {
-  return !scopeRegionId || scopeRegionId === SCOPE_ALL
+  if (!scopeRegionId || scopeRegionId === SCOPE_ALL) return true
+  if (scopeRootRegionId && scopeRegionId === scopeRootRegionId) return true
+  return false
+}
+
+export function isScopeUnmapped(scopeRegionId) {
+  return scopeRegionId === SCOPE_UNMAPPED
+}
+
+/** 列表/选中态唯一键：无归属设备同一 SN 可能来自多条 MQTT 配置 */
+export function deviceScopeKey(device) {
+  if (!device?.deviceId) return ''
+  if (device.unmapped) {
+    const mqttKey = device.mqttProfileId || device.mqttSourceRegionId
+    if (mqttKey) return `${device.deviceId}@${mqttKey}`
+  }
+  return device.deviceId
+}
+
+export function deviceMqttProfileKey(device) {
+  return device?.mqttProfileId || device?.mqttSourceRegionId || ''
 }
 
 export function withScopeQuery(url, scopeRegionId) {
@@ -15,15 +48,21 @@ export function scopeStorageKey(username) {
   return `haizhu_scope_region_${username || ''}`
 }
 
-export function readStoredScopeRegion(username, leafRegions) {
-  if (!leafRegions?.length) return ''
-  if (!username) return leafRegions[0]?.id || ''
+export function readStoredScopeRegion(username, validScopeIds = [], rootRegionId = '') {
+  const ids = Array.isArray(validScopeIds)
+    ? validScopeIds
+    : (validScopeIds || []).map((r) => r?.id).filter(Boolean)
+  const rootId = String(rootRegionId || scopeRootRegionId || '').trim()
+  const defaultId = rootId && ids.includes(rootId) ? rootId : (ids[0] || '')
+  if (!ids.length) return ''
+  if (!username) return defaultId
   try {
     const stored = sessionStorage.getItem(scopeStorageKey(username))
-    if (stored === SCOPE_ALL) return SCOPE_ALL
-    if (stored && leafRegions.some((r) => r.id === stored)) return stored
+    if (stored === SCOPE_ALL) return defaultId
+    if (stored === SCOPE_UNMAPPED) return SCOPE_UNMAPPED
+    if (stored && ids.includes(stored)) return stored
   } catch {}
-  return leafRegions[0]?.id || ''
+  return defaultId
 }
 
 export function writeStoredScopeRegion(username, regionId) {

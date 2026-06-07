@@ -41,7 +41,7 @@ const {
   resolveRegionIdInScope,
   getLeafProcessorsInScope,
 } = require('./lib/region-runtime');
-const { DEFAULT_REGION_ID, getRegionById } = require('./lib/region-store');
+const { DEFAULT_REGION_ID, getRegionById, getRegionDeviceRegistryPath } = require('./lib/region-store');
 const { buildRegionTree, countUsersByRegion } = require('./lib/region-tree');
 const { MQTTManager } = require('./lib/mqtt-manager');
 const {
@@ -49,6 +49,24 @@ const {
   sanitizeConnectivityForApi,
   writeRegionConnectivity,
 } = require('./lib/region-connectivity');
+const {
+  listProfilesForApi,
+  getProfileById,
+  getProfileUsageMap,
+  createProfile,
+  updateProfile,
+  deleteProfile,
+  sanitizeProfileForApi,
+} = require('./lib/mqtt-profiles');
+const {
+  listProfilesForApi: listWebhookProfilesForApi,
+  getProfileById: getWebhookProfileById,
+  createProfile: createWebhookProfile,
+  updateProfile: updateWebhookProfile,
+  recordProfileTest,
+  deleteProfile: deleteWebhookProfile,
+  sanitizeProfileForApi: sanitizeWebhookProfileForApi,
+} = require('./lib/webhook-profiles');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -107,6 +125,27 @@ function sanitizeUser(user, { includePassword = false } = {}) {
     safe.leafRegions = leafProcs.map(({ regionId, regionName }) => ({
       id: regionId,
       name: regionName || regionId,
+    }));
+    const { buildRegionTree, getVisibleRegionIds } = require('./lib/region-tree');
+    const visibleIds = new Set(getVisibleRegionIds(safe.regionId, regions));
+    const scopedRegions = regions
+      .filter((r) => visibleIds.has(r.id))
+      .map((r) => ({ id: r.id, name: r.name || r.id, parentId: r.parentId }));
+    const fullTree = buildRegionTree(scopedRegions);
+    const findSubtree = (nodes, rootId) => {
+      for (const node of nodes) {
+        if (node.id === rootId) return [node];
+        const sub = findSubtree(node.children || [], rootId);
+        if (sub.length) return sub;
+      }
+      return nodes;
+    };
+    safe.regionTree = findSubtree(fullTree, safe.regionId).map((node) => ({
+      id: node.id,
+      name: node.name || node.id,
+      children: (node.children || []).map(function mapChild(n) {
+        return { id: n.id, name: n.name || n.id, children: (n.children || []).map(mapChild) };
+      }),
     }));
   }
   if (includePassword) safe.plainPassword = plainPassword || '';
@@ -253,6 +292,8 @@ function processorForDevice(deviceId) {
   return regionRuntime.getProcessorForDevice(deviceId);
 }
 
+const SCOPE_UNMAPPED = '__unmapped__';
+
 function attachRegionalProcessor(req, res, next) {
   const scope = regionRuntime.getScopeForUser(req.user);
   if (!scope.primaryProcessor) {
@@ -265,11 +306,20 @@ function attachRegionalProcessor(req, res, next) {
   ).trim();
 
   let visibleProcessors = leafProcessors;
-  if (scopeRegionId) {
+  let scopeUnmappedOnly = false;
+
+  if (scopeRegionId === SCOPE_UNMAPPED) {
+    if (!isAdminUser(req.user)) {
+      return res.status(403).json({ error: '仅管理员可查看无归属设备' });
+    }
+    scopeUnmappedOnly = true;
+  } else if (scopeRegionId) {
     if (!scope.visibleRegionIds.includes(scopeRegionId)) {
       return res.status(403).json({ error: '无权访问该区域' });
     }
-    const matched = leafProcessors.filter((p) => p.regionId === scopeRegionId);
+    const { getDescendantIds } = require('./lib/region-tree');
+    const subtreeIds = new Set(getDescendantIds(scopeRegionId, regions));
+    const matched = leafProcessors.filter((p) => subtreeIds.has(p.regionId));
     if (!matched.length) {
       return res.status(400).json({ error: '无效的区域筛选' });
     }
@@ -280,9 +330,23 @@ function attachRegionalProcessor(req, res, next) {
   req.regionScope = scope;
   req.visibleProcessors = visibleProcessors;
   req.visibleRegionIds = scope.visibleRegionIds;
-  req.regionId = scopeRegionId || scope.regionId;
+  req.regionId = scopeUnmappedOnly ? SCOPE_UNMAPPED : (scopeRegionId || scope.regionId);
   req.scopeRegionId = scopeRegionId || null;
+  req.scopeUnmappedOnly = scopeUnmappedOnly;
   next();
+}
+
+function isAdminUser(user) {
+  return user?.role === 'admin';
+}
+
+function collectScopeOptions(req) {
+  return { unmappedOnly: !!req.scopeUnmappedOnly };
+}
+
+function filterUnmappedRegistryRows(rows, user) {
+  if (isAdminUser(user)) return rows;
+  return rows.filter((row) => row?.source !== 'unmapped');
 }
 
 function mergeDeviceRegistryGrouped(visibleProcessors) {
@@ -614,6 +678,60 @@ app.get('/api/device-registry', requirePermission('device-config'), attachRegion
   const keyword = q ? String(q).trim().toLowerCase() : '';
   const regions = regionRuntime.listRegions();
   const leafProcessors = getLeafProcessorsInScope(req.visibleProcessors, regions);
+
+  if (req.scopeUnmappedOnly) {
+    const matchKeyword = (row) => !keyword || [
+      row?.deviceId,
+      row?.name,
+      row?.mqttSourceRegionName,
+      row?.mqttBroker,
+    ].some((v) => String(v || '').toLowerCase().includes(keyword));
+
+    let devices = regionRuntime.collectUnmappedDevicesFromScope(leafProcessors)
+      .map((d) => ({
+        deviceId: d.deviceId,
+        name: d.deviceName || d.deviceId,
+        category: leafProcessors.find((p) => p.regionId === d.mqttConnectionRegionId)?.processor.inferDeviceCategory(d.deviceId) || 'unknown',
+        categoryLabel: DeviceProcessor.DEVICE_CATEGORY_LABELS.unknown,
+        source: 'unmapped',
+        online: true,
+        lastSeen: d.lastUpdate || null,
+        gateway: d.gateway || null,
+        statusText: d.statusText || null,
+        regionId: null,
+        regionName: null,
+        mqttConnectionRegionId: d.mqttConnectionRegionId,
+        mqttProfileId: d.mqttProfileId,
+        mqttProfileName: d.mqttProfileName,
+        mqttSourceRegionId: d.mqttProfileId,
+        mqttSourceRegionName: d.mqttProfileName,
+        mqttBroker: d.mqttBroker,
+        unmapped: true,
+      }))
+      .filter((d) => {
+        const catOk = !category || category === 'all' || d.category === category;
+        return catOk && matchKeyword(d);
+      });
+
+    devices.forEach((d) => {
+      d.categoryLabel = DeviceProcessor.DEVICE_CATEGORY_LABELS[d.category] || d.category;
+    });
+
+    return res.json({
+      pairs: [],
+      singlePairs: [],
+      unboundSingles: [],
+      unboundRemotes: [],
+      unboundDrones: [],
+      devices,
+      categories: DeviceProcessor.DEVICE_CATEGORY_LABELS,
+      unmappedCount: devices.length,
+      scopeUnmappedOnly: true,
+      regionId: req.regionId,
+      visibleRegionIds: req.visibleRegionIds,
+    });
+  }
+
   const grouped = leafProcessors.length > 1
     ? mergeDeviceRegistryGrouped(leafProcessors)
     : {
@@ -640,23 +758,26 @@ app.get('/api/device-registry', requirePermission('device-config'), attachRegion
     }
   }
 
-  const devices = (grouped.devices || req.processor.getDeviceRegistryList()).filter((d) => {
-    const catOk = !category || category === 'all' || d.category === category
-      || (category === 'airport_drone' && ['airport', 'airport_drone'].includes(d.category))
-      || (category === 'remote' && ['single', 'remote'].includes(d.category));
-    const kwOk = matchKeyword(d);
-    return catOk && kwOk;
-  });
+  const devices = filterUnmappedRegistryRows(
+    (grouped.devices || req.processor.getDeviceRegistryList()).filter((d) => {
+      const catOk = !category || category === 'all' || d.category === category
+        || (category === 'airport_drone' && ['airport', 'airport_drone'].includes(d.category))
+        || (category === 'remote' && ['single', 'remote'].includes(d.category));
+      const kwOk = matchKeyword(d);
+      return catOk && kwOk;
+    }),
+    req.user,
+  );
 
   res.json({
     pairs,
     singlePairs,
-    unboundSingles: grouped.unboundSingles.filter(matchKeyword),
-    unboundRemotes: grouped.unboundRemotes.filter(matchKeyword),
-    unboundDrones: grouped.unboundDrones.filter(matchKeyword),
+    unboundSingles: filterUnmappedRegistryRows(grouped.unboundSingles.filter(matchKeyword), req.user),
+    unboundRemotes: filterUnmappedRegistryRows(grouped.unboundRemotes.filter(matchKeyword), req.user),
+    unboundDrones: filterUnmappedRegistryRows(grouped.unboundDrones.filter(matchKeyword), req.user),
     devices,
     categories: DeviceProcessor.DEVICE_CATEGORY_LABELS,
-    unmappedCount: devices.filter((d) => d.source === 'unmapped').length,
+    unmappedCount: isAdminUser(req.user) ? devices.filter((d) => d.source === 'unmapped').length : 0,
     regionId: req.regionId,
     visibleRegionIds: req.visibleRegionIds,
   });
@@ -838,11 +959,11 @@ app.get('/api/regions', requireAdmin, (req, res) => {
   const userCounts = countUsersByRegion(readUsers(), flat);
   const regions = flat.map((region) => {
     const proc = regionRuntime.getProcessor(region.id);
-    const registryPath = proc?.registryFile;
+    const registryPath = getRegionDeviceRegistryPath(region.id);
     let frozen = false;
     let mappingCount = 0;
     let deviceCount = 0;
-    if (registryPath && fs.existsSync(registryPath)) {
+    if (fs.existsSync(registryPath)) {
       try {
         const raw = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
         frozen = !!raw?.meta?.frozen;
@@ -876,6 +997,36 @@ app.post('/api/regions', requireAdmin, (req, res) => {
   }
 });
 
+app.put('/api/regions/:regionId', requireAdmin, (req, res) => {
+  try {
+    const { name, parentId } = req.body || {};
+    if (name === undefined && parentId === undefined) {
+      return res.status(400).json({ error: '请提供 name 或 parentId' });
+    }
+    const payload = {};
+    if (name !== undefined) payload.name = name;
+    if (parentId !== undefined) {
+      payload.parentId = parentId === '' || parentId == null ? null : parentId;
+    }
+    const region = regionRuntime.updateRegionMeta(req.params.regionId, payload);
+    const action = parentId !== undefined ? 'region.move' : 'region.rename';
+    auditLog(req, {
+      action,
+      resource: { type: 'region', id: region.id },
+      detail: {
+        name: region.name,
+        parentId: region.parentId,
+      },
+    });
+    res.json({
+      message: parentId !== undefined ? '区域已移动' : '区域名称已更新',
+      region,
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 app.post('/api/regions/:regionId/freeze-online', requireAdmin, (req, res) => {
   try {
     const result = regionRuntime.freezeOnlineToRegion(req.params.regionId);
@@ -890,6 +1041,147 @@ app.post('/api/regions/:regionId/freeze-online', requireAdmin, (req, res) => {
   }
 });
 
+function buildMqttProfileConnectionStatus() {
+  const status = mqttManager.getStatus();
+  const usageMap = getProfileUsageMap();
+  const byProfile = {};
+  for (const row of status.regions || []) {
+    const conn = sanitizeConnectivityForApi(row.regionId);
+    const profileId = conn.mqttProfileId;
+    if (!profileId) continue;
+    byProfile[profileId] = byProfile[profileId] || { connected: false, regions: [] };
+    byProfile[profileId].connected = byProfile[profileId].connected || row.connected;
+    byProfile[profileId].regions.push(row.regionId);
+  }
+  return byProfile;
+}
+
+app.get('/api/mqtt-profiles', requireAdmin, (req, res) => {
+  const connectionStatus = buildMqttProfileConnectionStatus();
+  const usageMap = getProfileUsageMap();
+  const profiles = listProfilesForApi().map((p) => ({
+    ...p,
+    boundRegions: usageMap[p.id] || [],
+    connected: connectionStatus[p.id]?.connected ?? null,
+  }));
+  res.json({ profiles });
+});
+
+app.post('/api/mqtt-profiles', requireAdmin, (req, res) => {
+  try {
+    const profile = createProfile(req.body || {});
+    mqttManager.reload();
+    auditLog(req, {
+      action: 'mqtt_profile.create',
+      resource: { type: 'mqtt_profile', id: profile.id },
+      detail: { name: profile.name, broker: profile.mqtt?.brokerUrl },
+    });
+    res.json({
+      message: 'MQTT 配置已创建',
+      profile: sanitizeProfileForApi(profile),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/mqtt-profiles/:profileId', requireAdmin, (req, res) => {
+  try {
+    const profile = updateProfile(req.params.profileId, req.body || {});
+    mqttManager.reload();
+    auditLog(req, {
+      action: 'mqtt_profile.update',
+      resource: { type: 'mqtt_profile', id: profile.id },
+      detail: { name: profile.name },
+    });
+    res.json({
+      message: 'MQTT 配置已更新',
+      profile: sanitizeProfileForApi(profile),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/mqtt-profiles/:profileId', requireAdmin, (req, res) => {
+  try {
+    deleteProfile(req.params.profileId);
+    mqttManager.reload();
+    auditLog(req, {
+      action: 'mqtt_profile.delete',
+      resource: { type: 'mqtt_profile', id: req.params.profileId },
+    });
+    res.json({ message: 'MQTT 配置已删除' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.get('/api/webhook-profiles', requirePermission('alert-config'), (req, res) => {
+  res.json({ profiles: listWebhookProfilesForApi() });
+});
+
+app.post('/api/webhook-profiles', requirePermission('alert-config'), (req, res) => {
+  try {
+    const profile = createWebhookProfile(req.body || {});
+    auditLog(req, {
+      action: 'webhook_profile.create',
+      resource: { type: 'webhook_profile', id: profile.id },
+      detail: { name: profile.name, type: profile.type },
+    });
+    res.json({
+      message: 'Webhook 配置已创建',
+      profile: sanitizeWebhookProfileForApi(profile),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/webhook-profiles/:profileId', requirePermission('alert-config'), (req, res) => {
+  try {
+    const profile = updateWebhookProfile(req.params.profileId, req.body || {});
+    auditLog(req, {
+      action: 'webhook_profile.update',
+      resource: { type: 'webhook_profile', id: profile.id },
+      detail: { name: profile.name },
+    });
+    res.json({
+      message: 'Webhook 配置已更新',
+      profile: sanitizeWebhookProfileForApi(profile),
+    });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/webhook-profiles/:profileId', requirePermission('alert-config'), (req, res) => {
+  try {
+    deleteWebhookProfile(req.params.profileId);
+    auditLog(req, {
+      action: 'webhook_profile.delete',
+      resource: { type: 'webhook_profile', id: req.params.profileId },
+    });
+    res.json({ message: 'Webhook 配置已删除' });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.post('/api/webhook-profiles/:profileId/test', requirePermission('alert-config'), (req, res) => {
+  const profile = getWebhookProfileById(req.params.profileId);
+  if (!profile) return res.status(404).json({ error: 'Webhook 配置不存在' });
+  if (!profile.url) return res.status(400).json({ error: 'Webhook URL 未配置' });
+  try {
+    alertService._sendWecomWebhook(profile.url, '测试设备', 'TEST-DEVICE', 99, 'test');
+    recordProfileTest(profile.id, { ok: true, message: '测试成功' });
+    res.json({ message: '测试消息已发送，请查看对应群聊' });
+  } catch (e) {
+    recordProfileTest(profile.id, { ok: false, message: e.message });
+    res.status(500).json({ error: e.message || '发送失败' });
+  }
+});
+
 app.get('/api/regions/:regionId/connectivity', requireAdmin, (req, res) => {
   const region = getRegionById(req.params.regionId);
   if (!region) return res.status(404).json({ error: '区域不存在' });
@@ -900,15 +1192,21 @@ app.put('/api/regions/:regionId/connectivity', requireAdmin, (req, res) => {
   try {
     const region = getRegionById(req.params.regionId);
     if (!region) return res.status(404).json({ error: '区域不存在' });
-    const saved = writeRegionConnectivity(req.params.regionId, req.body || {});
+    const body = req.body || {};
+    const saved = writeRegionConnectivity(req.params.regionId, body);
     mqttManager.reload();
     auditLog(req, {
       action: 'region.connectivity_update',
       resource: { type: 'region', id: req.params.regionId },
-      detail: { broker: saved.mqtt?.brokerUrl, streamBase: saved.stream?.baseUrl },
+      detail: {
+        mqttProfileId: saved.mqttProfileId || null,
+        streamBase: saved.stream?.baseUrl,
+      },
     });
     res.json({
-      message: '区域连接配置已保存，MQTT 已重连',
+      message: saved.mqttProfileId
+        ? '组织 MQTT 绑定已保存，连接已重连'
+        : '区域连接配置已保存，MQTT 已重连',
       connectivity: sanitizeConnectivityForApi(req.params.regionId),
     });
   } catch (e) {
@@ -922,6 +1220,12 @@ app.get('/api/stream/url', requireLogin, attachRegionalProcessor, (req, res) => 
   let regionId = String(req.query.regionId || '').trim();
   if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
   if (!regionId) regionId = regionRuntime.resolveRegionIdForDevice(deviceId);
+  if (!regionId) {
+    if (!isAdminUser(req.user)) {
+      return res.status(403).json({ error: '无权访问该设备推流' });
+    }
+    regionId = regionRuntime.getUnmappedSinkRegionId();
+  }
   if (!req.visibleRegionIds.includes(regionId)) {
     return res.status(403).json({ error: '无权访问该区域推流' });
   }
@@ -1050,7 +1354,9 @@ function buildAlertConfigPayload(req) {
   });
   return {
     globalWebhookUrl: scoped.globalWebhookUrl,
+    globalWebhookProfileId: scoped.globalWebhookProfileId,
     regionWebhooks: scoped.regionWebhooks,
+    regionWebhookProfileIds: scoped.regionWebhookProfileIds,
     leafRegions: scoped.leafRegions,
     deviceConfigs,
     deviceNameMap,
@@ -1075,7 +1381,7 @@ app.post('/api/alert-config', requireLogin, attachRegionalProcessor, (req, res) 
 app.post('/api/alert-config/trigger-lost', requireLogin, attachRegionalProcessor, (req, res) => {
   const { deviceId } = req.body || {};
   if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
-  if (!regionRuntime.findDeviceInScope(deviceId, req.visibleProcessors)) {
+  if (!regionRuntime.findDeviceInScope(deviceId, req.visibleProcessors, collectScopeOptions(req))) {
     return res.status(403).json({ error: '无权操作该设备' });
   }
   const proc = processorForDevice(deviceId);
@@ -1095,10 +1401,14 @@ app.post('/api/alert-config/trigger-lost', requireLogin, attachRegionalProcessor
 app.post('/api/alert-config/test', requireLogin, attachRegionalProcessor, (req, res) => {
   const { webhookUrl, snapshotDeviceId, snapshotStream } = req.body;
   if (!webhookUrl) return res.status(400).json({ error: '缺少 webhookUrl' });
-  const scopedDevices = regionRuntime.collectDevicesFromScope(req.visibleProcessors, regionRuntime.listRegions());
+  const scopedDevices = regionRuntime.collectDevicesFromScope(
+    req.visibleProcessors,
+    regionRuntime.listRegions(),
+    collectScopeOptions(req),
+  );
   const fallback = scopedDevices.find((d) => d.deviceType === 'airport' || d.deviceType === 'remote');
   const testDeviceId = snapshotDeviceId || fallback?.deviceId;
-  if (!testDeviceId || !regionRuntime.findDeviceInScope(testDeviceId, req.visibleProcessors)) {
+  if (!testDeviceId || !regionRuntime.findDeviceInScope(testDeviceId, req.visibleProcessors, collectScopeOptions(req))) {
     return res.status(400).json({ error: '当前区域没有可用于测试的设备' });
   }
   alertService._sendWecomWebhook(webhookUrl, '测试设备', testDeviceId, 99, 'test');
@@ -1132,7 +1442,11 @@ function noCache(res) {
 }
 
 app.get('/api/devices', requireLogin, attachRegionalProcessor, (req, res) => {
-  const devices = regionRuntime.collectDevicesFromScope(req.visibleProcessors, regionRuntime.listRegions());
+  const devices = regionRuntime.collectDevicesFromScope(
+    req.visibleProcessors,
+    regionRuntime.listRegions(),
+    collectScopeOptions(req),
+  );
   res.json({
     count: devices.length,
     devices,
@@ -1143,7 +1457,7 @@ app.get('/api/devices', requireLogin, attachRegionalProcessor, (req, res) => {
 
 // 获取单个设备状态
 app.get('/api/devices/:deviceId', requireLogin, attachRegionalProcessor, (req, res) => {
-  const device = regionRuntime.findDeviceInScope(req.params.deviceId, req.visibleProcessors);
+  const device = regionRuntime.findDeviceInScope(req.params.deviceId, req.visibleProcessors, collectScopeOptions(req));
   if (device) {
     res.json(device);
   } else {
@@ -1372,16 +1686,34 @@ app.post('/api/ai/analyze', async (req, res) => {
   }
 });
 
-function buildActiveFlightSessions(type, reqOrProc) {
+function flightScopeOptions(req, query = {}) {
+  const { mqttProfileId } = query;
+  return {
+    unmappedOnly: !!req.scopeUnmappedOnly,
+    mqttProfileId: mqttProfileId ? String(mqttProfileId).trim() : null,
+  };
+}
+
+function buildActiveFlightSessions(type, reqOrProc, scopeOptions = {}) {
   const regions = regionRuntime.listRegions();
+  const options = {
+    unmappedOnly: !!scopeOptions.unmappedOnly,
+    mqttProfileId: scopeOptions.mqttProfileId || null,
+  };
   if (reqOrProc?.visibleProcessors) {
-    return regionRuntime.buildActiveSessionsFromScope(type, reqOrProc.visibleProcessors, regions);
+    return regionRuntime.buildActiveSessionsFromScope(
+      type,
+      reqOrProc.visibleProcessors,
+      regions,
+      options,
+    );
   }
   const proc = reqOrProc?.primaryProcessor || reqOrProc || regionRuntime.getDefaultProcessor();
   return regionRuntime.buildActiveSessionsFromScope(
     type,
     [{ regionId: proc.regionId, regionName: proc.regionId, processor: proc }],
     regions,
+    options,
   );
 }
 
@@ -1391,6 +1723,7 @@ function flightScopeMeta(req) {
   return {
     regionId: req.regionId,
     visibleRegionIds: req.visibleRegionIds,
+    scopeUnmappedOnly: !!req.scopeUnmappedOnly,
     leafRegions: leafProcs.map(({ regionId, regionName }) => ({ id: regionId, name: regionName || regionId })),
   };
 }
@@ -1400,7 +1733,7 @@ function loadScopedFlightHistory(req, query = {}) {
   return regionRuntime.collectFlightHistoryFromScope(
     req.visibleProcessors,
     regionRuntime.listRegions(),
-    { type, startTime, endTime },
+    { type, startTime, endTime, ...flightScopeOptions(req, query) },
   );
 }
 
@@ -1409,7 +1742,7 @@ app.get('/api/flight-summary', requireLogin, attachRegionalProcessor, (req, res)
   noCache(res);
   const { type, startTime, endTime } = req.query;
   const history = loadScopedFlightHistory(req, { type, startTime, endTime });
-  const active = buildActiveFlightSessions(type, req);
+  const active = buildActiveFlightSessions(type, req, flightScopeOptions(req, req.query));
   const ranking = buildFlightRanking(history);
   res.json({
     stats: buildFlightStats(history),
@@ -1435,7 +1768,7 @@ app.get('/api/flight-records', requireLogin, attachRegionalProcessor, (req, res)
   noCache(res);
   const { type, startTime, endTime, page, limit, all } = req.query;
   const history = loadScopedFlightHistory(req, { type, startTime, endTime });
-  const active = buildActiveFlightSessions(type, req);
+  const active = buildActiveFlightSessions(type, req, flightScopeOptions(req, req.query));
   const records = mergeFlightRecords(active, history);
   console.log(`[飞行记录接口] /api/flight-records type=${type || 'all'} completed=${history.length} active=${active.length} total=${records.length}: ${active.map(s => `${s.deviceName || s.deviceId}(${s.deviceType})`).join(', ') || '无进行中'}`);
 

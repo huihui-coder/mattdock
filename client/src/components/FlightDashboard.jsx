@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
   Plane, Navigation, Clock, RefreshCw, CheckCircle2, Loader2,
   Download, FlaskConical, PieChart, ChevronRight, TrendingUp, TrendingDown,
-  Inbox, X,
+  Inbox, Radio, X,
 } from 'lucide-react'
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -12,7 +12,7 @@ import DateTimeRangePicker, { toDatetimeLocal } from './DateTimeRangePicker'
 import * as XLSX from 'xlsx'
 import { logClientAudit } from '../lib/audit-client'
 import RegionLabel from './RegionLabel'
-import { withScopeQuery, isScopeAll } from '../lib/scope-query'
+import { withScopeQuery, isScopeAll, isScopeUnmapped, deviceMqttProfileKey } from '../lib/scope-query'
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
 function apiFetch(url, opts = {}) {
@@ -262,16 +262,36 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [rankingOpen, setRankingOpen] = useState(false)
   const [simulating, setSimulating] = useState(false)
+  const [mqttTab, setMqttTab] = useState('all')
+  const [mqttProfiles, setMqttProfiles] = useState([])
   const recordsRef = useRef(null)
   const refreshRef = useRef(null)
 
   const { startTime, endTime } = datetimeRangeToQuery(applied.dates)
-  const showRegionColumn = isScopeAll(scopeRegionId) && (user?.leafRegions?.length || 0) > 1
+  const unmappedScope = isScopeUnmapped(scopeRegionId)
+  const showRegionColumn = !unmappedScope && isScopeAll(scopeRegionId) && (user?.leafRegions?.length || 0) > 1
+  const showMqttColumn = unmappedScope
 
   const buildApiUrl = useCallback((path, extra = '') => {
-    const base = `${path}?type=${applied.deviceType}&startTime=${startTime}&endTime=${endTime}${extra}`
+    const mqttQuery = unmappedScope && mqttTab !== 'all'
+      ? `&mqttProfileId=${encodeURIComponent(mqttTab)}`
+      : ''
+    const base = `${path}?type=${applied.deviceType}&startTime=${startTime}&endTime=${endTime}${mqttQuery}${extra}`
     return withScopeQuery(base, scopeRegionId)
-  }, [applied.deviceType, startTime, endTime, scopeRegionId])
+  }, [applied.deviceType, startTime, endTime, scopeRegionId, unmappedScope, mqttTab])
+
+  useEffect(() => { setMqttTab('all') }, [scopeRegionId])
+
+  useEffect(() => {
+    if (!unmappedScope) {
+      setMqttProfiles([])
+      return
+    }
+    apiFetch('/api/mqtt-profiles')
+      .then((res) => res.json())
+      .then((data) => setMqttProfiles(data.profiles || []))
+      .catch(() => setMqttProfiles([]))
+  }, [unmappedScope])
 
   useEffect(() => {
     if (!onFlightViewChange) return
@@ -352,7 +372,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
     setPage(1)
   }
 
-  useEffect(() => { refreshAll(true) }, [applied, user?.regionId, user?.username, scopeRegionId])
+  useEffect(() => { refreshAll(true) }, [applied, user?.regionId, user?.username, scopeRegionId, mqttTab])
 
   useEffect(() => {
     if (activeCount <= 0) return undefined
@@ -382,6 +402,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
         序号: i + 1,
         状态: r.status === 'active' ? '进行中' : '已完成',
         设备名称: getRecordDeviceName(r),
+        ...(showMqttColumn ? { MQTT: r.mqttProfileName || r.mqttSourceRegionName || '' } : {}),
         ...(showRegionColumn ? { 区域: r.regionName || r.regionId || '' } : {}),
         起飞时间: r.startTime ? new Date(r.startTime).toLocaleString('zh-CN') : '--',
         降落时间: r.status === 'active' ? '--' : (r.endTime ? new Date(r.endTime).toLocaleString('zh-CN') : '--'),
@@ -437,8 +458,55 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
     ? `${(stats.mileage / 1000).toFixed(2)} km`
     : `${Math.round(stats.mileage)} m`
 
+  const mqttSources = useMemo(() => {
+    const map = new Map()
+    mqttProfiles.forEach((p) => map.set(p.id, p.name || p.id))
+    records.forEach((r) => {
+      const id = deviceMqttProfileKey(r)
+      const name = r.mqttProfileName || r.mqttSourceRegionName || id
+      if (id) map.set(id, name)
+    })
+    ranking.forEach((r) => {
+      const id = deviceMqttProfileKey(r)
+      const name = r.mqttProfileName || r.mqttSourceRegionName || id
+      if (id) map.set(id, name)
+    })
+    return [...map.entries()].map(([id, name]) => ({ id, name }))
+  }, [mqttProfiles, records, ranking])
+
   return (
     <div className="space-y-4">
+      {unmappedScope && mqttSources.length > 0 && (
+        <div className="ui-card px-3 py-2.5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-dji-muted shrink-0">MQTT 连接（组织为空）</p>
+            <div className="ui-nav-bar w-full sm:w-auto overflow-x-auto" role="tablist" aria-label="MQTT 连接">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mqttTab === 'all'}
+                onClick={() => setMqttTab('all')}
+                className={`ui-tab whitespace-nowrap cursor-pointer ${mqttTab === 'all' ? 'ui-tab-active !bg-amber-600 !shadow-amber-600/25' : 'ui-tab-inactive'}`}
+              >
+                全部
+              </button>
+              {mqttSources.map((src) => (
+                <button
+                  key={src.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={mqttTab === src.id}
+                  onClick={() => setMqttTab(src.id)}
+                  className={`ui-tab whitespace-nowrap cursor-pointer ${mqttTab === src.id ? 'ui-tab-active !bg-amber-600 !shadow-amber-600/25' : 'ui-tab-inactive'}`}
+                >
+                  {src.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 筛选栏 */}
       <div className="ui-card px-4 py-3">
         <div className="flex flex-col lg:flex-row lg:items-center gap-3">
@@ -592,6 +660,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
                     <tr className="text-xs text-slate-400 border-b border-slate-100">
                       <th className="px-4 py-2.5 text-left font-medium w-20">状态</th>
                       <th className="px-4 py-2.5 text-left font-medium">设备</th>
+                      {showMqttColumn && <th className="px-4 py-2.5 text-left font-medium">MQTT</th>}
                       {showRegionColumn && <th className="px-4 py-2.5 text-left font-medium">区域</th>}
                       <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">起飞时间</th>
                       <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">里程</th>
@@ -615,6 +684,17 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
                         <td className="px-4 py-2.5 font-medium text-slate-800 max-w-[200px] truncate" title={getRecordDeviceName(r)}>
                           {getRecordDeviceName(r)}
                         </td>
+                        {showMqttColumn && (
+                          <td className="px-4 py-2.5">
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-medium"
+                              title={r.mqttBroker || undefined}
+                            >
+                              <Radio size={10} aria-hidden />
+                              {r.mqttProfileName || r.mqttSourceRegionName || '—'}
+                            </span>
+                          </td>
+                        )}
                         {showRegionColumn && (
                           <td className="px-4 py-2.5"><RegionLabel regionId={r.regionId} regionName={r.regionName} /></td>
                         )}

@@ -1441,6 +1441,13 @@ class DeviceProcessor {
     return this.deviceStates.get(deviceId);
   }
 
+  /** 无归属设备：记录实际 MQTT 连接池来源（smartcity-prod / haizhu-local 等） */
+  patchDeviceMqttSource(deviceId, mqttConnectionRegionId) {
+    const state = this.deviceStates.get(deviceId);
+    if (!state || !mqttConnectionRegionId) return;
+    state.mqttConnectionRegionId = mqttConnectionRegionId;
+  }
+
   /** 控制指令成功后写入 Dock 状态（OSD 延迟时 UI 仍可识别） */
   patchDockControlState(deviceId, patch = {}) {
     const state = this.deviceStates.get(deviceId);
@@ -1659,6 +1666,7 @@ class DeviceProcessor {
     return ids;
   }
 
+  /** 是否已映射到本区域（不含仅 MQTT 在线、未写入 registry 的设备） */
   isDeviceInRegion(deviceId) {
     const id = String(deviceId || '');
     if (!id) return false;
@@ -1668,7 +1676,6 @@ class DeviceProcessor {
     if (this.registryRemoteBindings[id]) return true;
     if (Object.values(this.registryRemoteBindings).includes(id)) return true;
     if (this.deviceNames[id]) return true;
-    if (this.deviceStates.has(id)) return true;
     return false;
   }
 

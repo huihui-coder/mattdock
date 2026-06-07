@@ -1,0 +1,36 @@
+[
+  {
+    "id": "haizhu-local",
+    "name": "海珠-MQTT",
+    "remark": "海珠区域接入示例",
+    "mqtt": {
+      "brokerUrl": "tcp://183.6.33.81:1883",
+      "username": "zfiUser",
+      "password": "",
+      "clientId": "NEST20202412U002",
+      "topics": "thing/product/+/osd,thing/product/+/state,thing/product/+/events",
+      "protocolVersion": 5
+    },
+    "stream": {
+      "baseUrl": "https://www.hzdkjw.com:1443/live",
+      "token": ""
+    }
+  },
+  {
+    "id": "smartcity-prod",
+    "name": "增城-MQTT",
+    "remark": "智飞 smartcity 平台示例",
+    "mqtt": {
+      "brokerUrl": "tcp://smartcity.zhifei.tech:1883",
+      "username": "zfiUser",
+      "password": "",
+      "clientId": "monitor-shared-smartcity",
+      "topics": "thing/product/+/osd,thing/product/+/state,thing/product/+/events",
+      "protocolVersion": 4
+    },
+    "stream": {
+      "baseUrl": "https://live.zhifei.tech:24143/live",
+      "token": ""
+    }
+  }
+]

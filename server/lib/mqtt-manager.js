@@ -1,13 +1,17 @@
 const MQTTService = require('../mqtt-service');
 const { readRegions } = require('./region-store');
-const { resolveConnectivity, shouldConnectRegion } = require('./region-connectivity');
+const {
+  resolveConnectivity,
+  shouldConnectRegion,
+  getMqttConnectionKey,
+} = require('./region-connectivity');
 
 class MQTTManager {
   constructor(wsService, alertService, regionRuntime) {
     this.wsService = wsService;
     this.alertService = alertService;
     this.regionRuntime = regionRuntime;
-    /** @type {Map<string, MQTTService>} */
+    /** @type {Map<string, MQTTService>} regionId -> 连接（同配置池复用同一实例） */
     this.connections = new Map();
     this.onConnectionChange = null;
   }
@@ -15,9 +19,13 @@ class MQTTManager {
   connectAll() {
     this.disconnectAll(false);
     const regions = readRegions();
+    /** @type {Map<string, MQTTService>} connectionKey -> 共享连接 */
+    const pool = new Map();
+
     for (const region of regions) {
       if (!shouldConnectRegion(region.id)) continue;
-      const cfg = resolveConnectivity(region.id).mqtt;
+      const resolved = resolveConnectivity(region.id);
+      const cfg = resolved.mqtt;
       if (!cfg.brokerUrl) continue;
       if (!cfg.username || !cfg.password) {
         console.warn(
@@ -25,21 +33,29 @@ class MQTTManager {
         );
         continue;
       }
-      const service = new MQTTService({
-        regionId: region.id,
-        brokerUrl: cfg.brokerUrl,
-        username: cfg.username,
-        password: cfg.password,
-        clientId: cfg.clientId,
-        topics: cfg.topics,
-        protocolVersion: cfg.protocolVersion,
-      }, this.wsService, this.alertService, this.regionRuntime);
-      service.onStatusChange = () => this._notifyStatusChange();
-      service.connect();
+
+      const connectionKey = getMqttConnectionKey(region.id);
+      let service = pool.get(connectionKey);
+      if (!service) {
+        service = new MQTTService({
+          regionId: connectionKey,
+          brokerUrl: cfg.brokerUrl,
+          username: cfg.username,
+          password: cfg.password,
+          clientId: cfg.clientId,
+          topics: cfg.topics,
+          protocolVersion: cfg.protocolVersion,
+        }, this.wsService, this.alertService, this.regionRuntime);
+        service.onStatusChange = () => this._notifyStatusChange();
+        service.connect();
+        pool.set(connectionKey, service);
+        console.log(
+          `[MQTT] 连接池 ${connectionKey} → ${cfg.brokerUrl} clientId=${cfg.clientId} user=${cfg.username} mqttv=${cfg.protocolVersion || 5}`,
+        );
+      } else {
+        console.log(`[MQTT] 区域 ${region.id} 复用连接池 ${connectionKey}`);
+      }
       this.connections.set(region.id, service);
-      console.log(
-        `[MQTT] 区域 ${region.id} → ${cfg.brokerUrl} clientId=${cfg.clientId} user=${cfg.username} mqttv=${cfg.protocolVersion || 5}`,
-      );
     }
     this._notifyStatusChange();
   }
@@ -49,7 +65,10 @@ class MQTTManager {
   }
 
   disconnectAll(notify = true) {
+    const seen = new Set();
     for (const service of this.connections.values()) {
+      if (seen.has(service)) continue;
+      seen.add(service);
       service.disconnect();
     }
     this.connections.clear();
@@ -70,11 +89,19 @@ class MQTTManager {
 
   getForDevice(deviceId) {
     const regionId = this.regionRuntime.resolveRegionIdForDevice(deviceId);
-    return this.getForRegion(regionId) || this.connections.values().next().value || null;
+    if (regionId) {
+      const service = this.getForRegion(regionId);
+      if (service) return service;
+    }
+    const sinkId = this.regionRuntime.getUnmappedSinkRegionId();
+    return this.getForRegion(sinkId) || this.connections.values().next().value || null;
   }
 
   isConnected() {
+    const seen = new Set();
     for (const service of this.connections.values()) {
+      if (seen.has(service)) continue;
+      seen.add(service);
       if (service.isConnected()) return true;
     }
     return false;
@@ -86,12 +113,19 @@ class MQTTManager {
 
   getStatus() {
     const regions = [];
+    const seen = new Set();
     for (const [regionId, service] of this.connections.entries()) {
-      const cfg = resolveConnectivity(regionId).mqtt;
+      const resolved = resolveConnectivity(regionId);
+      const connectionKey = getMqttConnectionKey(regionId);
+      const pooled = seen.has(service);
+      if (!pooled) seen.add(service);
       regions.push({
         regionId,
+        connectionKey,
+        mqttProfileId: resolved.mqttProfileId || null,
         connected: service.isConnected(),
-        broker: cfg.brokerUrl,
+        broker: resolved.mqtt.brokerUrl,
+        pooled: pooled,
       });
     }
     return {
@@ -103,12 +137,22 @@ class MQTTManager {
   invokeService(deviceId, method, data, timeoutMs) {
     const service = this.getForDevice(deviceId);
     if (!service) throw new Error('该区域 MQTT 未配置或未连接');
+    if (!service.isConnected()) {
+      const regionId = this.regionRuntime.resolveRegionIdForDevice(deviceId);
+      const key = regionId ? getMqttConnectionKey(regionId) : 'default';
+      throw new Error(`MQTT 未连接（${key}）`);
+    }
     return service.invokeService(deviceId, method, data, timeoutMs);
   }
 
   publishService(deviceId, method, data) {
     const service = this.getForDevice(deviceId);
     if (!service) throw new Error('该区域 MQTT 未配置或未连接');
+    if (!service.isConnected()) {
+      const regionId = this.regionRuntime.resolveRegionIdForDevice(deviceId);
+      const key = regionId ? getMqttConnectionKey(regionId) : 'default';
+      throw new Error(`MQTT 未连接（${key}）`);
+    }
     return service.publishService(deviceId, method, data);
   }
 

@@ -18,10 +18,11 @@ const { captureStreamSnapshot } = require('./lib/stream-snapshot');
 const { isDockSeriesAirport } = require('./lib/dock-service');
 const { launchLostAlertJob } = require('./lib/lost-alert-job-launcher');
 const { computeLocationDistanceContext } = require('./lib/geo-utils');
+const { getProfileUrl } = require('./lib/webhook-profiles');
 
 class AlertService {
   constructor(options = {}) {
-    /** @type {Map<string, { globalWebhookUrl: string, deviceConfigs: Object }>} */
+    /** @type {Map<string, { globalWebhookUrl: string, webhookProfileId: string, deviceConfigs: Object }>} */
     this.regionStores = new Map();
     // deviceId -> 当前是否在舱 (true=在舱)
     this.droneInDockState = {};
@@ -47,7 +48,7 @@ class AlertService {
 
   _loadRegionConfig(regionId) {
     const file = getRegionAlertConfigPath(regionId);
-    let data = { globalWebhookUrl: '', deviceConfigs: {} };
+    let data = { globalWebhookUrl: '', webhookProfileId: '', deviceConfigs: {} };
     try {
       if (fs.existsSync(file)) {
         data = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -57,6 +58,7 @@ class AlertService {
     }
     this.regionStores.set(regionId, {
       globalWebhookUrl: data.globalWebhookUrl || '',
+      webhookProfileId: data.webhookProfileId || '',
       deviceConfigs: data.deviceConfigs || {},
     });
   }
@@ -83,6 +85,7 @@ class AlertService {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, JSON.stringify({
         globalWebhookUrl: store.globalWebhookUrl,
+        webhookProfileId: store.webhookProfileId || '',
         deviceConfigs: store.deviceConfigs,
       }, null, 2), 'utf8');
     } catch (e) {
@@ -97,9 +100,28 @@ class AlertService {
     return { regionId, store, cfg: store.deviceConfigs[deviceId] };
   }
 
+  _resolveWebhookUrl({ webhookUrl, webhookProfileId, fallbackUrl, fallbackProfileId } = {}) {
+    if (webhookUrl) return webhookUrl;
+    if (webhookProfileId) {
+      const fromProfile = getProfileUrl(webhookProfileId);
+      if (fromProfile) return fromProfile;
+    }
+    if (fallbackUrl) return fallbackUrl;
+    if (fallbackProfileId) {
+      const fromProfile = getProfileUrl(fallbackProfileId);
+      if (fromProfile) return fromProfile;
+    }
+    return '';
+  }
+
   _webhookFor(deviceId, sourceRegionId) {
     const { store, cfg } = this._deviceEntry(deviceId, sourceRegionId);
-    return cfg.webhookUrl || store.globalWebhookUrl;
+    return this._resolveWebhookUrl({
+      webhookUrl: cfg.webhookUrl,
+      webhookProfileId: cfg.webhookProfileId,
+      fallbackUrl: store.globalWebhookUrl,
+      fallbackProfileId: store.webhookProfileId,
+    });
   }
 
   _saveForDevice(deviceId) {
@@ -120,11 +142,13 @@ class AlertService {
     const leaves = getLeafProcessorsInScope(processors, regions);
     const deviceConfigs = {};
     const regionWebhooks = {};
+    const regionWebhookProfileIds = {};
     const leafRegions = [];
 
     for (const { regionId: rid, regionName } of leaves) {
       const store = this._store(rid);
       regionWebhooks[rid] = store.globalWebhookUrl || '';
+      regionWebhookProfileIds[rid] = store.webhookProfileId || '';
       leafRegions.push({ id: rid, name: regionName || rid });
       for (const [deviceId, cfg] of Object.entries(store.deviceConfigs)) {
         const owner = resolveRegionIdInScope(deviceId, processors, regions) || rid;
@@ -135,7 +159,9 @@ class AlertService {
     const singleLeafId = leaves.length === 1 ? leaves[0].regionId : null;
     return {
       globalWebhookUrl: singleLeafId ? (regionWebhooks[singleLeafId] || '') : '',
+      globalWebhookProfileId: singleLeafId ? (regionWebhookProfileIds[singleLeafId] || '') : '',
       regionWebhooks,
+      regionWebhookProfileIds,
       leafRegions,
       deviceConfigs,
       regionId: primaryRegionId,
@@ -167,12 +193,33 @@ class AlertService {
     this._saveRegionConfig(regionId);
   }
 
-  updateScopedConfigs(scope, { globalWebhookUrl, regionWebhooks, deviceConfigs }) {
+  updateScopedConfigs(scope, {
+    globalWebhookUrl,
+    globalWebhookProfileId,
+    regionWebhooks,
+    regionWebhookProfileIds,
+    deviceConfigs,
+  }) {
     const visibleRegionIds = scope?.visibleRegionIds || [];
     const regions = readRegions();
     const leaves = getLeafProcessorsInScope(scope?.processors || [], regions);
     const leafIds = new Set(leaves.map((p) => p.regionId));
     const { ids: allowedIds } = collectAlertConfigDeviceIds(scope?.processors || [], regions);
+
+    if (regionWebhookProfileIds && typeof regionWebhookProfileIds === 'object') {
+      for (const [rid, profileId] of Object.entries(regionWebhookProfileIds)) {
+        if (!leafIds.has(rid)) continue;
+        if (visibleRegionIds.length && !visibleRegionIds.includes(rid)) continue;
+        const store = this._store(rid);
+        store.webhookProfileId = profileId || '';
+        this._saveRegionConfig(rid);
+      }
+    } else if (globalWebhookProfileId !== undefined && leaves.length === 1) {
+      const rid = leaves[0].regionId;
+      const store = this._store(rid);
+      store.webhookProfileId = globalWebhookProfileId || '';
+      this._saveRegionConfig(rid);
+    }
 
     if (regionWebhooks && typeof regionWebhooks === 'object') {
       for (const [rid, url] of Object.entries(regionWebhooks)) {

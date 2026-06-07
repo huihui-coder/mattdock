@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { getRegionDir, DEFAULT_REGION_ID } = require('./region-store');
+const { getProfileById } = require('./mqtt-profiles');
 
 function getConnectivityPath(regionId) {
   return path.join(getRegionDir(regionId), 'connectivity.json');
@@ -62,12 +63,55 @@ function hasRegionConnectivity(regionId) {
 }
 
 function resolveConnectivity(regionId) {
-  const file = readRegionConnectivityFile(regionId);
-  const mqtt = mergeMqttConfig(file?.mqtt);
-  const stream = { ...getDefaultStreamConfig(), ...(file?.stream || {}) };
+  const id = String(regionId || '').trim();
+
+  // 连接池 key 即 mqtt profile id（如 smartcity-prod），优先按配置池解析
+  const profileByKey = id ? getProfileById(id) : null;
+  if (profileByKey) {
+    return {
+      mqtt: mergeMqttConfig(profileByKey.mqtt),
+      stream: { ...getDefaultStreamConfig(), ...(profileByKey.stream || {}) },
+      hasFile: false,
+      mqttProfileId: profileByKey.id,
+      mqttProfileName: profileByKey.name || profileByKey.id,
+    };
+  }
+
+  const file = readRegionConnectivityFile(id);
+  let mqtt;
+  let stream;
+  let mqttProfileId = file?.mqttProfileId || null;
+  let mqttProfileName = null;
+
+  if (mqttProfileId) {
+    const profile = getProfileById(mqttProfileId);
+    if (profile) {
+      mqttProfileName = profile.name || profile.id;
+      mqtt = mergeMqttConfig(profile.mqtt);
+      stream = { ...getDefaultStreamConfig(), ...(profile.stream || {}) };
+    } else {
+      mqttProfileId = null;
+    }
+  }
+
+  if (!mqtt) {
+    mqtt = mergeMqttConfig(file?.mqtt);
+  }
+
+  if (!stream) {
+    stream = { ...getDefaultStreamConfig(), ...(file?.stream || {}) };
+  }
+
   if (file?.stream?.baseUrl) stream.baseUrl = String(file.stream.baseUrl).replace(/\/$/, '');
   if (file?.stream?.token) stream.token = String(file.stream.token).trim();
-  return { mqtt, stream, hasFile: !!file };
+
+  return {
+    mqtt,
+    stream,
+    hasFile: !!file,
+    mqttProfileId,
+    mqttProfileName,
+  };
 }
 
 function buildStreamUrl(regionId, deviceId, suffix = '_out') {
@@ -83,7 +127,37 @@ function buildStreamUrl(regionId, deviceId, suffix = '_out') {
   return url;
 }
 
+function writeRegionBinding(regionId, payload = {}) {
+  const mqttProfileId = String(payload.mqttProfileId || '').trim();
+  if (!mqttProfileId) throw new Error('请选择 MQTT 配置');
+  if (!getProfileById(mqttProfileId)) throw new Error('MQTT 配置不存在');
+
+  const stream = payload.stream || {};
+  const existing = readRegionConnectivityFile(regionId) || {};
+  const tokenFromRequest = stream.token !== undefined && String(stream.token).trim()
+    ? String(stream.token).trim()
+    : null;
+
+  const next = {
+    mqttProfileId,
+    stream: {
+      baseUrl: String(stream.baseUrl || existing.stream?.baseUrl || '').replace(/\/$/, ''),
+      token: tokenFromRequest || existing.stream?.token || '',
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  const file = getConnectivityPath(regionId);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.tmp`;
+  fs.writeFileSync(temp, JSON.stringify(next, null, 2), 'utf8');
+  fs.renameSync(temp, file);
+  return next;
+}
+
 function writeRegionConnectivity(regionId, payload) {
+  if (payload?.mqttProfileId !== undefined) {
+    return writeRegionBinding(regionId, payload);
+  }
   const mqtt = payload?.mqtt || {};
   const stream = payload?.stream || {};
   if (!mqtt.brokerUrl && !stream.baseUrl) {
@@ -138,11 +212,14 @@ function writeRegionConnectivity(regionId, payload) {
 }
 
 function sanitizeConnectivityForApi(regionId) {
-  const { mqtt, stream, hasFile } = resolveConnectivity(regionId);
+  const { mqtt, stream, hasFile, mqttProfileId, mqttProfileName } = resolveConnectivity(regionId);
+  const usage = mqttProfileId ? getProfileById(mqttProfileId) : null;
   return {
     regionId,
     hasFile,
     usesEnvDefaults: regionId === DEFAULT_REGION_ID && !hasFile,
+    mqttProfileId: mqttProfileId || null,
+    mqttProfileName: mqttProfileName || usage?.name || null,
     mqtt: {
       brokerUrl: mqtt.brokerUrl || '',
       username: mqtt.username || '',
@@ -167,7 +244,16 @@ function listRegionsWithConnectivity(regions) {
 
 function shouldConnectRegion(regionId) {
   if (regionId === DEFAULT_REGION_ID) return true;
-  return hasRegionConnectivity(regionId);
+  const file = readRegionConnectivityFile(regionId);
+  if (!file) return false;
+  if (file.mqttProfileId) return true;
+  return !!(file.mqtt?.brokerUrl || file.stream?.baseUrl);
+}
+
+/** 同一 MQTT 配置池共享一条连接（mqttProfileId），否则按区域 id */
+function getMqttConnectionKey(regionId) {
+  const { mqttProfileId } = resolveConnectivity(regionId);
+  return mqttProfileId || regionId;
 }
 
 module.exports = {
@@ -179,7 +265,9 @@ module.exports = {
   resolveConnectivity,
   buildStreamUrl,
   writeRegionConnectivity,
+  writeRegionBinding,
   sanitizeConnectivityForApi,
   listRegionsWithConnectivity,
   shouldConnectRegion,
+  getMqttConnectionKey,
 };

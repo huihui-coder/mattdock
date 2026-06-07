@@ -15,7 +15,18 @@ import ImageStudio from './components/ImageStudio'
 import AuditLogViewer from './components/AuditLogViewer'
 import FloatingAssistant from './components/FloatingAssistant'
 import RegionScopeTabs from './components/RegionScopeTabs'
-import { withScopeQuery, readStoredScopeRegion, writeStoredScopeRegion, isScopeAll } from './lib/scope-query'
+import {
+  withScopeQuery,
+  readStoredScopeRegion,
+  writeStoredScopeRegion,
+  setScopeRootRegionId,
+  isScopeAll,
+  isScopeUnmapped,
+  SCOPE_ALL,
+  deviceScopeKey,
+  deviceMqttProfileKey,
+} from './lib/scope-query'
+import { collectAllIds, collectLeafIdsUnder, treeHasBranches } from './lib/region-tree'
 import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users, Sparkles, HardDrive, ScrollText } from 'lucide-react'
 
 const SCOPE_AWARE_TABS = new Set(['monitor', 'alert-config', 'flight-records', 'devices'])
@@ -49,10 +60,18 @@ function App() {
   const [statusFilter, setStatusFilter] = useState(null)  // 状态筛选：null/warning/critical
   const [cockpitDevice, setCockpitDevice] = useState(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [mqttTab, setMqttTab] = useState('all')
+  const [mqttProfiles, setMqttProfiles] = useState([])
   const [scopeRegionId, setScopeRegionId] = useState(() => {
     const u = getStoredUser()
-    if (u?.leafRegions?.length > 1) return readStoredScopeRegion(u.username, u.leafRegions)
-    return u?.leafRegions?.[0]?.id || u?.regionId || ''
+    const tree = u?.regionTree || []
+    const rootId = tree[0]?.id || ''
+    if (rootId) setScopeRootRegionId(rootId)
+    const validIds = collectAllIds(tree)
+    if (validIds.length > 1 || treeHasBranches(tree)) {
+      return readStoredScopeRegion(u?.username, validIds, rootId)
+    }
+    return validIds[0] || u?.leafRegions?.[0]?.id || u?.regionId || ''
   })
   const wsRef = useRef(null)
   const alertUpdateTimerRef = useRef(null)
@@ -160,50 +179,79 @@ function App() {
   }, [visibleRegionIds])
 
   const leafRegions = useMemo(() => user?.leafRegions || [], [user?.leafRegions])
-  const showScopeTabs = leafRegions.length > 1 && SCOPE_AWARE_TABS.has(activeTab)
+  const regionTree = useMemo(() => user?.regionTree || [], [user?.regionTree])
+  const scopeRootId = useMemo(() => regionTree[0]?.id || '', [regionTree])
+  const scopeSelectableIds = useMemo(() => collectAllIds(regionTree), [regionTree])
+
+  useEffect(() => {
+    setScopeRootRegionId(scopeRootId)
+  }, [scopeRootId])
+  const isAdmin = user?.role === 'admin'
+  const showScopeTabs = useMemo(() => {
+    if (!SCOPE_AWARE_TABS.has(activeTab)) return false
+    if (leafRegions.length > 1 || treeHasBranches(regionTree)) return true
+    return isAdmin
+  }, [activeTab, leafRegions.length, regionTree, isAdmin])
+
+  const scopeLeafIds = useMemo(() => {
+    if (isScopeUnmapped(scopeRegionId)) return null
+    if (isScopeAll(scopeRegionId) || scopeRegionId === scopeRootId) return null
+    const leaves = collectLeafIdsUnder(regionTree, scopeRegionId)
+    return leaves.length ? leaves : (scopeRegionId ? [scopeRegionId] : null)
+  }, [regionTree, scopeRegionId, scopeRootId])
 
   useEffect(() => {
     if (!user?.username) {
       setScopeRegionId('')
       return
     }
-    if (leafRegions.length <= 1) {
-      setScopeRegionId(leafRegions[0]?.id || user.regionId || '')
+    if (scopeSelectableIds.length <= 1 && !treeHasBranches(regionTree) && !isAdmin) {
+      setScopeRegionId(scopeSelectableIds[0] || leafRegions[0]?.id || user.regionId || '')
       return
     }
-    setScopeRegionId(readStoredScopeRegion(user.username, leafRegions))
-  }, [user?.username, user?.regionId, leafRegions])
+    setScopeRegionId(readStoredScopeRegion(user.username, scopeSelectableIds, scopeRootId))
+  }, [user?.username, user?.regionId, leafRegions, scopeSelectableIds, regionTree, scopeRootId, isAdmin])
 
   const handleScopeRegionChange = useCallback((regionId) => {
     setScopeRegionId(regionId)
     if (user?.username) writeStoredScopeRegion(user.username, regionId)
+    setMqttTab('all')
     setSelectedDevice(null)
     setCockpitDevice(null)
   }, [user?.username])
 
   const isInActiveScope = useCallback((regionId) => {
-    if (!regionId) return false
-    if (isScopeAll(scopeRegionId)) return isInRegionScope(regionId)
+    if (isScopeUnmapped(scopeRegionId)) {
+      return (regionId == null || regionId === '') && isAdmin
+    }
+    if (regionId == null || regionId === '') return false
+    if (isScopeAll(scopeRegionId) || scopeRegionId === scopeRootId) return isInRegionScope(regionId)
+    if (scopeLeafIds?.length) return scopeLeafIds.includes(regionId)
     return regionId === scopeRegionId
-  }, [scopeRegionId, isInRegionScope])
+  }, [scopeRegionId, scopeRootId, isInRegionScope, isAdmin, scopeLeafIds])
 
   const handleMessage = useCallback((data) => {
     switch (data.type) {
       case 'connection':
         setMqttConnected(data.status === 'connected')
         break
-      case 'device_data':
-        if (!isInActiveScope(data.processed?.regionId)) break
-        // 直接更新设备数据，覆盖之前的
+      case 'device_data': {
+        const processed = data.processed
+        if (isScopeUnmapped(scopeRegionId)) {
+          if (processed?.regionId || !isAdmin) break
+        } else if (!isInActiveScope(processed?.regionId)) {
+          break
+        }
         setDevices(prev => {
-          const index = prev.findIndex(d => d.deviceId === data.processed.deviceId)
+          const key = deviceScopeKey(processed)
+          const index = prev.findIndex(d => deviceScopeKey(d) === key)
           const prevDevice = index >= 0 ? prev[index] : null
           const newDevice = {
-            ...data.processed,
-            regionId: data.processed.regionId || prevDevice?.regionId,
-            regionName: data.processed.regionName || prevDevice?.regionName,
+            ...processed,
+            regionId: processed.unmapped ? null : (processed.regionId ?? prevDevice?.regionId ?? null),
+            regionName: processed.unmapped ? null : (processed.regionName || prevDevice?.regionName),
             raw: data.raw,
-            topic: data.topic
+            topic: data.topic,
           }
           if (index >= 0) {
             const updated = [...prev]
@@ -213,6 +261,7 @@ function App() {
           return [...prev, newDevice]
         })
         break
+      }
       case 'alert':
         if (!isInActiveScope(data.regionId)) break
         // 将告警放入缓冲区，等待定时更新
@@ -258,7 +307,7 @@ function App() {
       default:
         break
     }
-  }, [isInActiveScope])
+  }, [isInActiveScope, scopeRegionId, isAdmin])
 
   // 详情弹窗打开时，跟随 WebSocket 实时刷新同一设备
   useEffect(() => {
@@ -292,11 +341,11 @@ function App() {
       return
     }
 
-    if (!user.leafRegions) {
+    if (!user.leafRegions || !user.regionTree?.length) {
       apiFetch('/api/me')
         .then(async (res) => (res.ok ? res.json() : null))
         .then((data) => {
-          if (data?.user?.leafRegions) {
+          if (data?.user?.leafRegions || data?.user?.regionTree) {
             localStorage.setItem('auth_user', JSON.stringify(data.user))
             setUser(data.user)
           }
@@ -326,15 +375,42 @@ function App() {
       .then(res => res.json())
       .then(data => setMqttConnected(data.mqtt?.connected || false))
       .catch(err => console.error('获取状态失败:', err))
-  }, [token, user?.regionId, user?.visibleRegionIds?.join('|'), user?.username, scopeRegionId, user?.leafRegions?.map((r) => r.id).join('|')])
+  }, [token, user?.regionId, user?.visibleRegionIds?.join('|'), user?.username, user?.regionTree, scopeRegionId, scopeRootId, user?.leafRegions?.map((r) => r.id).join('|')])
+
+  useEffect(() => {
+    if (!isScopeUnmapped(scopeRegionId) || !isAdmin) {
+      setMqttProfiles([])
+      return
+    }
+    apiFetch('/api/mqtt-profiles')
+      .then((res) => res.json())
+      .then((data) => setMqttProfiles(data.profiles || []))
+      .catch(() => setMqttProfiles([]))
+  }, [scopeRegionId, isAdmin])
 
   const scopedDevices = useMemo(() => {
     return devices.filter(d => isInActiveScope(d.regionId))
   }, [devices, isInActiveScope])
 
+  const mqttSources = useMemo(() => {
+    const map = new Map()
+    mqttProfiles.forEach((p) => map.set(p.id, p.name || p.id))
+    scopedDevices.forEach((d) => {
+      const id = deviceMqttProfileKey(d)
+      const name = d.mqttProfileName || d.mqttSourceRegionName || id
+      if (id) map.set(id, name)
+    })
+    return [...map.entries()].map(([id, name]) => ({ id, name }))
+  }, [scopedDevices, mqttProfiles])
+
+  const mqttScopedDevices = useMemo(() => {
+    if (!isScopeUnmapped(scopeRegionId) || mqttTab === 'all') return scopedDevices
+    return scopedDevices.filter((d) => deviceMqttProfileKey(d) === mqttTab)
+  }, [scopedDevices, scopeRegionId, mqttTab])
+
   // 统计数据
-  const airportDevices = scopedDevices.filter(d => d.deviceType === 'airport' || d.deviceType === 'remote')
-  const droneDevices = scopedDevices.filter(d => ['drone', 'single', 'virtual'].includes(d.deviceType))
+  const airportDevices = mqttScopedDevices.filter(d => d.deviceType === 'airport' || d.deviceType === 'remote')
+  const droneDevices = mqttScopedDevices.filter(d => ['drone', 'single', 'virtual'].includes(d.deviceType))
   
   // 根据状态筛选设备
   const filteredAirportDevices = statusFilter 
@@ -345,13 +421,13 @@ function App() {
     : droneDevices
   
   const stats = {
-    total: scopedDevices.length,
+    total: mqttScopedDevices.length,
     airport: airportDevices.length,
     drone: droneDevices.length,
-    single: scopedDevices.filter(d => d.deviceType === 'single').length,
-    normal: scopedDevices.filter(d => d.status === 'normal').length,
-    warning: scopedDevices.filter(d => d.status === 'warning').length,
-    critical: scopedDevices.filter(d => d.status === 'critical').length
+    single: mqttScopedDevices.filter(d => d.deviceType === 'single').length,
+    normal: mqttScopedDevices.filter(d => d.status === 'normal').length,
+    warning: mqttScopedDevices.filter(d => d.status === 'warning').length,
+    critical: mqttScopedDevices.filter(d => d.status === 'critical').length
   }
 
   const hasPermission = (p) => user?.role === 'admin' || user?.permissions?.includes(p)
@@ -428,9 +504,11 @@ function App() {
         {showScopeTabs && (
           <RegionScopeTabs
             className="mb-5"
+            tree={regionTree}
             regions={leafRegions}
             value={scopeRegionId}
             onChange={handleScopeRegionChange}
+            showUnmappedTab={isAdmin}
           />
         )}
 
@@ -477,16 +555,54 @@ function App() {
           activeFilter={statusFilter}
         />
 
+        {isScopeUnmapped(scopeRegionId) && mqttSources.length > 0 && (
+          <div className="ui-card px-3 py-2.5 mt-5">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-dji-muted shrink-0">MQTT 连接（组织为空）</p>
+              <div className="ui-nav-bar w-full sm:w-auto overflow-x-auto" role="tablist" aria-label="MQTT 连接">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mqttTab === 'all'}
+                  onClick={() => setMqttTab('all')}
+                  className={`ui-tab whitespace-nowrap cursor-pointer ${mqttTab === 'all' ? 'ui-tab-active !bg-amber-600 !shadow-amber-600/25' : 'ui-tab-inactive'}`}
+                >
+                  全部
+                  <span className={`ml-1 tabular-nums ${mqttTab === 'all' ? 'text-white/85' : 'text-slate-400'}`}>
+                    {scopedDevices.length}
+                  </span>
+                </button>
+                {mqttSources.map((src) => (
+                  <button
+                    key={src.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={mqttTab === src.id}
+                    onClick={() => setMqttTab(src.id)}
+                    className={`ui-tab whitespace-nowrap cursor-pointer ${mqttTab === src.id ? 'ui-tab-active !bg-amber-600 !shadow-amber-600/25' : 'ui-tab-inactive'}`}
+                  >
+                    {src.name}
+                    <span className={`ml-1 tabular-nums ${mqttTab === src.id ? 'text-white/85' : 'text-slate-400'}`}>
+                      {scopedDevices.filter((d) => deviceMqttProfileKey(d) === src.id).length}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5 lg:items-stretch">
           <div className="lg:col-span-1 flex flex-col min-h-0">
             <DeviceList 
               devices={filteredAirportDevices} 
               healthAlerts={healthAlerts}
               onSelect={setSelectedDevice}
-              selectedId={selectedDevice?.deviceId}
-              title="机场设备"
+              selectedId={deviceScopeKey(selectedDevice)}
+              title={isScopeUnmapped(scopeRegionId) ? '机场设备（无归属）' : '机场设备'}
               accent="blue"
               showFacilityIcons
+              showMqttSource={isScopeUnmapped(scopeRegionId)}
               filterActive={statusFilter !== null}
               onClearFilter={() => setStatusFilter(null)}
               onCockpit={setCockpitDevice}
@@ -499,10 +615,11 @@ function App() {
               devices={filteredDroneDevices} 
               healthAlerts={healthAlerts}
               onSelect={setSelectedDevice}
-              selectedId={selectedDevice?.deviceId}
-              title="无人机 / 单兵"
+              selectedId={deviceScopeKey(selectedDevice)}
+              title={isScopeUnmapped(scopeRegionId) ? '无人机 / 单兵（无归属）' : '无人机 / 单兵'}
               accent="indigo"
               showDroneIcons
+              showMqttSource={isScopeUnmapped(scopeRegionId)}
               filterActive={statusFilter !== null}
               onClearFilter={() => setStatusFilter(null)}
               className="flex-1"
@@ -518,7 +635,11 @@ function App() {
 
         {/* 告警配置页 */}
         {activeTab === 'alert-config' && hasPermission('alert-config') && (
-          <AlertConfig devices={scopedDevices} user={user} scopeRegionId={scopeRegionId} />
+          <AlertConfig
+            devices={devices.filter((d) => isInActiveScope(d.regionId))}
+            user={user}
+            scopeRegionId={scopeRegionId}
+          />
         )}
 
         {/* 飞行记录页 */}
@@ -567,6 +688,7 @@ function App() {
             onUserUpdate={handleUserUpdate}
           />
         )}
+
       </main>
 
       {hasPermission('ai-assistant') && user && (

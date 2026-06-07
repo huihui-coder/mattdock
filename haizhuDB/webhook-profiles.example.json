@@ -1,0 +1,24 @@
+[
+  {
+    "id": "wecom-ops",
+    "name": "运维群-企业微信",
+    "remark": "全局运维告警推送",
+    "type": "wecom",
+    "url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY",
+    "enabled": true,
+    "lastTestAt": null,
+    "lastTestStatus": null,
+    "lastTestMessage": ""
+  },
+  {
+    "id": "feishu-backup",
+    "name": "飞书备用群",
+    "remark": "备用通知通道",
+    "type": "feishu",
+    "url": "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_TOKEN",
+    "enabled": false,
+    "lastTestAt": null,
+    "lastTestStatus": null,
+    "lastTestMessage": ""
+  }
+]

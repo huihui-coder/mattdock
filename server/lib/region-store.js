@@ -133,6 +133,31 @@ function createRegion({ id, name, parentId }) {
   return region;
 }
 
+function updateRegion(regionId, { name, parentId } = {}) {
+  const id = String(regionId || '').trim();
+  if (!id) throw new Error('区域 ID 无效');
+  const regions = readRegions();
+  const idx = regions.findIndex((r) => r.id === id);
+  if (idx === -1) throw new Error('区域不存在');
+  const patch = { ...regions[idx] };
+  let changed = false;
+  if (name !== undefined) {
+    const nextName = String(name).trim();
+    if (!nextName) throw new Error('区域名称不能为空');
+    patch.name = nextName;
+    changed = true;
+  }
+  if (parentId !== undefined) {
+    patch.parentId = parentId ? String(parentId).trim() : null;
+    changed = true;
+  }
+  if (!changed) throw new Error('没有可更新的字段');
+  patch.updatedAt = new Date().toISOString();
+  regions[idx] = patch;
+  writeRegions(regions);
+  return regions[idx];
+}
+
 function migrateLegacyFilesIfNeeded() {
   const regions = ensureDefaultRegion();
   const primary = regions.find((r) => r.id === DEFAULT_REGION_ID) || regions[0];
@@ -166,5 +191,6 @@ module.exports = {
   getRegionAlertConfigPath,
   getRegionById,
   createRegion,
+  updateRegion,
   slugifyRegionId,
 };

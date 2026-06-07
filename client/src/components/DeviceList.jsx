@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
-import { Cpu, Thermometer, Battery, Wind, CloudRain, MapPin, AlertTriangle, Package, X, Home, MonitorPlay, Radio } from 'lucide-react'
+import { Cpu, Thermometer, Battery, Wind, CloudRain, MapPin, AlertTriangle, Package, X, Home, MonitorPlay, Radio, Unplug } from 'lucide-react'
 import RegionLabel from './RegionLabel'
+import { deviceScopeKey } from '../lib/scope-query'
 
 /** 机场设备列：机巢 / 单兵遥控器 */
 const FACILITY_ICON = {
@@ -122,6 +123,7 @@ export default function DeviceList({
   className = '',
   showFacilityIcons = false,
   showDroneIcons = false,
+  showMqttSource = false,
 }) {
   const [facilityTab, setFacilityTab] = useState('all')
   const [droneTab, setDroneTab] = useState('all')
@@ -270,7 +272,7 @@ export default function DeviceList({
         ) : (
           visibleDevices.map((device) => (
             <div
-              key={device.deviceId}
+              key={deviceScopeKey(device)}
               onClick={() => onSelect(device)}
               onKeyDown={(e) => { if (e.key === 'Enter') onSelect(device) }}
               role="button"
@@ -278,7 +280,7 @@ export default function DeviceList({
               className={`p-4 cursor-pointer transition-all duration-200 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset ${
                 showDroneIcons ? 'focus-visible:ring-indigo-400/50' : 'focus-visible:ring-blue-400/50'
               } ${
-                selectedId === device.deviceId
+                selectedId === deviceScopeKey(device)
                   ? showDroneIcons
                     ? 'bg-indigo-50/80 ring-1 ring-inset ring-indigo-200'
                     : 'bg-blue-50/80 ring-1 ring-inset ring-blue-200'
@@ -303,10 +305,23 @@ export default function DeviceList({
                     <div className={`w-2 h-2 rounded-full shrink-0 mt-1.5 ${getStatusDot(device.status)}`} aria-hidden />
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                       <span className="font-semibold text-slate-800 truncate">{device.deviceName || device.deviceId}</span>
-                      <RegionLabel regionName={device.regionName} regionId={device.regionId} className="shrink-0" />
+                      {showMqttSource ? (
+                        <span
+                          className="inline-flex items-center gap-1 shrink-0 text-[10px] px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 font-medium"
+                          title={device.mqttBroker || device.mqttProfileName || device.mqttSourceRegionName}
+                        >
+                          <Unplug size={10} aria-hidden />
+                          {device.mqttProfileName || device.mqttSourceRegionName || device.mqttProfileId || device.mqttSourceRegionId || 'MQTT'}
+                        </span>
+                      ) : (
+                        <RegionLabel regionName={device.regionName} regionId={device.regionId} className="shrink-0" />
+                      )}
                     </div>
+                    {showMqttSource && device.mqttBroker && (
+                      <span className="text-[11px] text-amber-700/80 truncate block mt-0.5">{device.mqttBroker}</span>
+                    )}
                     {device.deviceName && device.deviceName !== device.deviceId && (
                       <span className="text-xs text-slate-400 truncate block mt-0.5">{device.deviceId}</span>
                     )}

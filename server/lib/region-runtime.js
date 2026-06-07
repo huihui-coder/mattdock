@@ -7,6 +7,7 @@ const {
   getRegionById,
   slugifyRegionId,
 } = require('./region-store');
+const { resolveConnectivity, getMqttConnectionKey } = require('./region-connectivity');
 const {
   buildRegionTree,
   getVisibleRegionIds,
@@ -61,6 +62,22 @@ class RegionRuntime {
     return region;
   }
 
+  updateRegionMeta(regionId, payload) {
+    const { updateRegion } = require('./region-store');
+    const regions = readRegions();
+    if (payload.parentId !== undefined) {
+      validateParentAssignment(regionId, payload.parentId, regions);
+    }
+    const region = updateRegion(regionId, payload);
+    if (this.processors.has(region.id)) {
+      const proc = this.processors.get(region.id);
+      if (proc && payload.name !== undefined) proc.regionName = region.name;
+    } else if (payload.name !== undefined) {
+      this.reloadRegion(region.id);
+    }
+    return region;
+  }
+
   getVisibleRegionIdsForUser(user) {
     const regions = readRegions();
     const regionId = user?.regionId || this.defaultRegionId;
@@ -89,7 +106,10 @@ class RegionRuntime {
 
   getProcessor(regionId) {
     if (!regionId) return this.processors.get(this.defaultRegionId) || null;
-    return this.processors.get(regionId) || null;
+    if (this.processors.has(regionId)) return this.processors.get(regionId);
+    // regions.json 手改或导入后未重启时，按需加载处理器
+    if (getRegionById(regionId)) return this.reloadRegion(regionId);
+    return null;
   }
 
   getProcessorForUser(user) {
@@ -127,22 +147,53 @@ class RegionRuntime {
     return this._deviceOwnedByLeafRegistry(deviceId, regionId);
   }
 
-  /** 多区域共用 MQTT 时，非所属区域的连接应跳过该设备消息 */
+  isRegisteredInAnyLeafRegion(deviceId) {
+    const id = String(deviceId || '');
+    if (!id) return false;
+    return this._leafRegionIds().some((regionId) => this.isRegisteredInLeafRegion(id, regionId));
+  }
+
+  /** 未映射设备统一落入默认区域处理器，避免多 MQTT 连接重复入库 */
+  getUnmappedSinkRegionId() {
+    return this.defaultRegionId;
+  }
+
+  /** 多区域共用 MQTT 配置池时，按 mqttProfileId 匹配连接，避免重复入库 */
   shouldProcessOnRegionConnection(deviceId, connectionRegionId) {
     const id = String(deviceId || '');
     if (!id || !connectionRegionId) return true;
 
     for (const regionId of this._leafRegionIds()) {
       if (this.isRegisteredInLeafRegion(id, regionId)) {
-        return regionId === connectionRegionId;
+        const deviceKey = getMqttConnectionKey(regionId);
+        return deviceKey === connectionRegionId || regionId === connectionRegionId;
       }
     }
+    // 未映射：各连接均可接收，统一写入 sink 处理器（见 processMqttMessage）
     return true;
+  }
+
+  resolveDeviceRegionForBroadcast(deviceId, connectionRegionId) {
+    const id = String(deviceId || '');
+    if (id && connectionRegionId && this.isRegisteredInLeafRegion(id, connectionRegionId)) {
+      const proc = this.getProcessor(connectionRegionId);
+      return {
+        regionId: connectionRegionId,
+        regionName: proc?.regionName || connectionRegionId,
+      };
+    }
+    for (const regionId of this._leafRegionIds()) {
+      if (this.isRegisteredInLeafRegion(id, regionId)) {
+        const proc = this.getProcessor(regionId);
+        return { regionId, regionName: proc?.regionName || regionId };
+      }
+    }
+    return { regionId: null, regionName: null };
   }
 
   resolveRegionIdForDevice(deviceId) {
     const id = String(deviceId || '');
-    if (!id) return this.defaultRegionId;
+    if (!id) return null;
 
     const leafIds = this._leafRegionIds();
     for (const regionId of leafIds) {
@@ -162,26 +213,77 @@ class RegionRuntime {
       }
     }
 
-    for (const [regionId, processor] of this.processors.entries()) {
-      if (processor.isDeviceInRegion(id)) {
-        this.deviceToRegion.set(id, regionId);
-        return regionId;
-      }
-    }
-    return this.defaultRegionId;
+    return null;
   }
 
   getProcessorForDevice(deviceId) {
     const regionId = this.resolveRegionIdForDevice(deviceId);
-    return this.getProcessor(regionId) || this.getDefaultProcessor();
+    if (regionId) return this.getProcessor(regionId);
+    for (const [, proc] of this.processors) {
+      if (proc.getDeviceState(deviceId)) return proc;
+    }
+    return this.getDefaultProcessor();
+  }
+
+  _flightUnmappedMeta(connectionRegionId) {
+    const conn = resolveConnectivity(connectionRegionId);
+    const mqttProfileId = conn.mqttProfileId || `__region__:${connectionRegionId}`;
+    const mqttProfileName = conn.mqttProfileName || connectionRegionId;
+    return {
+      regionId: null,
+      regionName: null,
+      unmapped: true,
+      mqttConnectionRegionId: connectionRegionId,
+      mqttProfileId,
+      mqttProfileName,
+      mqttSourceRegionId: mqttProfileId,
+      mqttSourceRegionName: mqttProfileName,
+      mqttBroker: conn.mqtt?.brokerUrl || null,
+    };
+  }
+
+  _enrichUnmappedDevice(state, fallbackRegionId) {
+    const connectionKey = state.mqttConnectionRegionId || fallbackRegionId;
+    return {
+      ...state,
+      ...this._flightUnmappedMeta(connectionKey),
+    };
+  }
+
+  collectUnmappedDevicesFromScope(visibleProcessors) {
+    const list = [];
+    const seen = new Set();
+    for (const { regionId, processor } of visibleProcessors) {
+      for (const d of processor.getAllDeviceStates()) {
+        if (this.isRegisteredInAnyLeafRegion(d.deviceId)) continue;
+        const enriched = this._enrichUnmappedDevice(d, regionId);
+        const key = `${enriched.deviceId}@${enriched.mqttProfileId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        list.push(enriched);
+      }
+    }
+    return list;
   }
 
   processMqttMessage(topic, data, sourceRegionId) {
-    const processor = sourceRegionId
-      ? this.getProcessor(sourceRegionId)
-      : this.getProcessorForDevice(this.extractDeviceId(topic, data));
+    const deviceId = this.extractDeviceId(topic, data);
+    if (!deviceId) return null;
+
+    const registered = this.isRegisteredInAnyLeafRegion(deviceId);
+    let processor = registered
+      ? this.getProcessorForDevice(deviceId)
+      : this.getDefaultProcessor();
+    if (!processor && sourceRegionId && this.getProcessor(sourceRegionId)) {
+      processor = this.getProcessor(sourceRegionId);
+    }
     if (!processor) return null;
-    return processor.process(topic, data);
+
+    const result = processor.process(topic, data);
+    if (result && !registered && sourceRegionId) {
+      processor.patchDeviceMqttSource(deviceId, sourceRegionId);
+    }
+    return result;
   }
 
   extractDeviceId(topic, data) {
@@ -220,87 +322,168 @@ class RegionRuntime {
     return this.getProcessorForDevice(deviceId)?.getDeviceState(deviceId) || null;
   }
 
-  findDeviceInScope(deviceId, visibleProcessors) {
+  findDeviceInScope(deviceId, visibleProcessors, { unmappedOnly = false, mqttSourceRegionId = null } = {}) {
+    const id = String(deviceId || '');
+    if (unmappedOnly) {
+      if (this.isRegisteredInAnyLeafRegion(id)) return null;
+      for (const { regionId, processor } of visibleProcessors) {
+        const state = processor.getDeviceState(deviceId);
+        if (!state) continue;
+        const enriched = this._enrichUnmappedDevice(state, regionId);
+        if (mqttSourceRegionId && enriched.mqttProfileId !== mqttSourceRegionId) continue;
+        return enriched;
+      }
+      return null;
+    }
     for (const { regionId, regionName, processor } of visibleProcessors) {
+      if (!this.isRegisteredInLeafRegion(id, regionId)) continue;
       const state = processor.getDeviceState(deviceId);
       if (state) return { ...state, regionId, regionName };
     }
     return null;
   }
 
-  collectDevicesFromScope(visibleProcessors, regions) {
+  collectDevicesFromScope(visibleProcessors, regions, { unmappedOnly = false } = {}) {
     const procs = regions
       ? getLeafProcessorsInScope(visibleProcessors, regions)
       : visibleProcessors;
+
+    if (unmappedOnly) {
+      return this.collectUnmappedDevicesFromScope(procs);
+    }
+
     const list = [];
+    const seen = new Set();
+
     for (const { regionId, regionName, processor } of procs) {
       for (const d of processor.getAllDeviceStates()) {
-        if (!processor.isDeviceInRegion(d.deviceId)) continue;
+        const id = d.deviceId;
+        if (seen.has(id)) continue;
+        if (!this.isRegisteredInLeafRegion(id, regionId)) continue;
+        seen.add(id);
         list.push({ ...d, regionId, regionName });
       }
     }
+
     return list;
   }
 
   collectFlightHistoryFromScope(visibleProcessors, regions, options = {}) {
     const { matchesFlightType, matchesFlightTime, parseFlightTimeRange } = require('./flight-query');
-    const { type, startTime, endTime, forceSync } = options;
+    const {
+      type,
+      startTime,
+      endTime,
+      forceSync,
+      unmappedOnly = false,
+      mqttProfileId = null,
+    } = options;
     const { start, end } = parseFlightTimeRange(startTime, endTime);
     const procs = regions
       ? getLeafProcessorsInScope(visibleProcessors, regions)
       : visibleProcessors;
     const merged = [];
+    const seen = unmappedOnly ? new Set() : null;
     for (const { regionId, regionName, processor } of procs) {
       processor.syncFlightHistoryFromDisk(!!forceSync);
       for (const row of processor.flightHistory) {
         const deviceId = row?.deviceId;
-        if (deviceId && !processor.isDeviceInRegion(deviceId)) continue;
+        if (deviceId) {
+          if (unmappedOnly) {
+            if (this.isRegisteredInAnyLeafRegion(deviceId)) continue;
+          } else if (!processor.isDeviceInRegion(deviceId)) {
+            continue;
+          }
+        }
         if ((startTime || endTime) && !matchesFlightTime(row, start, end)) continue;
         const enriched = processor.enrichFlightRecord(row);
         if (type && !matchesFlightType(enriched, type)) continue;
-        merged.push({ ...enriched, regionId, regionName });
+        if (unmappedOnly) {
+          const item = { ...enriched, ...this._flightUnmappedMeta(regionId) };
+          if (mqttProfileId && item.mqttProfileId !== mqttProfileId) continue;
+          const key = `${item.id || item.deviceId}-${item.startTime}@${item.mqttProfileId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(item);
+        } else {
+          merged.push({ ...enriched, regionId, regionName });
+        }
       }
     }
     return merged;
   }
 
-  buildActiveSessionsFromScope(type, visibleProcessors, regions) {
+  buildActiveSessionsFromScope(type, visibleProcessors, regions, options = {}) {
+    const { unmappedOnly = false, mqttProfileId = null } = options;
     const procs = regions
       ? getLeafProcessorsInScope(visibleProcessors, regions)
       : visibleProcessors;
     const sessions = [];
+    const seen = unmappedOnly ? new Set() : null;
     for (const { regionId, regionName, processor } of procs) {
+      const meta = unmappedOnly
+        ? this._flightUnmappedMeta(regionId)
+        : { regionId, regionName };
+      if (unmappedOnly && mqttProfileId && meta.mqttProfileId !== mqttProfileId) {
+        continue;
+      }
       for (const s of processor.activeSessions.values()) {
-        if (s?.deviceId && !processor.isDeviceInRegion(s.deviceId)) continue;
+        if (s?.deviceId) {
+          if (unmappedOnly) {
+            if (this.isRegisteredInAnyLeafRegion(s.deviceId)) continue;
+          } else if (!processor.isDeviceInRegion(s.deviceId)) {
+            continue;
+          }
+        }
         const enriched = processor.enrichFlightRecord(s);
-        sessions.push({
+        const session = {
           ...enriched,
-          regionId,
-          regionName,
+          ...meta,
           totalDuration: processor.calcFlightDuration(s),
           totalMileage: parseFloat((s.mileage || 0).toFixed(2)),
           status: 'active',
-        });
+        };
+        if (unmappedOnly) {
+          const key = `${session.deviceId}@${session.mqttProfileId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+        }
+        sessions.push(session);
       }
       for (const [deviceId, state] of processor.deviceStates.entries()) {
-        if (!processor.isDeviceInRegion(deviceId)) continue;
-        if (sessions.find((x) => x.deviceId === deviceId && x.regionId === regionId)) continue;
+        if (unmappedOnly) {
+          if (this.isRegisteredInAnyLeafRegion(deviceId)) continue;
+        } else if (!processor.isDeviceInRegion(deviceId)) {
+          continue;
+        }
+        const sessionKey = unmappedOnly
+          ? `${deviceId}@${meta.mqttProfileId}`
+          : `${deviceId}@${regionId}`;
+        if (sessions.some((x) => (
+          unmappedOnly
+            ? `${x.deviceId}@${x.mqttProfileId}` === sessionKey
+            : x.deviceId === deviceId && x.regionId === regionId
+        ))) continue;
         const flightType = processor.resolveFlightDeviceType(deviceId, state.gateway);
         if (!['drone', 'single', 'virtual'].includes(flightType)) continue;
         if (!processor.isFlightMode(state.raw_mode_code)) continue;
-        sessions.push({
+        const session = {
           id: `${deviceId}_${new Date(state.lastSeen || Date.now()).getTime()}`,
           deviceId,
           deviceName: processor.getFlightDisplayName(deviceId, state.gateway) || deviceId,
           deviceType: flightType,
-          regionId,
-          regionName,
+          ...meta,
           startTime: new Date(state.lastSeen || Date.now()).toISOString(),
           totalDuration: 0,
           totalMileage: 0,
           currentTotalFlightDistance: state.raw_total_flight_distance ?? null,
           status: 'active',
-        });
+        };
+        if (unmappedOnly) {
+          if (seen.has(sessionKey)) continue;
+          seen.add(sessionKey);
+        }
+        sessions.push(session);
       }
     }
     if (type && type !== 'all') {
@@ -356,8 +539,9 @@ function collectAlertConfigDeviceIds(visibleProcessors, regions) {
 }
 
 function resolveRegionIdInScope(deviceId, visibleProcessors, regions) {
+  const id = String(deviceId || '');
   for (const { regionId, processor } of getLeafProcessorsInScope(visibleProcessors, regions)) {
-    if (processor.isDeviceInRegion(deviceId)) return regionId;
+    if (processor.isDeviceInRegion(id)) return regionId;
   }
   return null;
 }
