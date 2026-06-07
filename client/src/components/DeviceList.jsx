@@ -92,6 +92,23 @@ const ACCENT_HEADERS = {
   default: 'bg-slate-50/80 border-slate-100',
 }
 
+/** 是否已在设备注册表映射（有友好名称或绑定关系） */
+function isMappedDevice(device) {
+  if (device.metrics?.boundDrone?.sn || device.metrics?.boundDrone?.name) return true
+  const name = device.deviceName || ''
+  return name.length > 0 && name !== device.deviceId
+}
+
+function sortMappedFirst(devices) {
+  return [...devices].sort((a, b) => {
+    const mappedDiff = Number(isMappedDevice(b)) - Number(isMappedDevice(a))
+    if (mappedDiff !== 0) return mappedDiff
+    const na = a.deviceName || a.deviceId || ''
+    const nb = b.deviceName || b.deviceId || ''
+    return na.localeCompare(nb, 'zh-CN')
+  })
+}
+
 export default function DeviceList({
   devices,
   healthAlerts,
@@ -125,14 +142,14 @@ export default function DeviceList({
     (showFacilityIcons && facilityTab !== 'all') || (showDroneIcons && droneTab !== 'all')
 
   const visibleDevices = useMemo(() => {
+    let rows = devices
     if (showFacilityIcons && facilityTab !== 'all') {
-      return devices.filter((d) => d.deviceType === facilityTab)
+      rows = devices.filter((d) => d.deviceType === facilityTab)
+    } else if (showDroneIcons && droneTab !== 'all') {
+      if (droneTab === 'single') rows = devices.filter((d) => d.deviceType === 'single')
+      else rows = devices.filter((d) => d.deviceType === 'drone' || d.deviceType === 'virtual')
     }
-    if (showDroneIcons && droneTab !== 'all') {
-      if (droneTab === 'single') return devices.filter((d) => d.deviceType === 'single')
-      return devices.filter((d) => d.deviceType === 'drone' || d.deviceType === 'virtual')
-    }
-    return devices
+    return sortMappedFirst(rows)
   }, [devices, facilityTab, showFacilityIcons, droneTab, showDroneIcons])
 
   const getStatusDot = (status) => {

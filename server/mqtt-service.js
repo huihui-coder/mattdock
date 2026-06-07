@@ -139,6 +139,10 @@ class MQTTService {
         // 处理健康告警事件
         this.handleEvents(topic, data);
       } else if (isOsd || isState) {
+        const deviceId = this.regionRuntime.extractDeviceId(topic, data);
+        if (deviceId && !this.regionRuntime.shouldProcessOnRegionConnection(deviceId, this.regionId)) {
+          return;
+        }
         // 处理 OSD / state（Dock 分片属性需合并，如 supplement_light_state、live_status）
         const processedData = this.regionRuntime.processMqttMessage(topic, data, this.regionId);
         if (!processedData) return;
@@ -320,6 +324,9 @@ class MQTTService {
     // 从主题提取设备ID: thing/product/{gateway_sn}/events
     const topicParts = topic.split('/');
     const deviceId = topicParts[2];
+    if (deviceId && !this.regionRuntime.shouldProcessOnRegionConnection(deviceId, this.regionId)) {
+      return;
+    }
 
     const proc = this.regionRuntime.getProcessorForDevice(deviceId);
     const deviceName = proc?.getDeviceName(deviceId) || deviceId;
@@ -358,7 +365,7 @@ class MQTTService {
         topic: topic,
         deviceId: deviceId,
         deviceName: deviceName,
-        regionId: this.regionId || this.regionRuntime.resolveRegionIdForDevice(deviceId),
+        regionId: this.regionRuntime.resolveRegionIdForDevice(deviceId),
         healthAlerts: healthAlerts,
         timestamp: new Date().toISOString()
       });
@@ -404,7 +411,7 @@ class MQTTService {
   }
 
   handleAlerts(topic, processedData) {
-    const regionId = this.regionId || this.regionRuntime.resolveRegionIdForDevice(processedData.deviceId);
+    const regionId = this.regionRuntime.resolveRegionIdForDevice(processedData.deviceId);
     processedData.alerts.forEach(alert => {
       if (this.wsService) {
         this.wsService.broadcast({

@@ -276,7 +276,26 @@ class DeviceProcessor {
   }
 
   // 查询接口调用：从磁盘同步最新记录到内存，避免进程内存落后于 flight-history.json
-  syncFlightHistoryFromDisk() {
+  syncFlightHistoryFromDisk(force = false) {
+    const now = Date.now();
+    let mtime = 0;
+    try {
+      if (fs.existsSync(this.historyFile)) {
+        mtime = fs.statSync(this.historyFile).mtimeMs;
+      }
+    } catch {
+      mtime = 0;
+    }
+    if (
+      !force
+      && this._flightSyncMtime === mtime
+      && now - (this._flightSyncAt || 0) < 5000
+    ) {
+      return this.flightHistory;
+    }
+    this._flightSyncMtime = mtime;
+    this._flightSyncAt = now;
+
     const before = this.flightHistory.length;
     const merged = this.mergeFlightHistoryWithDisk();
     if (merged.length !== before) {
@@ -829,12 +848,7 @@ class DeviceProcessor {
     // 把当前的活跃 session 也放进 result 返回给前端实时显示
     result.activeSession = session;
 
-    // 机场 / 单兵遥控器：绑定无人机后命名为「xx派出所-M4T-遥控器」
-    const boundDroneSn = this.extractBoundDroneSn(payload);
-    if (!isDrone && !isRemoteController && boundDroneSn) {
-      const airportRemoteName = this.nameRemoteFromBoundDrone(deviceId, boundDroneSn);
-      if (airportRemoteName) result.deviceName = airportRemoteName;
-    }
+    // 单兵遥控器：绑定无人机后命名为「xx派出所-M4T-遥控器」
     if (isRemoteController) {
       const linkedDroneSn = this.resolveBoundDroneForRemote(deviceId, payload, prevState);
       if (linkedDroneSn) {
@@ -848,6 +862,11 @@ class DeviceProcessor {
           statusText: '已绑定',
         };
       }
+    }
+
+    // 已配置映射名优先，避免 OSD 分片上报时展示名来回跳变
+    if (this.deviceNames[deviceId]) {
+      result.deviceName = this.deviceNames[deviceId];
     }
 
     // ========== 机场代理子设备飞行状态机 ==========

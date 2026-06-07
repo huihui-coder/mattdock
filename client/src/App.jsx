@@ -14,7 +14,11 @@ import UserProfile from './components/UserProfile'
 import ImageStudio from './components/ImageStudio'
 import AuditLogViewer from './components/AuditLogViewer'
 import FloatingAssistant from './components/FloatingAssistant'
+import RegionScopeTabs from './components/RegionScopeTabs'
+import { withScopeQuery, readStoredScopeRegion, writeStoredScopeRegion, isScopeAll } from './lib/scope-query'
 import { Activity, Wifi, WifiOff, LayoutDashboard, Bell, History, Users, Sparkles, HardDrive, ScrollText } from 'lucide-react'
+
+const SCOPE_AWARE_TABS = new Set(['monitor', 'alert-config', 'flight-records', 'devices'])
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
 function getStoredUser() {
@@ -45,8 +49,14 @@ function App() {
   const [statusFilter, setStatusFilter] = useState(null)  // 状态筛选：null/warning/critical
   const [cockpitDevice, setCockpitDevice] = useState(null)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [scopeRegionId, setScopeRegionId] = useState(() => {
+    const u = getStoredUser()
+    if (u?.leafRegions?.length > 1) return readStoredScopeRegion(u.username, u.leafRegions)
+    return u?.leafRegions?.[0]?.id || u?.regionId || ''
+  })
   const wsRef = useRef(null)
   const alertUpdateTimerRef = useRef(null)
+  const devicesFetchGenRef = useRef(0)
 
   // WebSocket连接（含自动重连）
   const reconnectTimerRef = useRef(null)
@@ -149,13 +159,41 @@ function App() {
     return !!regionId && visibleRegionIds.includes(regionId)
   }, [visibleRegionIds])
 
+  const leafRegions = useMemo(() => user?.leafRegions || [], [user?.leafRegions])
+  const showScopeTabs = leafRegions.length > 1 && SCOPE_AWARE_TABS.has(activeTab)
+
+  useEffect(() => {
+    if (!user?.username) {
+      setScopeRegionId('')
+      return
+    }
+    if (leafRegions.length <= 1) {
+      setScopeRegionId(leafRegions[0]?.id || user.regionId || '')
+      return
+    }
+    setScopeRegionId(readStoredScopeRegion(user.username, leafRegions))
+  }, [user?.username, user?.regionId, leafRegions])
+
+  const handleScopeRegionChange = useCallback((regionId) => {
+    setScopeRegionId(regionId)
+    if (user?.username) writeStoredScopeRegion(user.username, regionId)
+    setSelectedDevice(null)
+    setCockpitDevice(null)
+  }, [user?.username])
+
+  const isInActiveScope = useCallback((regionId) => {
+    if (!regionId) return false
+    if (isScopeAll(scopeRegionId)) return isInRegionScope(regionId)
+    return regionId === scopeRegionId
+  }, [scopeRegionId, isInRegionScope])
+
   const handleMessage = useCallback((data) => {
     switch (data.type) {
       case 'connection':
         setMqttConnected(data.status === 'connected')
         break
       case 'device_data':
-        if (!isInRegionScope(data.processed?.regionId)) break
+        if (!isInActiveScope(data.processed?.regionId)) break
         // 直接更新设备数据，覆盖之前的
         setDevices(prev => {
           const index = prev.findIndex(d => d.deviceId === data.processed.deviceId)
@@ -168,17 +206,15 @@ function App() {
             topic: data.topic
           }
           if (index >= 0) {
-            // 更新已存在的设备
             const updated = [...prev]
             updated[index] = newDevice
             return updated
           }
-          // 新设备，添加到列表
           return [...prev, newDevice]
         })
         break
       case 'alert':
-        if (!isInRegionScope(data.regionId)) break
+        if (!isInActiveScope(data.regionId)) break
         // 将告警放入缓冲区，等待定时更新
         setAlertsBuffer(prev => {
           const newAlert = {
@@ -203,7 +239,7 @@ function App() {
         })
         break
       case 'health_alert':
-        if (!isInRegionScope(data.regionId)) break
+        if (!isInActiveScope(data.regionId)) break
         // 存储健康告警，按设备ID分组，限制数量
         setHealthAlerts(prev => {
           const existing = prev[data.deviceId] || []
@@ -222,7 +258,7 @@ function App() {
       default:
         break
     }
-  }, [isInRegionScope])
+  }, [isInActiveScope])
 
   // 详情弹窗打开时，跟随 WebSocket 实时刷新同一设备
   useEffect(() => {
@@ -256,26 +292,49 @@ function App() {
       return
     }
 
+    if (!user.leafRegions) {
+      apiFetch('/api/me')
+        .then(async (res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.user?.leafRegions) {
+            localStorage.setItem('auth_user', JSON.stringify(data.user))
+            setUser(data.user)
+          }
+        })
+        .catch(() => {})
+    }
+
+    const multiLeaf = (user.leafRegions?.length || 0) > 1
+    if (multiLeaf && !scopeRegionId) return
+
     setDevices([])
     setAlerts([])
     setAlertsBuffer([])
     setHealthAlerts({})
     setSelectedDevice(null)
 
-    apiFetch('/api/devices')
+    const fetchGen = ++devicesFetchGenRef.current
+    apiFetch(withScopeQuery('/api/devices', scopeRegionId))
       .then(res => { if (res.status === 401) { setToken(''); setUser(null); localStorage.removeItem('auth_token'); localStorage.removeItem('auth_user') } return res.json() })
-      .then(data => setDevices(data.devices || []))
+      .then(data => {
+        if (fetchGen !== devicesFetchGenRef.current) return
+        setDevices(data.devices || [])
+      })
       .catch(err => console.error('获取设备列表失败:', err))
     
     apiFetch('/api/status')
       .then(res => res.json())
       .then(data => setMqttConnected(data.mqtt?.connected || false))
       .catch(err => console.error('获取状态失败:', err))
-  }, [token, user?.regionId, user?.visibleRegionIds?.join('|'), user?.username])
+  }, [token, user?.regionId, user?.visibleRegionIds?.join('|'), user?.username, scopeRegionId, user?.leafRegions?.map((r) => r.id).join('|')])
+
+  const scopedDevices = useMemo(() => {
+    return devices.filter(d => isInActiveScope(d.regionId))
+  }, [devices, isInActiveScope])
 
   // 统计数据
-  const airportDevices = devices.filter(d => d.deviceType === 'airport' || d.deviceType === 'remote')
-  const droneDevices = devices.filter(d => ['drone', 'single', 'virtual'].includes(d.deviceType))
+  const airportDevices = scopedDevices.filter(d => d.deviceType === 'airport' || d.deviceType === 'remote')
+  const droneDevices = scopedDevices.filter(d => ['drone', 'single', 'virtual'].includes(d.deviceType))
   
   // 根据状态筛选设备
   const filteredAirportDevices = statusFilter 
@@ -286,13 +345,13 @@ function App() {
     : droneDevices
   
   const stats = {
-    total: devices.length,
+    total: scopedDevices.length,
     airport: airportDevices.length,
     drone: droneDevices.length,
-    single: devices.filter(d => d.deviceType === 'single').length,
-    normal: devices.filter(d => d.status === 'normal').length,
-    warning: devices.filter(d => d.status === 'warning').length,
-    critical: devices.filter(d => d.status === 'critical').length
+    single: scopedDevices.filter(d => d.deviceType === 'single').length,
+    normal: scopedDevices.filter(d => d.status === 'normal').length,
+    warning: scopedDevices.filter(d => d.status === 'warning').length,
+    critical: scopedDevices.filter(d => d.status === 'critical').length
   }
 
   const hasPermission = (p) => user?.role === 'admin' || user?.permissions?.includes(p)
@@ -365,6 +424,16 @@ function App() {
             )
           })}
         </nav>
+
+        {showScopeTabs && (
+          <RegionScopeTabs
+            className="mb-5"
+            regions={leafRegions}
+            value={scopeRegionId}
+            onChange={handleScopeRegionChange}
+          />
+        )}
+
         {/* 连接状态提示 */}
         {!mqttConnected && (
           <div className="mb-4 p-3.5 ui-card flex items-center gap-3 border-amber-200 bg-amber-50" role="alert">
@@ -381,15 +450,6 @@ function App() {
         {/* 监控内容（仅 monitor tab 显示） */}
         {activeTab === 'monitor' && hasPermission('monitor') && (
         <section aria-labelledby="monitor-heading">
-          <div className="mb-4 ui-card px-4 py-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-sm text-dji-ink">
-              数据范围：<span className="font-medium">{user.regionName}</span>
-              {(user.visibleRegionIds?.length || 0) > 1 && (
-                <span className="text-dji-muted">（含下属 {user.visibleRegionIds.filter((id) => id !== user.regionId).length} 个子区域）</span>
-              )}
-            </p>
-            <p className="text-xs text-dji-muted tabular-nums">仅显示本范围内的设备与实时告警</p>
-          </div>
           <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <h2 id="monitor-heading" className="text-xl font-semibold text-slate-800 tracking-tight">实时监控</h2>
@@ -458,24 +518,26 @@ function App() {
 
         {/* 告警配置页 */}
         {activeTab === 'alert-config' && hasPermission('alert-config') && (
-          <AlertConfig devices={devices} user={user} />
+          <AlertConfig devices={scopedDevices} user={user} scopeRegionId={scopeRegionId} />
         )}
 
         {/* 飞行记录页 */}
         {activeTab === 'flight-records' && hasPermission('flight-records') && (
-          <FlightDashboard onFlightViewChange={setFlightView} user={user} />
+          <FlightDashboard onFlightViewChange={setFlightView} user={user} scopeRegionId={scopeRegionId} />
         )}
 
         {activeTab === 'devices' && hasPermission('device-config') && (
-          <DeviceManager />
+          <DeviceManager scopeRegionId={scopeRegionId} />
         )}
 
         {activeTab === 'accounts' && user?.role === 'admin' && (
           <AccountManager />
         )}
 
-        {activeTab === 'image-studio' && hasPermission('image-studio') && (
-          <ImageStudio />
+        {hasPermission('image-studio') && (
+          <section hidden={activeTab !== 'image-studio'} aria-hidden={activeTab !== 'image-studio'}>
+            <ImageStudio />
+          </section>
         )}
 
         {activeTab === 'audit-log' && hasPermission('audit-log') && (

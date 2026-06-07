@@ -2,7 +2,7 @@ const STORAGE_KEY = 'haizhu_image_studio_v1'
 const MAX_TASKS = 40
 
 function stripForStorage(task) {
-  if (!task || task.status === 'RUNNING') return null
+  if (!task) return null
   return {
     id: task.id,
     status: task.status,
@@ -25,13 +25,29 @@ function stripForStorage(task) {
   }
 }
 
+/** 从 localStorage 恢复；刷新后无法续跑，进行中的任务标记为失败 */
+function hydrateStoredTasks(list) {
+  return list.map((task) => {
+    if (task.status !== 'RUNNING') return task
+    return {
+      ...task,
+      status: 'FAILED',
+      error: '生成已中断（页面刷新），请重新生成',
+      finishedAt: new Date().toISOString(),
+      runtimeMs: task.startedAt
+        ? Date.now() - new Date(task.startedAt).getTime()
+        : task.runtimeMs,
+    }
+  })
+}
+
 export function loadImageStudioTasks() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const list = JSON.parse(raw)
     if (!Array.isArray(list)) return []
-    return list.filter((t) => t && t.id && t.prompt)
+    return hydrateStoredTasks(list.filter((t) => t && t.id && t.prompt))
   } catch {
     return []
   }

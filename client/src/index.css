@@ -92,6 +92,69 @@ body {
   }
 }
 
+/* 时间范围选择器弹层 — 与 ui-card / ui-input 同系浅色 */
+.dtp-panel {
+  @apply bg-white border border-slate-200 shadow-lg shadow-slate-200/60;
+  animation: dtp-enter 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes dtp-enter {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dtp-panel { animation: none; }
+}
+
+.dtp-sidebar {
+  @apply bg-slate-50;
+}
+
+.dtp-preset {
+  @apply text-left text-sm px-3 py-2 rounded-lg text-slate-600 hover:text-blue-700 hover:bg-blue-50 transition-colors cursor-pointer whitespace-nowrap;
+}
+
+.dtp-field {
+  @apply border border-slate-200 rounded-lg px-2.5 py-1.5 text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/25 focus:border-blue-400;
+}
+
+.dtp-field-time {
+  @apply w-[5.5rem];
+}
+
+.dtp-nav-btn {
+  @apply p-1 rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer;
+}
+
+.dtp-day {
+  @apply h-8 w-full rounded-md text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer tabular-nums;
+}
+
+.dtp-day-outside {
+  @apply text-slate-400 hover:text-slate-500 hover:bg-slate-50;
+}
+
+.dtp-day-in-range {
+  @apply bg-blue-50 text-blue-700;
+}
+
+.dtp-day-selected {
+  @apply bg-blue-600 text-white hover:bg-blue-700 font-medium shadow-sm shadow-blue-600/20;
+}
+
+.dtp-day-disabled {
+  @apply text-slate-300 cursor-not-allowed hover:bg-transparent hover:text-slate-300;
+}
+
+.dtp-btn-ghost {
+  @apply ui-btn-ghost !text-sm !px-4 !py-1.5;
+}
+
+.dtp-btn-primary {
+  @apply ui-btn-primary !py-1.5;
+}
+
 .status-normal { color: #059669; }
 .status-warning { color: #d97706; }
 .status-critical { color: #dc2626; }

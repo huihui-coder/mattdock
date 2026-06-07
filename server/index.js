@@ -15,6 +15,13 @@ const { registerImageRoutes } = require('./routes/image-api');
 const { registerAssistantRoutes } = require('./routes/assistant-api');
 const { getFlightRecordsForAssistant, getFlightStatsSnapshot } = require('./lib/flight-records-for-assistant');
 const {
+  buildFlightStats,
+  buildFlightRanking,
+  buildDailyDistribution,
+  mergeFlightRecords,
+  paginateRecords,
+} = require('./lib/flight-query');
+const {
   isDockSharedOutAirport,
   resolveVideoId,
   METHOD_LIVE_CAMERA_CHANGE,
@@ -27,7 +34,7 @@ const {
 } = require('./lib/dock-service');
 const { getJobSecret } = require('./lib/lost-alert-mqtt-bridge');
 const { getLiveCameraPosition } = require('./lib/dock-live-state-store');
-const { appendAuditEntry, queryAuditLogs, getAuditStats } = require('./lib/audit-log-store');
+const { appendAuditEntry, loadAuditLogsQuery, getAuditStats, getActionCategory } = require('./lib/audit-log-store');
 const {
   RegionRuntime,
   collectAlertConfigDeviceIds,
@@ -96,6 +103,11 @@ function sanitizeUser(user, { includePassword = false } = {}) {
     safe.visibleRegionIds = scope.visibleRegionIds;
     const regions = regionRuntime.listRegions();
     safe.regionName = regions.find((r) => r.id === safe.regionId)?.name || safe.regionId;
+    const leafProcs = getLeafProcessorsInScope(scope.processors, regions);
+    safe.leafRegions = leafProcs.map(({ regionId, regionName }) => ({
+      id: regionId,
+      name: regionName || regionId,
+    }));
   }
   if (includePassword) safe.plainPassword = plainPassword || '';
   return safe;
@@ -246,11 +258,30 @@ function attachRegionalProcessor(req, res, next) {
   if (!scope.primaryProcessor) {
     return res.status(403).json({ error: '账号未绑定有效区域，请联系管理员' });
   }
-  req.processor = scope.primaryProcessor;
+  const regions = regionRuntime.listRegions();
+  const leafProcessors = getLeafProcessorsInScope(scope.processors, regions);
+  const scopeRegionId = String(
+    req.query.scopeRegionId || req.body?.scopeRegionId || '',
+  ).trim();
+
+  let visibleProcessors = leafProcessors;
+  if (scopeRegionId) {
+    if (!scope.visibleRegionIds.includes(scopeRegionId)) {
+      return res.status(403).json({ error: '无权访问该区域' });
+    }
+    const matched = leafProcessors.filter((p) => p.regionId === scopeRegionId);
+    if (!matched.length) {
+      return res.status(400).json({ error: '无效的区域筛选' });
+    }
+    visibleProcessors = matched;
+  }
+
+  req.processor = visibleProcessors[0]?.processor || scope.primaryProcessor;
   req.regionScope = scope;
-  req.visibleProcessors = scope.processors;
+  req.visibleProcessors = visibleProcessors;
   req.visibleRegionIds = scope.visibleRegionIds;
-  req.regionId = scope.regionId;
+  req.regionId = scopeRegionId || scope.regionId;
+  req.scopeRegionId = scopeRegionId || null;
   next();
 }
 
@@ -445,20 +476,21 @@ app.get('/api/me', requireLogin, (req, res) => {
 });
 
 app.get('/api/audit-logs', requirePermission('audit-log'), (req, res) => {
-  const { startTime, endTime, action, category, username, limit, offset } = req.query || {};
-  const result = queryAuditLogs({
+  const { startTime, endTime, action, category, username, limit, offset, stats } = req.query || {};
+  const { list, result } = loadAuditLogsQuery({
     startTime,
     endTime,
     action,
     category,
     username,
-    limit: limit ? Number(limit) : 50,
+    limit: limit ? Number(limit) : 20,
     offset: offset ? Number(offset) : 0,
   });
+  const includeStats = stats !== '0' && stats !== 'false';
   res.json({
     ...result,
     actionLabels: AUDIT_ACTION_LABELS,
-    stats: getAuditStats({ hours: 24 }),
+    ...(includeStats ? { stats: getAuditStats(list, { hours: 24 }) } : {}),
   });
 });
 
@@ -1363,55 +1395,63 @@ function flightScopeMeta(req) {
   };
 }
 
+function loadScopedFlightHistory(req, query = {}) {
+  const { type, startTime, endTime } = query;
+  return regionRuntime.collectFlightHistoryFromScope(
+    req.visibleProcessors,
+    regionRuntime.listRegions(),
+    { type, startTime, endTime },
+  );
+}
+
+// 获取飞行统计摘要（首屏：汇总 + 排名，不含明细列表）
+app.get('/api/flight-summary', requireLogin, attachRegionalProcessor, (req, res) => {
+  noCache(res);
+  const { type, startTime, endTime } = req.query;
+  const history = loadScopedFlightHistory(req, { type, startTime, endTime });
+  const active = buildActiveFlightSessions(type, req);
+  const ranking = buildFlightRanking(history);
+  res.json({
+    stats: buildFlightStats(history),
+    ranking,
+    daily: buildDailyDistribution(history, startTime, endTime),
+    deviceCount: ranking.length,
+    activeCount: active.length,
+    totalRecords: history.length + active.length,
+    ...flightScopeMeta(req),
+  });
+});
+
 // 获取飞行统计历史
 app.get('/api/flight-history', requireLogin, attachRegionalProcessor, (req, res) => {
-  noCache(res)
+  noCache(res);
   const { type, startTime, endTime } = req.query;
-
-  let history = regionRuntime.collectFlightHistoryFromScope(req.visibleProcessors, regionRuntime.listRegions());
-
-  // 1. 类型筛选：airport TAB 只统计机场绑定无人机（drone），不统计机场本体（airport）
-  if (type && type !== 'all') {
-    if (type === 'airport') {
-      history = history.filter(h => h.deviceType === 'drone');
-    } else {
-      history = history.filter(h => h.deviceType === type);
-    }
-  }
-
-  // 2. 时间筛选
-  if (startTime || endTime) {
-    const start = startTime ? new Date(startTime).getTime() : 0;
-    const end = endTime ? new Date(endTime).getTime() : Infinity;
-    history = history.filter(h => {
-      const time = new Date(h.startTime).getTime();
-      return time >= start && time <= end;
-    });
-  }
-
+  const history = loadScopedFlightHistory(req, { type, startTime, endTime });
   res.json({ history, ...flightScopeMeta(req) });
 });
 
-// 获取飞行记录列表（已完成 + 进行中）
+// 获取飞行记录列表（已完成 + 进行中，支持分页）
 app.get('/api/flight-records', requireLogin, attachRegionalProcessor, (req, res) => {
-  noCache(res)
-  const { type, startTime, endTime } = req.query;
-  const start = startTime ? new Date(startTime).getTime() : 0;
-  const end = endTime ? new Date(endTime).getTime() : Infinity;
-  let history = regionRuntime.collectFlightHistoryFromScope(req.visibleProcessors, regionRuntime.listRegions()).filter(h => {
-    const matchType = !type || type === 'all' || (type === 'airport' ? h.deviceType === 'drone' : h.deviceType === type);
-    const time = new Date(h.startTime).getTime();
-    return matchType && time >= start && time <= end;
-  });
+  noCache(res);
+  const { type, startTime, endTime, page, limit, all } = req.query;
+  const history = loadScopedFlightHistory(req, { type, startTime, endTime });
   const active = buildActiveFlightSessions(type, req);
-  // 进行中的架次还没写入 history，二者不会重复；
-  // 之前用 deviceId 去重会把“正在飞行设备”的所有历史完成记录全部抹掉，导致列表条数变少/看似不刷新，已移除
-  const records = [
-    ...active,
-    ...history
-  ].sort((a, b) => new Date(b.startTime) - new Date(a.startTime));
+  const records = mergeFlightRecords(active, history);
   console.log(`[飞行记录接口] /api/flight-records type=${type || 'all'} completed=${history.length} active=${active.length} total=${records.length}: ${active.map(s => `${s.deviceName || s.deviceId}(${s.deviceType})`).join(', ') || '无进行中'}`);
-  res.json({ records, history, active, ...flightScopeMeta(req) });
+
+  if (all === '1' || all === 'true') {
+    return res.json({ records, history, active, total: records.length, ...flightScopeMeta(req) });
+  }
+
+  const paged = paginateRecords(records, page, limit);
+  res.json({
+    records: paged.records,
+    total: paged.total,
+    page: paged.page,
+    limit: paged.limit,
+    activeCount: active.length,
+    ...flightScopeMeta(req),
+  });
 });
 
 // 获取进行中的飞行会话

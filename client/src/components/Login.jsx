@@ -1,6 +1,69 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Lock, User, Eye, EyeOff } from 'lucide-react'
 import LogoMark from './LogoMark'
+
+/** 生成视频后放到 client/public/videos/ 下，文件名保持一致即可 */
+const LOGIN_BG_MP4 = '/videos/login-bg.mp4'
+const LOGIN_BG_WEBM = '/videos/login-bg.webm'
+const LOGIN_BG_POSTER = '/images/preview.jpg'
+
+function LoginBackground() {
+  const videoRef = useRef(null)
+  const [videoActive, setVideoActive] = useState(false)
+  const [reduceMotion, setReduceMotion] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => setReduceMotion(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || reduceMotion) return
+
+    const tryPlay = () => {
+      video.play()
+        .then(() => setVideoActive(true))
+        .catch(() => setVideoActive(false))
+    }
+
+    if (video.readyState >= 2) tryPlay()
+    else video.addEventListener('loadeddata', tryPlay)
+
+    return () => video.removeEventListener('loadeddata', tryPlay)
+  }, [reduceMotion])
+
+  return (
+    <div className="absolute inset-0 -z-10 overflow-hidden" aria-hidden>
+      <div
+        className="absolute inset-0 bg-cover bg-center bg-slate-800"
+        style={{ backgroundImage: `url('${LOGIN_BG_POSTER}')` }}
+      />
+      {!reduceMotion && (
+        <video
+          ref={videoRef}
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-700 ${
+            videoActive ? 'opacity-100' : 'opacity-0'
+          }`}
+          autoPlay
+          muted
+          loop
+          playsInline
+          preload="auto"
+          poster={LOGIN_BG_POSTER}
+          onError={() => setVideoActive(false)}
+        >
+          <source src={LOGIN_BG_WEBM} type="video/webm" />
+          <source src={LOGIN_BG_MP4} type="video/mp4" />
+        </video>
+      )}
+      <div className="absolute inset-0 bg-slate-900/20" />
+    </div>
+  )
+}
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('')
@@ -38,11 +101,8 @@ export default function Login({ onLogin }) {
   }
 
   return (
-    <div
-      className="min-h-screen min-h-[100dvh] bg-cover bg-center flex items-center justify-center md:justify-start px-6 md:pl-28 lg:pl-40 relative"
-      style={{ backgroundImage: "url('/images/preview.jpg')" }}
-    >
-      <div className="absolute inset-0 bg-slate-900/10" aria-hidden />
+    <div className="min-h-screen min-h-[100dvh] flex items-center justify-center md:justify-start px-6 md:pl-28 lg:pl-40 relative">
+      <LoginBackground />
 
       <div className="bg-white/75 backdrop-blur-xl border border-white/50 shadow-[0_8px_32px_0_rgba(31,38,135,0.08)] rounded-[24px] p-9 w-full max-w-[390px] relative z-10 transition-all duration-300 hover:shadow-[0_8px_40px_0_rgba(31,38,135,0.12)]">
         <div className="flex flex-col items-start mb-8">

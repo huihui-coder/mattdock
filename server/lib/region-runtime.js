@@ -117,7 +117,26 @@ class RegionRuntime {
 
   _deviceOwnedByLeafRegistry(deviceId, regionId) {
     const proc = this.getProcessor(regionId);
-    if (!proc?.registryOverrides?.[deviceId]) return false;
+    if (!proc) return false;
+    const id = String(deviceId || '');
+    if (isRegisteredDevice(proc, id)) return true;
+    return !!(proc.deviceNames?.[id] && proc.deviceNames[id] !== id);
+  }
+
+  isRegisteredInLeafRegion(deviceId, regionId) {
+    return this._deviceOwnedByLeafRegistry(deviceId, regionId);
+  }
+
+  /** 多区域共用 MQTT 时，非所属区域的连接应跳过该设备消息 */
+  shouldProcessOnRegionConnection(deviceId, connectionRegionId) {
+    const id = String(deviceId || '');
+    if (!id || !connectionRegionId) return true;
+
+    for (const regionId of this._leafRegionIds()) {
+      if (this.isRegisteredInLeafRegion(id, regionId)) {
+        return regionId === connectionRegionId;
+      }
+    }
     return true;
   }
 
@@ -223,17 +242,23 @@ class RegionRuntime {
     return list;
   }
 
-  collectFlightHistoryFromScope(visibleProcessors, regions) {
+  collectFlightHistoryFromScope(visibleProcessors, regions, options = {}) {
+    const { matchesFlightType, matchesFlightTime, parseFlightTimeRange } = require('./flight-query');
+    const { type, startTime, endTime, forceSync } = options;
+    const { start, end } = parseFlightTimeRange(startTime, endTime);
     const procs = regions
       ? getLeafProcessorsInScope(visibleProcessors, regions)
       : visibleProcessors;
     const merged = [];
     for (const { regionId, regionName, processor } of procs) {
-      processor.syncFlightHistoryFromDisk();
+      processor.syncFlightHistoryFromDisk(!!forceSync);
       for (const row of processor.flightHistory) {
         const deviceId = row?.deviceId;
         if (deviceId && !processor.isDeviceInRegion(deviceId)) continue;
-        merged.push({ ...processor.enrichFlightRecord(row), regionId, regionName });
+        if ((startTime || endTime) && !matchesFlightTime(row, start, end)) continue;
+        const enriched = processor.enrichFlightRecord(row);
+        if (type && !matchesFlightType(enriched, type)) continue;
+        merged.push({ ...enriched, regionId, regionName });
       }
     }
     return merged;

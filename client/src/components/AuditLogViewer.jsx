@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  ScrollText, Search, RefreshCw, ChevronLeft, ChevronRight,
+  ScrollText, Search, RefreshCw,
   LogIn, MessageSquare, Image, Download, Plane, Shield,
 } from 'lucide-react'
+import ListPagination from './ListPagination'
 
 const CATEGORY_TABS = [
   { key: '', label: '全部' },
@@ -96,7 +97,8 @@ function StatCard({ label, value, sub }) {
 export default function AuditLogViewer() {
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
-  const [offset, setOffset] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [actionLabels, setActionLabels] = useState({})
@@ -105,13 +107,16 @@ export default function AuditLogViewer() {
   const [username, setUsername] = useState('')
   const [usernameInput, setUsernameInput] = useState('')
   const [action, setAction] = useState('')
-  const limit = 50
 
-  const loadLogs = useCallback(async () => {
+  const fetchPage = useCallback(async (pageNum, size, withStats = false) => {
     setLoading(true)
     setError('')
     try {
-      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+      const params = new URLSearchParams({
+        limit: String(size),
+        offset: String((pageNum - 1) * size),
+      })
+      if (!withStats) params.set('stats', '0')
       if (category) params.set('category', category)
       if (username) params.set('username', username)
       if (action) params.set('action', action)
@@ -120,23 +125,25 @@ export default function AuditLogViewer() {
       if (!res.ok) throw new Error(data.error || '加载日志失败')
       setItems(data.items || [])
       setTotal(data.total || 0)
-      setActionLabels(data.actionLabels || {})
-      setStats(data.stats || null)
+      if (data.actionLabels) setActionLabels(data.actionLabels)
+      if (withStats && data.stats) setStats(data.stats)
     } catch (err) {
       setError(err.message)
     }
     setLoading(false)
-  }, [offset, category, username, action])
-
-  useEffect(() => { loadLogs() }, [loadLogs])
+  }, [category, username, action])
 
   useEffect(() => {
-    const timer = setInterval(() => loadLogs(), 30000)
-    return () => clearInterval(timer)
-  }, [loadLogs])
+    setPage(1)
+    fetchPage(1, pageSize, true)
+  }, [category, username, action, pageSize, fetchPage])
 
-  const page = Math.floor(offset / limit) + 1
-  const totalPages = Math.max(1, Math.ceil(total / limit))
+  useEffect(() => {
+    if (page === 1) return
+    fetchPage(page, pageSize, false)
+  }, [page, pageSize, fetchPage])
+
+  const refresh = () => fetchPage(page, pageSize, page === 1)
 
   const statCards = useMemo(() => {
     if (!stats) return []
@@ -156,7 +163,7 @@ export default function AuditLogViewer() {
 
   const applyUsername = (e) => {
     e.preventDefault()
-    setOffset(0)
+    setPage(1)
     setUsername(usernameInput.trim())
   }
 
@@ -179,7 +186,7 @@ export default function AuditLogViewer() {
         </div>
         <button
           type="button"
-          onClick={loadLogs}
+          onClick={refresh}
           disabled={loading}
           className="ui-btn-secondary shrink-0 cursor-pointer transition-colors duration-200"
         >
@@ -202,7 +209,7 @@ export default function AuditLogViewer() {
             <button
               key={tab.key}
               type="button"
-              onClick={() => { setCategory(tab.key); setOffset(0) }}
+              onClick={() => { setCategory(tab.key); setPage(1) }}
               className={`px-3 py-1.5 rounded-lg text-sm border cursor-pointer transition-colors duration-200 ${
                 category === tab.key
                   ? 'bg-slate-800 text-white border-slate-800'
@@ -227,7 +234,7 @@ export default function AuditLogViewer() {
           </form>
           <select
             value={action}
-            onChange={(e) => { setAction(e.target.value); setOffset(0) }}
+            onChange={(e) => { setAction(e.target.value); setPage(1) }}
             className="ui-input max-w-[220px] cursor-pointer"
             aria-label="操作类型"
           >
@@ -300,33 +307,17 @@ export default function AuditLogViewer() {
           </table>
         </div>
 
-        {total > 0 && (
-          <div className="flex items-center justify-between pt-2 border-t border-dji-border/60">
-            <p className="text-xs text-dji-muted tabular-nums">
-              共 {total} 条 · 第 {page} / {totalPages} 页
-            </p>
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                disabled={offset <= 0}
-                onClick={() => setOffset(Math.max(0, offset - limit))}
-                className="p-2 rounded-lg border border-dji-border text-dji-ink hover:bg-dji-page disabled:opacity-40 cursor-pointer transition-colors duration-200"
-                aria-label="上一页"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                type="button"
-                disabled={offset + limit >= total}
-                onClick={() => setOffset(offset + limit)}
-                className="p-2 rounded-lg border border-dji-border text-dji-ink hover:bg-dji-page disabled:opacity-40 cursor-pointer transition-colors duration-200"
-                aria-label="下一页"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-        )}
+        <ListPagination
+          total={total}
+          page={page}
+          pageSize={pageSize}
+          disabled={loading}
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size)
+            setPage(1)
+          }}
+        />
       </div>
     </div>
   )
