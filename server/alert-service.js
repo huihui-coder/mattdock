@@ -41,8 +41,8 @@ class AlertService {
     this._loadAllRegionConfigs();
   }
 
-  _regionIdFor(deviceId, sourceRegionId) {
-    if (sourceRegionId) return sourceRegionId;
+  _regionIdFor(deviceId, _sourceRegionId) {
+    // sourceRegionId 现为 MQTT 连接池 key（如 haizhu-local），不能当作组织区域 id
     return this.resolveRegionId(deviceId) || DEFAULT_REGION_ID;
   }
 
@@ -591,7 +591,7 @@ class AlertService {
     const resolvedName = deviceName || deviceState?.deviceName || deviceId;
 
     console.log(`[AlertService] 手动触发飞丢告警测试 ${resolvedName} (${deviceId})`);
-    const regionId = sourceRegionId || this.resolveRegionId(deviceId);
+    const regionId = this.resolveRegionId(deviceId) || DEFAULT_REGION_ID;
     const pid = launchLostAlertJob({
       deviceId,
       deviceName: resolvedName,
