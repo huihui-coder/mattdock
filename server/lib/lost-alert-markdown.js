@@ -45,9 +45,43 @@ function buildLostAlertAiMarkdown(analysis) {
   return fitWecomMarkdown(`${header}${trimmed}${AI_DISCLAIMER}`, WECOM_MARKDOWN_MAX - 200);
 }
 
+/** 机场离线告警 Markdown 正文 */
+function buildOfflineAlertMarkdown({ deviceName, deviceId, elapsedMin, offlineType = 'offline_first' }) {
+  const time = new Date().toLocaleString('zh-CN');
+  if (offlineType === 'offline_repeat') {
+    return `🔴 **机场持续离线提醒**
+> 设备：${deviceName}
+> SN：${deviceId}
+> 机场已离线 **${elapsedMin} 分钟**，请尽快处理
+> 时间：${time}`;
+  }
+  return `🔴 **机场离线告警**
+> 设备：${deviceName}
+> SN：${deviceId}
+> 机场已离线，请检查设备网络状态
+> 时间：${time}`;
+}
+
+function buildOfflineAlertAiMarkdown(analysis) {
+  const header = '🤖 **AI 告警分析**\n\n';
+  const maxChars = Number(process.env.ALERT_AI_MARKDOWN_MAX || 900);
+  const bodyBudget = Math.max(200, maxChars - AI_DISCLAIMER.length);
+  const trimmed = String(analysis || '').slice(0, bodyBudget);
+  return fitWecomMarkdown(`${header}${trimmed}${AI_DISCLAIMER}`, WECOM_MARKDOWN_MAX - 200);
+}
+
+function buildOfflineAlertWithAiMarkdown(offlineMarkdown, analysis) {
+  if (!analysis) return offlineMarkdown;
+  const aiBlock = buildOfflineAlertAiMarkdown(analysis);
+  return fitWecomMarkdown(`${offlineMarkdown}\n\n---\n\n${aiBlock}`);
+}
+
 module.exports = {
   buildLostAlertMarkdown,
   buildLostAlertWithAiMarkdown,
   buildLostAlertAiMarkdown,
+  buildOfflineAlertMarkdown,
+  buildOfflineAlertAiMarkdown,
+  buildOfflineAlertWithAiMarkdown,
   fitWecomMarkdown,
 };

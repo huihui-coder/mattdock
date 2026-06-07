@@ -431,6 +431,66 @@ function App() {
   }
 
   const hasPermission = (p) => user?.role === 'admin' || user?.permissions?.includes(p)
+
+  const assistantContext = useMemo(() => {
+    const scopedIds = new Set(scopedDevices.map((d) => d.deviceId))
+    const inScope = (deviceId) => scopedIds.has(deviceId)
+    return {
+      scopeRegionId: isScopeAll(scopeRegionId) ? '' : scopeRegionId,
+      stats,
+      mqttConnected,
+      wsConnected,
+      alerts: alerts
+        .filter((a) => inScope(a.deviceId))
+        .slice(0, 12)
+        .map((a) => ({
+          deviceId: a.deviceId,
+          deviceName: a.deviceName,
+          type: a.type,
+          level: a.level,
+          message: a.message,
+        })),
+      healthAlerts: Object.entries(healthAlerts)
+        .flatMap(([deviceId, list]) =>
+          (list || []).map((h) => ({
+            deviceId,
+            deviceName:
+              scopedDevices.find((d) => d.deviceId === deviceId)?.deviceName || deviceId,
+            code: h.code,
+            level: h.level,
+            levelText: h.levelText,
+            module: h.module,
+            message: h.message,
+          })),
+        )
+        .filter((h) => inScope(h.deviceId))
+        .slice(0, 24),
+      selectedDevice:
+        selectedDevice && inScope(selectedDevice.deviceId)
+          ? {
+              deviceId: selectedDevice.deviceId,
+              name: selectedDevice.deviceName || selectedDevice.name,
+              deviceType: selectedDevice.deviceType,
+              status: selectedDevice.status,
+              windSpeed: selectedDevice.windSpeed,
+              battery: selectedDevice.battery,
+            }
+          : null,
+      flightView: activeTab === 'flight-records' ? flightView : null,
+    }
+  }, [
+    scopeRegionId,
+    stats,
+    mqttConnected,
+    wsConnected,
+    alerts,
+    healthAlerts,
+    scopedDevices,
+    selectedDevice,
+    activeTab,
+    flightView,
+  ])
+
   const visibleTabs = [
     hasPermission('monitor') && { key: 'monitor', label: '实时监控', icon: LayoutDashboard },
     hasPermission('alert-config') && { key: 'alert-config', label: '离巢告警配置', icon: Bell },
@@ -475,32 +535,18 @@ function App() {
 
   return (
     <div className="ui-page">
-      <Header 
-        mqttConnected={mqttConnected} 
+      <Header
+        mqttConnected={mqttConnected}
         wsConnected={wsConnected}
         user={user}
         onLogout={handleLogout}
         onOpenProfile={() => setProfileOpen(true)}
+        tabs={visibleTabs}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
       />
-      
-      <main className="max-w-7xl mx-auto px-4 py-5">
-        <nav className="ui-nav-bar-full mb-5" aria-label="主导航">
-          {visibleTabs.map(tab => {
-            const Icon = tab.icon
-            return (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                aria-current={activeTab === tab.key ? 'page' : undefined}
-                className={`ui-tab flex-1 sm:flex-none justify-center ${activeTab === tab.key ? 'ui-tab-active' : 'ui-tab-inactive'}`}
-              >
-                <Icon size={15} aria-hidden />
-                {tab.label}
-              </button>
-            )
-          })}
-        </nav>
 
+      <main className="max-w-7xl mx-auto px-4 py-5">
         {showScopeTabs && (
           <RegionScopeTabs
             className="mb-5"
@@ -692,43 +738,7 @@ function App() {
       </main>
 
       {hasPermission('ai-assistant') && user && (
-        <FloatingAssistant
-          context={{
-            stats,
-            mqttConnected,
-            wsConnected,
-            alerts: alerts.slice(0, 12).map((a) => ({
-              deviceId: a.deviceId,
-              deviceName: a.deviceName,
-              type: a.type,
-              level: a.level,
-              message: a.message,
-            })),
-            healthAlerts: Object.entries(healthAlerts).flatMap(([deviceId, list]) =>
-              (list || []).map((h) => ({
-                deviceId,
-                deviceName:
-                  devices.find((d) => d.deviceId === deviceId)?.deviceName || deviceId,
-                code: h.code,
-                level: h.level,
-                levelText: h.levelText,
-                module: h.module,
-                message: h.message,
-              })),
-            ).slice(0, 24),
-            selectedDevice: selectedDevice
-              ? {
-                  deviceId: selectedDevice.deviceId,
-                  name: selectedDevice.deviceName || selectedDevice.name,
-                  deviceType: selectedDevice.deviceType,
-                  status: selectedDevice.status,
-                  windSpeed: selectedDevice.windSpeed,
-                  battery: selectedDevice.battery,
-                }
-              : null,
-            flightView: activeTab === 'flight-records' ? flightView : null,
-          }}
-        />
+        <FloatingAssistant context={assistantContext} />
       )}
     </div>
   )

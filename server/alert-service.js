@@ -19,6 +19,11 @@ const { isDockSeriesAirport } = require('./lib/dock-service');
 const { launchLostAlertJob } = require('./lib/lost-alert-job-launcher');
 const { computeLocationDistanceContext } = require('./lib/geo-utils');
 const { getProfileUrl } = require('./lib/webhook-profiles');
+const {
+  buildOfflineAlertMarkdown,
+  buildOfflineAlertWithAiMarkdown,
+} = require('./lib/lost-alert-markdown');
+const { fitWecomMarkdown } = require('./lib/wecom-webhook');
 
 class AlertService {
   constructor(options = {}) {
@@ -37,6 +42,8 @@ class AlertService {
     this.processor = options.processor || null;
     this.resolveRegionId = options.resolveRegionId || (() => null);
     this.aiAnalysisEnabled = options.aiAnalysisEnabled !== false;
+    /** @type {Set<string>} 机场离线 AI 分析进行中，防止重复推送 */
+    this._offlineAiInProgress = new Set();
 
     this._loadAllRegionConfigs();
   }
@@ -290,6 +297,7 @@ class AlertService {
     }
     cfg.lastOfflineTime = null;
     cfg.lastOfflineAlertTime = null;
+    this._offlineAiInProgress.delete(deviceId);
   }
 
   /**
@@ -319,15 +327,13 @@ class AlertService {
           if (cfg.offlineAlertImmediate !== false) {
             const webhookUrl = this._webhookFor(deviceId);
             if (webhookUrl) {
-              this._sendWecomWebhook(webhookUrl, deviceName, deviceId, 0, 'offline_first');
-              cfg.lastOfflineAlertTime = now;
-              this._saveForDevice(deviceId);
-              this._runAiAnalysis({
-                alertKind: 'offline_first',
+              this._dispatchOfflineAlert({
                 webhookUrl,
                 deviceId,
                 deviceName,
                 elapsedMin: 0,
+                alertKind: 'offline_first',
+                now,
               });
             }
           }
@@ -346,20 +352,19 @@ class AlertService {
       const lastAlert = cfg.lastOfflineAlertTime;
       if (!lastAlert) return;
       if (now - lastAlert < repeatMs) return;
+      if (this._offlineAiInProgress.has(deviceId)) return;
 
       const deviceName = this._getDeviceName(deviceId);
       const offlineMin = Math.round((now - cfg.lastOfflineTime) / 60000);
       const webhookUrl = this._webhookFor(deviceId);
       if (webhookUrl) {
-        this._sendWecomWebhook(webhookUrl, deviceName, deviceId, offlineMin, 'offline_repeat');
-        cfg.lastOfflineAlertTime = now;
-        this._saveForDevice(deviceId);
-        this._runAiAnalysis({
-          alertKind: 'offline_repeat',
+        this._dispatchOfflineAlert({
           webhookUrl,
           deviceId,
           deviceName,
           elapsedMin: offlineMin,
+          alertKind: 'offline_repeat',
+          now,
         });
       }
     });
@@ -485,10 +490,8 @@ class AlertService {
   _sendWecomWebhook(webhookUrl, deviceName, deviceId, elapsedMin, type = 'lost') {
     let content;
     const time = new Date().toLocaleString('zh-CN');
-    if (type === 'offline_first') {
-      content = `🔴 **机场离线告警**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 机场已离线，请检查设备网络状态\n> 时间：${time}`;
-    } else if (type === 'offline_repeat') {
-      content = `🔴 **机场持续离线提醒**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 机场已离线 **${elapsedMin} 分钟**，请尽快处理\n> 时间：${time}`;
+    if (type === 'offline_first' || type === 'offline_repeat') {
+      content = buildOfflineAlertMarkdown({ deviceName, deviceId, elapsedMin, offlineType: type });
     } else if (type === 'online') {
       content = `✅ **机场恢复在线**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 机场已恢复正常连接\n> 时间：${time}`;
     } else if (type === 'test') {
@@ -682,26 +685,70 @@ class AlertService {
     });
   }
 
-  _sendAiAnalysisWebhook(webhookUrl, deviceName, deviceId, analysis) {
-    if (!analysis) return;
-    const trimmed = String(analysis).slice(0, 3200);
-    const time = new Date().toLocaleString('zh-CN');
-    const content = `🤖 **AI 告警分析**\n> 设备：${deviceName}\n> SN：${deviceId}\n> 时间：${time}\n\n${trimmed}`;
-    this._postWebhook(webhookUrl, JSON.stringify({ msgtype: 'markdown', markdown: { content } }));
+  _isAiAnalysisEnabledForDevice(deviceId) {
+    if (!this.aiAnalysisEnabled || !this.aiAnalyzer) return false;
+    const { cfg } = this._deviceEntry(deviceId);
+    return cfg.aiAnalysisEnabled !== false;
   }
 
-  _runAiAnalysis({ alertKind, webhookUrl, deviceId, deviceName, elapsedMin, preCapturedShots }) {
-    if (!this.aiAnalysisEnabled || !this.aiAnalyzer || !webhookUrl) return;
+  _postOfflineAlertMarkdown(webhookUrl, content) {
+    const body = JSON.stringify({
+      msgtype: 'markdown',
+      markdown: { content: fitWecomMarkdown(content) },
+    });
+    this._postWebhook(webhookUrl, body);
+  }
+
+  /**
+   * 调度机场离线告警：AI 开启时等分析完成再推送一条合并消息，并防止分析期间重复触发
+   */
+  _dispatchOfflineAlert({ webhookUrl, deviceId, deviceName, elapsedMin, alertKind, now }) {
+    if (this._offlineAiInProgress.has(deviceId)) return;
 
     const { cfg } = this._deviceEntry(deviceId);
-    if (cfg.aiAnalysisEnabled === false) return;
+    const markSent = () => {
+      cfg.lastOfflineAlertTime = now;
+      this._saveForDevice(deviceId);
+    };
 
+    const aiEnabled = this._isAiAnalysisEnabledForDevice(deviceId);
+    if (aiEnabled) {
+      this._offlineAiInProgress.add(deviceId);
+      this._sendOfflineAlert({ webhookUrl, deviceId, deviceName, elapsedMin, alertKind })
+        .finally(() => {
+          this._offlineAiInProgress.delete(deviceId);
+          markSent();
+        });
+      return;
+    }
+
+    this._sendOfflineAlert({ webhookUrl, deviceId, deviceName, elapsedMin, alertKind })
+      .then(markSent);
+  }
+
+  /**
+   * 机场离线告警：若开启 AI 分析则等 AI 完成后合并为一条推送，否则立即推送
+   */
+  async _sendOfflineAlert({ webhookUrl, deviceId, deviceName, elapsedMin, alertKind }) {
+    const offlineMarkdown = buildOfflineAlertMarkdown({
+      deviceName,
+      deviceId,
+      elapsedMin,
+      offlineType: alertKind,
+    });
+
+    if (!this._isAiAnalysisEnabledForDevice(deviceId)) {
+      this._postOfflineAlertMarkdown(webhookUrl, offlineMarkdown);
+      return;
+    }
+
+    const { cfg } = this._deviceEntry(deviceId);
     const deviceState = this.getDeviceState(deviceId);
     const location = this._droneLocationCache[deviceId];
     const subDeviceOnline = cfg._subDeviceOnline;
 
-    this.aiAnalyzer
-      .analyzeAlert({
+    try {
+      const result = await this.aiAnalyzer.analyzeAlert({
         alertKind,
         deviceId,
         deviceName,
@@ -710,16 +757,19 @@ class AlertService {
         location,
         subDeviceOnline,
         deviceState,
-        preCapturedShots,
-      })
-      .then((result) => {
-        if (!result?.analysis) return;
-        console.log(`[AlertService] AI 分析完成 ${deviceName} (${alertKind})`);
-        this._sendAiAnalysisWebhook(webhookUrl, deviceName, deviceId, result.analysis);
-      })
-      .catch((e) => {
-        console.error(`[AlertService] AI 分析失败 ${deviceName}:`, e.message);
       });
+      const analysis = result?.analysis;
+      const content = analysis
+        ? buildOfflineAlertWithAiMarkdown(offlineMarkdown, analysis)
+        : offlineMarkdown;
+      console.log(
+        `[AlertService] 离线告警推送 ${deviceName} (${alertKind}${analysis ? ', 含AI' : ''})`,
+      );
+      this._postOfflineAlertMarkdown(webhookUrl, content);
+    } catch (e) {
+      console.error(`[AlertService] 离线告警 AI 分析失败 ${deviceName}:`, e.message);
+      this._postOfflineAlertMarkdown(webhookUrl, offlineMarkdown);
+    }
   }
 
   _sendFlightSnapshot(webhookUrl, deviceId, deviceName) {

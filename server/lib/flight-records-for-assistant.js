@@ -113,16 +113,20 @@ function buildRankingFromHistory(history, top = RANKING_TOP) {
  */
 function getFlightStatsSnapshot(processor, flightView) {
   processor.syncFlightHistoryFromDisk();
+  return getFlightStatsSnapshotFromHistory(processor.flightHistory, flightView);
+}
+
+function getFlightStatsSnapshotFromHistory(history, flightView) {
   const query = resolveFlightQueryRange(flightView);
   const { startTime, endTime, activeTab, tabLabel } = query;
 
   const byType = {};
   for (const type of ['single', 'airport', 'virtual', 'all']) {
-    const history = filterFlightHistory(processor.flightHistory, { type, startTime, endTime });
-    byType[type] = computeFlightStats(history);
+    const filtered = filterFlightHistory(history, { type, startTime, endTime });
+    byType[type] = computeFlightStats(filtered);
   }
 
-  const currentHistory = filterFlightHistory(processor.flightHistory, {
+  const currentHistory = filterFlightHistory(history, {
     type: activeTab,
     startTime,
     endTime,
@@ -203,7 +207,9 @@ function formatRecordLine(r, index) {
 }
 
 function getFlightRecordsForAssistant(processor, getActiveSessions, options = {}) {
-  const snapshot = getFlightStatsSnapshot(processor, options.flightView);
+  const snapshot = options.historyOverride
+    ? getFlightStatsSnapshotFromHistory(options.historyOverride, options.flightView)
+    : getFlightStatsSnapshot(processor, options.flightView);
   const limit = options.limit ?? MAX_RECORDS;
   const selectedDevice = options.selectedDevice;
 
@@ -268,6 +274,7 @@ module.exports = {
   MAX_RECORDS,
   RANKING_TOP,
   getFlightStatsSnapshot,
+  getFlightStatsSnapshotFromHistory,
   formatFlightStatsForAssistant,
   getFlightRecordsForAssistant,
   getFlightRankingForAssistant,

@@ -1,5 +1,6 @@
 import { Wifi, WifiOff, Activity, LogOut, User } from 'lucide-react'
 import LogoMark from './LogoMark'
+import MainNav from './MainNav'
 
 function StatusChip({ label, ok, okText, failText, okIcon: OkIcon, failIcon: FailIcon }) {
   return (
@@ -31,14 +32,23 @@ function StatusChip({ label, ok, okText, failText, okIcon: OkIcon, failIcon: Fai
   )
 }
 
-export default function Header({ mqttConnected, wsConnected, user, onLogout, onOpenProfile }) {
+export default function Header({
+  mqttConnected,
+  wsConnected,
+  user,
+  onLogout,
+  onOpenProfile,
+  tabs,
+  activeTab,
+  onTabChange,
+}) {
   const allOnline = mqttConnected && wsConnected
+  const showNav = Array.isArray(tabs) && tabs.length > 0 && onTabChange
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200/90 bg-white/85 backdrop-blur-md supports-[backdrop-filter]:bg-white/75 shadow-[0_1px_0_0_rgba(15,23,42,0.04)]">
-      <div className="max-w-7xl mx-auto px-4">
-        <div className="flex h-[3.25rem] items-center justify-between gap-3 sm:gap-4">
-          {/* 品牌区 */}
+    <header className="app-header">
+      <div className="app-header__inner">
+        <div className="app-header__top">
           <div className="flex items-center gap-2.5 min-w-0">
             <LogoMark variant="app" title="无人机管理平台" />
             <div className="min-w-0 leading-tight">
@@ -51,7 +61,6 @@ export default function Header({ mqttConnected, wsConnected, user, onLogout, onO
             </div>
           </div>
 
-          {/* 状态 + 用户 */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <div
               className={`hidden md:flex items-center gap-1.5 rounded-lg border px-2 py-1 transition-colors duration-200 ${
@@ -80,7 +89,6 @@ export default function Header({ mqttConnected, wsConnected, user, onLogout, onO
               />
             </div>
 
-            {/* 窄屏：仅显示两枚状态胶囊 */}
             <div className="flex md:hidden items-center gap-1.5">
               <StatusChip
                 label="MQTT"
@@ -137,6 +145,17 @@ export default function Header({ mqttConnected, wsConnected, user, onLogout, onO
             )}
           </div>
         </div>
+
+        {showNav && (
+          <div className="app-header__nav">
+            <MainNav
+              variant="embedded"
+              tabs={tabs}
+              activeKey={activeTab}
+              onChange={onTabChange}
+            />
+          </div>
+        )}
       </div>
     </header>
   )

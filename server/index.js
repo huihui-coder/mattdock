@@ -13,7 +13,7 @@ const DeviceProcessor = require('./device-processor');
 const AlertService = require('./alert-service');
 const { registerImageRoutes } = require('./routes/image-api');
 const { registerAssistantRoutes } = require('./routes/assistant-api');
-const { getFlightRecordsForAssistant, getFlightStatsSnapshot } = require('./lib/flight-records-for-assistant');
+const { enrichAssistantContextWithScope } = require('./lib/assistant-scope-context');
 const {
   buildFlightStats,
   buildFlightRanking,
@@ -294,46 +294,75 @@ function processorForDevice(deviceId) {
 
 const SCOPE_UNMAPPED = '__unmapped__';
 
-function attachRegionalProcessor(req, res, next) {
-  const scope = regionRuntime.getScopeForUser(req.user);
+function resolveRegionalScope(user, scopeRegionIdRaw) {
+  const scope = regionRuntime.getScopeForUser(user);
   if (!scope.primaryProcessor) {
-    return res.status(403).json({ error: '账号未绑定有效区域，请联系管理员' });
+    const err = new Error('账号未绑定有效区域，请联系管理员');
+    err.status = 403;
+    throw err;
   }
   const regions = regionRuntime.listRegions();
   const leafProcessors = getLeafProcessorsInScope(scope.processors, regions);
-  const scopeRegionId = String(
-    req.query.scopeRegionId || req.body?.scopeRegionId || '',
-  ).trim();
+  const scopeRegionId = String(scopeRegionIdRaw || '').trim();
 
   let visibleProcessors = leafProcessors;
   let scopeUnmappedOnly = false;
+  let effectiveRegionId = scopeRegionId || scope.regionId;
 
   if (scopeRegionId === SCOPE_UNMAPPED) {
-    if (!isAdminUser(req.user)) {
-      return res.status(403).json({ error: '仅管理员可查看无归属设备' });
+    if (!isAdminUser(user)) {
+      const err = new Error('仅管理员可查看无归属设备');
+      err.status = 403;
+      throw err;
     }
     scopeUnmappedOnly = true;
+    effectiveRegionId = SCOPE_UNMAPPED;
   } else if (scopeRegionId) {
     if (!scope.visibleRegionIds.includes(scopeRegionId)) {
-      return res.status(403).json({ error: '无权访问该区域' });
+      const err = new Error('无权访问该区域');
+      err.status = 403;
+      throw err;
     }
     const { getDescendantIds } = require('./lib/region-tree');
     const subtreeIds = new Set(getDescendantIds(scopeRegionId, regions));
     const matched = leafProcessors.filter((p) => subtreeIds.has(p.regionId));
     if (!matched.length) {
-      return res.status(400).json({ error: '无效的区域筛选' });
+      const err = new Error('无效的区域筛选');
+      err.status = 400;
+      throw err;
     }
     visibleProcessors = matched;
+    effectiveRegionId = scopeRegionId;
   }
 
-  req.processor = visibleProcessors[0]?.processor || scope.primaryProcessor;
-  req.regionScope = scope;
-  req.visibleProcessors = visibleProcessors;
-  req.visibleRegionIds = scope.visibleRegionIds;
-  req.regionId = scopeUnmappedOnly ? SCOPE_UNMAPPED : (scopeRegionId || scope.regionId);
-  req.scopeRegionId = scopeRegionId || null;
-  req.scopeUnmappedOnly = scopeUnmappedOnly;
-  next();
+  return {
+    scope,
+    visibleProcessors,
+    scopeUnmappedOnly,
+    regionId: scopeUnmappedOnly ? SCOPE_UNMAPPED : effectiveRegionId,
+    visibleRegionIds: scope.visibleRegionIds,
+    regions,
+  };
+}
+
+function attachRegionalProcessor(req, res, next) {
+  const scopeRegionId = String(
+    req.query.scopeRegionId || req.body?.scopeRegionId || '',
+  ).trim();
+
+  try {
+    const resolved = resolveRegionalScope(req.user, scopeRegionId);
+    req.processor = resolved.visibleProcessors[0]?.processor || resolved.scope.primaryProcessor;
+    req.regionScope = resolved.scope;
+    req.visibleProcessors = resolved.visibleProcessors;
+    req.visibleRegionIds = resolved.visibleRegionIds;
+    req.regionId = resolved.regionId;
+    req.scopeRegionId = scopeRegionId || null;
+    req.scopeUnmappedOnly = resolved.scopeUnmappedOnly;
+    next();
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 }
 
 function isAdminUser(user) {
@@ -1292,24 +1321,17 @@ registerAssistantRoutes(app, {
   updateTokenUsage,
   auditLog,
   enrichAssistantContext: (ctx, req) => {
-    const scope = regionRuntime.getScopeForUser(req?.user);
-    const procs = scope.processors;
-    const flightView = ctx?.flightView;
-    const flightStats = getFlightStatsSnapshot(scope.primaryProcessor, flightView);
-    const mergedHistory = regionRuntime.collectFlightHistoryFromScope(procs, regionRuntime.listRegions());
-    const active = buildActiveFlightSessions(flightView?.type, { visibleProcessors: procs });
-    const opts = { flightView, selectedDevice: ctx?.selectedDevice };
-    return {
-      ...ctx,
-      flightStats,
-      flightRecords: getFlightRecordsForAssistant(scope.primaryProcessor, () => active, {
-        ...opts,
-        historyOverride: mergedHistory,
-        scopeProcessors: procs,
-      }),
-      flightRanking: flightStats.ranking,
-      regionScope: scope.visibleRegionIds,
-    };
+    const scopeRegionId = ctx?.scopeRegionId || req.body?.scopeRegionId || '';
+    try {
+      const resolved = resolveRegionalScope(req?.user, scopeRegionId);
+      return enrichAssistantContextWithScope(ctx || {}, {
+        regionRuntime,
+        ...resolved,
+      });
+    } catch (e) {
+      console.warn('[Assistant] 区域隔离失败:', e.message);
+      return { ...ctx, scopeError: e.message };
+    }
   },
 });
 

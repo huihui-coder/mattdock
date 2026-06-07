@@ -23,9 +23,12 @@ import { applyGreenScreenKey } from '../lib/video-chroma-key'
 import {
   pickIdlePhrase,
   IDLE_SPEECH_INTERVAL_MS,
-  IDLE_SPEECH_FIRST_MS,
+  IDLE_SPEECH_FIRST_SHOW_MS,
   IDLE_SPEECH_VISIBLE_MS,
+  IDLE_TYPE_CURSOR_BLINK_DURATION_S,
+  IDLE_TYPE_INITIAL_DELAY_MS,
 } from '../lib/assistant-idle-phrases'
+import TextType from './TextType'
 
 const ROBOT = {
   idle: '/images/robot/空闲.png',
@@ -247,16 +250,45 @@ function RobotMascot({
 }
 
 function AssistantIdleBubble({ text, visible, panelOpen }) {
+  const [reduceMotion, setReduceMotion] = useState(false)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const sync = () => setReduceMotion(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
+
   if (panelOpen || !visible || !text) return null
   const compact = text.length <= 14
+
   return (
     <div className="floating-assistant__idle-bubble-anchor">
       <div
         className={`floating-assistant__idle-bubble${compact ? ' is-compact' : ''}`}
         role="status"
         aria-live="polite"
+        aria-label={text}
       >
-        {text}
+        {reduceMotion ? (
+          text
+        ) : (
+          <TextType
+            key={text}
+            as="span"
+            text={text}
+            typingSpeed={72}
+            cursorBlinkDuration={IDLE_TYPE_CURSOR_BLINK_DURATION_S}
+            initialDelay={IDLE_TYPE_INITIAL_DELAY_MS}
+            loop={false}
+            showCursor
+            cursorCharacter="|"
+            variableSpeed={{ min: 48, max: 96 }}
+            className="floating-assistant__idle-type"
+            cursorClassName="floating-assistant__idle-type-cursor"
+          />
+        )}
       </div>
     </div>
   )
@@ -284,6 +316,8 @@ export default function FloatingAssistant({ context }) {
   const lastIdlePhraseRef = useRef('')
   const idleHideTimerRef = useRef(null)
   const idleIntervalRef = useRef(null)
+  const pageEnteredAtRef = useRef(Date.now())
+  const firstIdleFiredRef = useRef(false)
   const openRef = useRef(false)
   const streamingRef = useRef(false)
   const fabDraggingRef = useRef(false)
@@ -355,12 +389,21 @@ export default function FloatingAssistant({ context }) {
       return undefined
     }
 
+    let firstTimer
+    if (!firstIdleFiredRef.current) {
+      const elapsed = Date.now() - pageEnteredAtRef.current
+      const firstDelay = Math.max(0, IDLE_SPEECH_FIRST_SHOW_MS - elapsed)
+      firstTimer = window.setTimeout(() => {
+        firstIdleFiredRef.current = true
+        showIdlePhrase()
+      }, firstDelay)
+    }
+
     idleIntervalRef.current = window.setInterval(showIdlePhrase, IDLE_SPEECH_INTERVAL_MS)
-    const firstTimer = window.setTimeout(showIdlePhrase, IDLE_SPEECH_FIRST_MS)
 
     return () => {
+      if (firstTimer) window.clearTimeout(firstTimer)
       window.clearInterval(idleIntervalRef.current)
-      window.clearTimeout(firstTimer)
       dismissIdleBubble()
     }
   }, [open, streaming, configured, showIdlePhrase, dismissIdleBubble])

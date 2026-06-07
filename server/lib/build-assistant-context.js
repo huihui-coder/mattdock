@@ -17,8 +17,17 @@ function buildAssistantContext(context = {}) {
     flightRanking,
     flightStats,
     healthAlerts,
+    scopeRegionLabel,
+    scopeDeviceCount,
+    scopeLeafRegions,
   } = context;
 
+  if (scopeRegionLabel) {
+    const leafHint = scopeLeafRegions?.length
+      ? `（含 ${scopeLeafRegions.map((r) => r.name).join('、')}）`
+      : '';
+    lines.push(`当前数据范围：${scopeRegionLabel}${leafHint}；可见设备 ${scopeDeviceCount ?? stats?.total ?? 0} 台`);
+  }
   if (stats) {
     lines.push(
       `设备：共 ${stats.total ?? 0} 台（机场 ${stats.airport ?? 0} / 无人机 ${stats.drone ?? 0}）；正常 ${stats.normal ?? 0}、警告 ${stats.warning ?? 0}、严重 ${stats.critical ?? 0}`,
