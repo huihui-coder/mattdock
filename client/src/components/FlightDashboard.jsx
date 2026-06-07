@@ -264,7 +264,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
   const [records, setRecords] = useState([])
   const [recordsTotal, setRecordsTotal] = useState(0)
   const [activeCount, setActiveCount] = useState(0)
-  const [deviceCount, setDeviceCount] = useState(0)
+  const [onlineCount, setOnlineCount] = useState(0)
   const [ranking, setRanking] = useState([])
   const [daily, setDaily] = useState([])
   const [chartMetric, setChartMetric] = useState('count')
@@ -331,7 +331,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
       setStats(data.stats || { count: 0, mileage: 0, duration: 0 })
       setRanking(data.ranking || [])
       setDaily(data.daily || [])
-      setDeviceCount(data.deviceCount || (data.ranking || []).length)
+      setOnlineCount(data.onlineCount ?? data.deviceCount ?? 0)
       setActiveCount(data.activeCount || 0)
       if (typeof data.totalRecords === 'number') setRecordsTotal(data.totalRecords)
       if (prevRes?.ok) {
@@ -398,9 +398,11 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
   [ranking])
 
   const onlineDeviceHint = useMemo(() => {
-    const online = activeCount > 0 ? activeCount : deviceCount
-    return deviceCount > 0 ? `在线 ${Math.min(online, deviceCount)} 台` : undefined
-  }, [deviceCount, activeCount])
+    const parts = []
+    if (onlineCount > 0) parts.push(`在线 ${onlineCount} 台`)
+    if (activeCount > 0) parts.push(`飞行中 ${activeCount} 台`)
+    return parts.length ? parts.join(' · ') : undefined
+  }, [onlineCount, activeCount])
 
   const exportExcel = async () => {
     const tabLabel = DEVICE_OPTIONS.find((o) => o.id === applied.deviceType)?.label || applied.deviceType
@@ -578,7 +580,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
         />
         <KpiCard
           label="设备数"
-          value={<>{deviceCount}<span className="text-base font-medium text-slate-500 ml-1">台</span></>}
+          value={<>{ranking.length}<span className="text-base font-medium text-slate-500 ml-1">台</span></>}
           sub={onlineDeviceHint}
           icon={PieChart}
           accent="orange"

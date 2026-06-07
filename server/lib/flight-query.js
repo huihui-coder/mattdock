@@ -11,6 +11,17 @@ function matchesFlightType(record, type) {
   return record.deviceType === type;
 }
 
+/** 与飞行记录 type 筛选一致，用于统计当前组织范围内的设备数 */
+function matchesScopeDeviceType(device, type) {
+  if (!type || type === 'all') return true;
+  if (type === 'airport') return device.deviceType === 'drone';
+  return device.deviceType === type;
+}
+
+function isDeviceOnline(device) {
+  return device?.status === 'normal' || device?.status === 'warning';
+}
+
 function matchesFlightTime(record, start, end) {
   const time = new Date(record.startTime).getTime();
   return time >= start && time <= end;
@@ -103,6 +114,8 @@ module.exports = {
   MAX_FLIGHT_MILEAGE_M,
   parseFlightTimeRange,
   matchesFlightType,
+  matchesScopeDeviceType,
+  isDeviceOnline,
   matchesFlightTime,
   isValidCompletedFlight,
   filterFlightHistory,

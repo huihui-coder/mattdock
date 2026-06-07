@@ -1766,11 +1766,20 @@ app.get('/api/flight-summary', requireLogin, attachRegionalProcessor, (req, res)
   const history = loadScopedFlightHistory(req, { type, startTime, endTime });
   const active = buildActiveFlightSessions(type, req, flightScopeOptions(req, req.query));
   const ranking = buildFlightRanking(history);
+  const scopeOpts = flightScopeOptions(req, req.query);
+  const { matchesScopeDeviceType, isDeviceOnline } = require('./lib/flight-query');
+  const scopedDevices = regionRuntime.collectDevicesFromScope(
+    req.visibleProcessors,
+    regionRuntime.listRegions(),
+    scopeOpts,
+  ).filter((d) => matchesScopeDeviceType(d, type));
   res.json({
     stats: buildFlightStats(history),
     ranking,
     daily: buildDailyDistribution(history, startTime, endTime),
-    deviceCount: ranking.length,
+    deviceCount: scopedDevices.length,
+    onlineCount: scopedDevices.filter(isDeviceOnline).length,
+    flightDeviceCount: ranking.length,
     activeCount: active.length,
     totalRecords: history.length + active.length,
     ...flightScopeMeta(req),
