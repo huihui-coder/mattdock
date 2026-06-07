@@ -1,9 +1,12 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Minus, X, Send, ImagePlus, Trash2 } from 'lucide-react'
 import {
   loadAssistantMessages,
   saveAssistantMessages,
   clearAssistantMessages,
+  loadReadCursor,
+  saveReadCursor,
+  countUnreadAssistantMessages,
 } from '../lib/assistant-storage'
 import {
   AssistantRichText,
@@ -259,10 +262,11 @@ function AssistantIdleBubble({ text, visible, panelOpen }) {
   )
 }
 
-export default function FloatingAssistant({ context, alertCount = 0 }) {
+export default function FloatingAssistant({ context }) {
   const [open, setOpen] = useState(false)
   const [configured, setConfigured] = useState(null)
   const [messages, setMessages] = useState(() => loadAssistantMessages())
+  const [readCursor, setReadCursor] = useState(() => loadReadCursor(loadAssistantMessages().length))
   const [input, setInput] = useState('')
   const [imageFile, setImageFile] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
@@ -365,7 +369,19 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
     if (fabDragging) dismissIdleBubble()
   }, [fabDragging, dismissIdleBubble])
 
-  const badge = alertCount > 0 ? Math.min(alertCount, 99) : 0
+  useEffect(() => {
+    if (!open) return
+    const idx = messages.length
+    setReadCursor(idx)
+    saveReadCursor(idx)
+  }, [open, messages.length])
+
+  const unreadCount = useMemo(() => {
+    if (open) return 0
+    return countUnreadAssistantMessages(messages, readCursor)
+  }, [messages, readCursor, open])
+
+  const badge = unreadCount > 0 ? Math.min(unreadCount, 99) : 0
   const fabMascot = mascotState === 'thinking' ? 'thinking' : 'idle'
 
   useEffect(() => {
@@ -575,10 +591,10 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
         setError(e.message || '发送失败')
       } finally {
         setStreaming(false)
-        setTimeout(() => setMascotState(badge > 0 ? 'alert' : 'idle'), 1200)
+        setTimeout(() => setMascotState('idle'), 1200)
       }
     },
-    [input, imageFile, imagePreview, configured, streaming, messages, context, badge],
+    [input, imageFile, imagePreview, configured, streaming, messages, context],
   )
 
   const attachImageFile = useCallback((file) => {
@@ -621,6 +637,7 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
     if (!window.confirm('清空本地对话记录？')) return
     clearAssistantMessages()
     setMessages([])
+    setReadCursor(0)
     setError('')
   }
 
@@ -702,14 +719,14 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
             {messages.length === 0 && (
               <div className="floating-assistant__welcome">
                 <RobotMascot
-                  state={badge > 0 ? 'alert' : 'idle'}
+                  state="idle"
                   className="is-lg"
-                  useIdleVideo={badge === 0}
+                  useIdleVideo
                 />
                 <p>
                   你好，我是飞行助手。
                   {badge > 0
-                    ? ` 检测到 ${badge} 条近期告警，需要我帮你解读吗？`
+                    ? ` 你有 ${badge} 条未读回复，点开看看？`
                     : ' 有什么监控或告警问题可以问我。'}
                 </p>
               </div>
@@ -801,7 +818,7 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
                 value={input}
                 disabled={streaming}
                 onFocus={() => setMascotState('listen')}
-                onBlur={() => !streaming && setMascotState(badge > 0 ? 'alert' : 'idle')}
+                onBlur={() => !streaming && setMascotState('idle')}
                 onChange={(e) => setInput(e.target.value)}
                 onPaste={onPasteImage}
                 onKeyDown={(e) => {
@@ -851,7 +868,7 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
             <RobotIdleVideo className="is-fab" alt="" />
           )}
           {badge > 0 && (
-            <span className="floating-assistant__badge" aria-label={`${badge} 条告警`}>
+            <span className="floating-assistant__badge" aria-label={`${badge} 条未读回复`}>
               {badge}
             </span>
           )}

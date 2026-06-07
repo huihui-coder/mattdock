@@ -693,7 +693,6 @@ function App() {
 
       {hasPermission('ai-assistant') && user && (
         <FloatingAssistant
-          alertCount={alerts.length}
           context={{
             stats,
             mqttConnected,
