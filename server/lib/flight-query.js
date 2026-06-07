@@ -16,8 +16,14 @@ function matchesFlightTime(record, start, end) {
   return time >= start && time <= end;
 }
 
+const MAX_FLIGHT_MILEAGE_M = 1_000_000; // 1000 km，超过视为异常数据
+
 function isValidCompletedFlight(record) {
-  return (record.totalMileage || 0) > 0 && (record.totalDuration || 0) > 5;
+  const mileage = record.totalMileage || 0;
+  const duration = record.totalDuration || 0;
+  if (mileage <= 0 || duration <= 5) return false;
+  if (mileage > MAX_FLIGHT_MILEAGE_M) return false;
+  return true;
 }
 
 function filterFlightHistory(history, { type, startTime, endTime } = {}) {
@@ -94,6 +100,7 @@ function paginateRecords(records, page, limit) {
 }
 
 module.exports = {
+  MAX_FLIGHT_MILEAGE_M,
   parseFlightTimeRange,
   matchesFlightType,
   matchesFlightTime,

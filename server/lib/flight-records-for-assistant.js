@@ -1,6 +1,7 @@
 const DEFAULT_DAYS = Number(process.env.ASSISTANT_FLIGHT_DAYS) || 7;
 const MAX_RECORDS = Number(process.env.ASSISTANT_FLIGHT_LIMIT) || 18;
 const RANKING_TOP = Number(process.env.ASSISTANT_FLIGHT_RANK_TOP) || 10;
+const { isValidCompletedFlight } = require('./flight-query');
 
 const TYPE_LABELS = {
   all: '全部设备',
@@ -37,11 +38,6 @@ function formatMileage(m) {
   return `${Math.round(n)} m`;
 }
 
-function isValidFlight(record) {
-  const mileage = record.totalMileage ?? record.mileage ?? 0;
-  const duration = record.totalDuration ?? record.duration ?? 0;
-  return mileage > 0 && duration > 5;
-}
 
 function matchFlightType(record, type) {
   if (!type || type === 'all') return true;
@@ -80,7 +76,7 @@ function filterFlightHistory(history, { type, startTime, endTime }) {
 
 /** 与飞行记录页一致：仅统计有效已完成架次 */
 function computeFlightStats(history) {
-  const valid = history.filter(isValidFlight);
+  const valid = history.filter(isValidCompletedFlight);
   const count = valid.length;
   const totalMileage = valid.reduce((s, r) => s + (r.totalMileage ?? r.mileage ?? 0), 0);
   const totalDuration = valid.reduce((s, r) => s + (r.totalDuration ?? r.duration ?? 0), 0);
@@ -96,7 +92,7 @@ function computeFlightStats(history) {
 function buildRankingFromHistory(history, top = RANKING_TOP) {
   const deviceMap = new Map();
   for (const r of history) {
-    if (!isValidFlight(r)) continue;
+    if (!isValidCompletedFlight(r)) continue;
     const id = r.deviceId || r.deviceName;
     const name = (r.deviceName || r.deviceId || '').replace(/-无人机$/, '');
     if (!deviceMap.has(id)) {

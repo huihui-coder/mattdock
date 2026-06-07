@@ -4,6 +4,7 @@ const { mergeOsdSnapshot, buildDockTelemetry } = require('./lib/dock-osd');
 const { getLiveCameraPosition, setLiveCameraPosition } = require('./lib/dock-live-state-store');
 
 const { getRegionDeviceRegistryPath, getRegionFlightHistoryPath } = require('./lib/region-store');
+const { isValidCompletedFlight, MAX_FLIGHT_MILEAGE_M } = require('./lib/flight-query');
 
 const DEVICE_CATEGORY_LABELS = {
   airport: '自动机场',
@@ -612,6 +613,19 @@ class DeviceProcessor {
     return Math.max(0, Math.floor((endTime.getTime() - new Date(session.startTime).getTime()) / 1000));
   }
 
+  /** 用累计飞行里程差更新架次里程；异常跳变时重置基准 */
+  updateSessionMileage(session, totalFlightDistance) {
+    if (totalFlightDistance === null || totalFlightDistance === undefined) return;
+    if (session.startTotalFlightDistance === null || session.startTotalFlightDistance === undefined) return;
+    const delta = Math.max(0, totalFlightDistance - session.startTotalFlightDistance);
+    if (delta > MAX_FLIGHT_MILEAGE_M) {
+      session.startTotalFlightDistance = totalFlightDistance;
+      session.mileage = 0;
+      return;
+    }
+    session.mileage = delta;
+  }
+
   logFlight(message) {
     console.log(`[${new Date().toLocaleString('zh-CN', { hour12: false })}] ${message}`);
   }
@@ -629,11 +643,13 @@ class DeviceProcessor {
       totalDuration: this.calcFlightDuration(session, endTime),
       status: 'completed'
     };
-    if (finalRecord.totalDuration > 5 || finalRecord.totalMileage > 2) {
+    if (isValidCompletedFlight(finalRecord)) {
       this.flightHistory.push(this.enrichFlightRecord(finalRecord));
       if (this.flightHistory.length > 1000) this.flightHistory.shift();
       this.saveFlightHistory();
       this.logFlight(`[飞行统计] 已写入历史记录 ${session.deviceName || deviceId} reason=${reason} mileage=${finalRecord.totalMileage}m duration=${finalRecord.totalDuration}s`);
+    } else if (finalRecord.totalDuration > 5 || finalRecord.totalMileage > 2) {
+      this.logFlight(`[飞行统计] 丢弃无效记录 ${session.deviceName || deviceId} reason=${reason} mileage=${finalRecord.totalMileage}m duration=${finalRecord.totalDuration}s (上限 ${MAX_FLIGHT_MILEAGE_M / 1000}km)`);
     }
     this.activeSessions.delete(deviceId);
     return finalRecord;
@@ -833,7 +849,7 @@ class DeviceProcessor {
         
         // 累积里程：使用当前累计飞行里程 - 起飞时累计飞行里程
         if (totalFlightDistance !== null && session.startTotalFlightDistance !== null && session.startTotalFlightDistance !== undefined) {
-          session.mileage = Math.max(0, totalFlightDistance - session.startTotalFlightDistance);
+          this.updateSessionMileage(session, totalFlightDistance);
         }
         session.duration = this.calcFlightDuration(session);
       }
@@ -912,7 +928,7 @@ class DeviceProcessor {
         if (droneTfd !== null) {
           droneSession.lastTotalFlightDistance = droneTfd;
           if (droneSession.startTotalFlightDistance !== null && droneSession.startTotalFlightDistance !== undefined) {
-            droneSession.mileage = Math.max(0, droneTfd - droneSession.startTotalFlightDistance);
+            this.updateSessionMileage(droneSession, droneTfd);
           }
         }
         if (droneTft !== null) droneSession.lastTotalFlightTime = droneTft;

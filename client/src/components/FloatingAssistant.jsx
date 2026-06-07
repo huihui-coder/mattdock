@@ -17,6 +17,12 @@ import {
   FAB_EDGE_MARGIN,
 } from '../lib/assistant-fab-position'
 import { applyGreenScreenKey } from '../lib/video-chroma-key'
+import {
+  pickIdlePhrase,
+  IDLE_SPEECH_INTERVAL_MS,
+  IDLE_SPEECH_FIRST_MS,
+  IDLE_SPEECH_VISIBLE_MS,
+} from '../lib/assistant-idle-phrases'
 
 const ROBOT = {
   idle: '/images/robot/空闲.png',
@@ -237,6 +243,22 @@ function RobotMascot({
   return <RobotAvatar state={state} className={className} alt={alt} />
 }
 
+function AssistantIdleBubble({ text, visible, panelOpen }) {
+  if (panelOpen || !visible || !text) return null
+  const compact = text.length <= 14
+  return (
+    <div className="floating-assistant__idle-bubble-anchor">
+      <div
+        className={`floating-assistant__idle-bubble${compact ? ' is-compact' : ''}`}
+        role="status"
+        aria-live="polite"
+      >
+        {text}
+      </div>
+    </div>
+  )
+}
+
 export default function FloatingAssistant({ context, alertCount = 0 }) {
   const [open, setOpen] = useState(false)
   const [configured, setConfigured] = useState(null)
@@ -253,6 +275,14 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
   const fabDragRef = useRef(null)
   const [fabPos, setFabPos] = useState(() => loadFabPosition())
   const [fabDragging, setFabDragging] = useState(false)
+  const [idlePhrase, setIdlePhrase] = useState('')
+  const [idleBubbleVisible, setIdleBubbleVisible] = useState(false)
+  const lastIdlePhraseRef = useRef('')
+  const idleHideTimerRef = useRef(null)
+  const idleIntervalRef = useRef(null)
+  const openRef = useRef(false)
+  const streamingRef = useRef(false)
+  const fabDraggingRef = useRef(false)
 
   useEffect(() => {
     saveAssistantMessages(messages)
@@ -278,6 +308,62 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
       cancelled = true
     }
   }, [])
+
+  useEffect(() => {
+    openRef.current = open
+  }, [open])
+
+  useEffect(() => {
+    streamingRef.current = streaming
+  }, [streaming])
+
+  useEffect(() => {
+    fabDraggingRef.current = fabDragging
+  }, [fabDragging])
+
+  const dismissIdleBubble = useCallback(() => {
+    if (idleHideTimerRef.current) {
+      window.clearTimeout(idleHideTimerRef.current)
+      idleHideTimerRef.current = null
+    }
+    setIdleBubbleVisible(false)
+    window.setTimeout(() => setIdlePhrase(''), 280)
+  }, [])
+
+  const showIdlePhrase = useCallback(() => {
+    if (openRef.current || streamingRef.current || fabDraggingRef.current) return
+    const phrase = pickIdlePhrase(lastIdlePhraseRef.current)
+    lastIdlePhraseRef.current = phrase
+    setIdlePhrase(phrase)
+    setIdleBubbleVisible(true)
+    if (idleHideTimerRef.current) window.clearTimeout(idleHideTimerRef.current)
+    idleHideTimerRef.current = window.setTimeout(dismissIdleBubble, IDLE_SPEECH_VISIBLE_MS)
+  }, [dismissIdleBubble])
+
+  useEffect(() => {
+    if (!open) return
+    dismissIdleBubble()
+  }, [open, dismissIdleBubble])
+
+  useEffect(() => {
+    if (open || streaming || configured === false) {
+      dismissIdleBubble()
+      return undefined
+    }
+
+    idleIntervalRef.current = window.setInterval(showIdlePhrase, IDLE_SPEECH_INTERVAL_MS)
+    const firstTimer = window.setTimeout(showIdlePhrase, IDLE_SPEECH_FIRST_MS)
+
+    return () => {
+      window.clearInterval(idleIntervalRef.current)
+      window.clearTimeout(firstTimer)
+      dismissIdleBubble()
+    }
+  }, [open, streaming, configured, showIdlePhrase, dismissIdleBubble])
+
+  useEffect(() => {
+    if (fabDragging) dismissIdleBubble()
+  }, [fabDragging, dismissIdleBubble])
 
   const badge = alertCount > 0 ? Math.min(alertCount, 99) : 0
   const fabMascot = mascotState === 'thinking' ? 'thinking' : 'idle'
@@ -743,27 +829,34 @@ export default function FloatingAssistant({ context, alertCount = 0 }) {
         </div>
       )}
 
-      <button
-        type="button"
-        className={`floating-assistant__fab floating-assistant__fab--idle${fabDragging ? ' is-dragging' : ''}`}
-        onPointerDown={onFabPointerDown}
-        onPointerMove={onFabPointerMove}
-        onPointerUp={onFabPointerUp}
-        onPointerCancel={onFabPointerCancel}
-        aria-expanded={open}
-        aria-label={open ? '收起飞行助手' : '打开飞行助手，可拖动'}
-      >
-        {fabMascot === 'thinking' ? (
-          <RobotAvatar state="thinking" className="is-fab" alt="" />
-        ) : (
-          <RobotIdleVideo className="is-fab" alt="" />
-        )}
-        {badge > 0 && (
-          <span className="floating-assistant__badge" aria-label={`${badge} 条告警`}>
-            {badge}
-          </span>
-        )}
-      </button>
+      <div className="floating-assistant__fab-wrap">
+        <AssistantIdleBubble
+          text={idlePhrase}
+          visible={idleBubbleVisible && !streaming && !fabDragging}
+          panelOpen={open}
+        />
+        <button
+          type="button"
+          className={`floating-assistant__fab floating-assistant__fab--idle${fabDragging ? ' is-dragging' : ''}`}
+          onPointerDown={onFabPointerDown}
+          onPointerMove={onFabPointerMove}
+          onPointerUp={onFabPointerUp}
+          onPointerCancel={onFabPointerCancel}
+          aria-expanded={open}
+          aria-label={open ? '收起飞行助手' : '打开飞行助手，可拖动'}
+        >
+          {fabMascot === 'thinking' ? (
+            <RobotAvatar state="thinking" className="is-fab" alt="" />
+          ) : (
+            <RobotIdleVideo className="is-fab" alt="" />
+          )}
+          {badge > 0 && (
+            <span className="floating-assistant__badge" aria-label={`${badge} 条告警`}>
+              {badge}
+            </span>
+          )}
+        </button>
+      </div>
     </div>
   )
 }

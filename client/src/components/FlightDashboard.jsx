@@ -93,6 +93,16 @@ function trendPct(current, previous) {
   return Math.round(((current - previous) / previous) * 1000) / 10
 }
 
+const MAX_FLIGHT_MILEAGE_M = 1_000_000
+
+function isValidFlightRecord(record) {
+  const mileage = record.totalMileage || 0
+  const duration = record.totalDuration || 0
+  if (mileage <= 0 || duration <= 5) return false
+  if (mileage > MAX_FLIGHT_MILEAGE_M) return false
+  return true
+}
+
 function StatusBadge({ record }) {
   if (record.status === 'active') {
     return (
@@ -102,7 +112,7 @@ function StatusBadge({ record }) {
       </span>
     )
   }
-  if ((record.totalMileage || 0) <= 0 || (record.totalDuration || 0) <= 5) {
+  if (!isValidFlightRecord(record)) {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-red-600">
         <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
@@ -400,7 +410,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
       const data = await res.json()
       const rows = (data.records || []).map((r, i) => ({
         序号: i + 1,
-        状态: r.status === 'active' ? '进行中' : '已完成',
+        状态: r.status === 'active' ? '进行中' : (isValidFlightRecord(r) ? '已完成' : '无效'),
         设备名称: getRecordDeviceName(r),
         ...(showMqttColumn ? { MQTT: r.mqttProfileName || r.mqttSourceRegionName || '' } : {}),
         ...(showRegionColumn ? { 区域: r.regionName || r.regionId || '' } : {}),
