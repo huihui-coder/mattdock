@@ -1,11 +1,12 @@
-import { useState, useRef } from 'react'
-import { X, User, Camera, Lock, Loader2, Bot, Check } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { X, User, Camera, Lock, Loader2, Bot, Check, Sparkles } from 'lucide-react'
 import {
   ASSISTANT_SKINS,
   loadAssistantSkin,
   saveAssistantSkin,
 } from '../lib/assistant-skin'
 import CodeNoNoSprite from './CodeNoNoSprite'
+import AssistantModelPicker from './AssistantModelPicker'
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
 function apiFetch(url, opts = {}) {
@@ -27,6 +28,25 @@ export default function UserProfile({ user, onClose, onUserUpdate }) {
   const [success, setSuccess] = useState('')
   const [pwdForm, setPwdForm] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' })
   const [assistantSkin, setAssistantSkin] = useState(() => loadAssistantSkin())
+  const [assistantConfig, setAssistantConfig] = useState(null)
+  const [modelSaving, setModelSaving] = useState(false)
+  const isAdmin = user?.role === 'admin'
+
+  useEffect(() => {
+    if (!isAdmin) return undefined
+    let cancelled = false
+    apiFetch('/api/assistant/config')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setAssistantConfig(d)
+      })
+      .catch(() => {
+        if (!cancelled) setAssistantConfig(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isAdmin])
 
   const handleSkinSelect = (skinId) => {
     if (skinId === assistantSkin) return
@@ -34,6 +54,27 @@ export default function UserProfile({ user, onClose, onUserUpdate }) {
     setAssistantSkin(next)
     setError('')
     setSuccess(`已切换为「${ASSISTANT_SKINS[next]?.name || next}」`)
+  }
+
+  const handleModelSelect = async (modelId) => {
+    if (!modelId || modelId === assistantConfig?.model || modelSaving) return
+    setModelSaving(true)
+    setError('')
+    setSuccess('')
+    try {
+      const res = await apiFetch('/api/assistant/model', {
+        method: 'PUT',
+        body: JSON.stringify({ modelId }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || '模型切换失败')
+      setAssistantConfig(data)
+      setSuccess(`飞行助手已切换为「${data.modelName || modelId}」`)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setModelSaving(false)
+    }
   }
 
   const handleAvatarChange = async (e) => {
@@ -106,7 +147,7 @@ export default function UserProfile({ user, onClose, onUserUpdate }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="ui-card w-full max-w-lg overflow-hidden shadow-dji-sm"
+        className="ui-card w-full max-w-lg overflow-visible shadow-dji-sm"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-dji-border">
@@ -198,6 +239,25 @@ export default function UserProfile({ user, onClose, onUserUpdate }) {
               })}
             </div>
           </section>
+
+          {isAdmin && (
+            <section className="space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium text-dji-ink">
+                <Sparkles size={15} className="text-dji-subtle" />
+                飞行助手模型
+              </div>
+              <p className="text-xs text-dji-muted leading-relaxed">
+                未保存过配置时默认读取服务器 .env 中的 ARK_MODEL；限流为非刚性保障，受平台负载影响。
+              </p>
+              <AssistantModelPicker
+                models={assistantConfig?.models || []}
+                value={assistantConfig?.model}
+                loading={!assistantConfig}
+                saving={modelSaving}
+                onChange={handleModelSelect}
+              />
+            </section>
+          )}
 
           <form onSubmit={handlePasswordSubmit} className="space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-dji-ink">

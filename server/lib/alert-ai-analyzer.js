@@ -3,7 +3,7 @@ const path = require('path');
 const {
   callArkCompletion,
   getApiKey,
-  ARK_MODEL,
+  getAssistantModel,
   shouldUseWebSearch,
 } = require('./ark-client');
 const { captureStreamSnapshots } = require('./stream-snapshot');
@@ -317,7 +317,7 @@ function createAlertAiAnalyzer({
   resolveRegionId,
 } = {}) {
   const onTokenUsage = updateTokenUsage
-    ? (usage) => updateTokenUsage(ARK_MODEL, usage)
+    ? (usage) => updateTokenUsage(getAssistantModel(), usage)
     : undefined;
 
   async function analyzeLostAlert({

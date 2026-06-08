@@ -5,16 +5,21 @@ const {
   augmentUserPrompt,
 } = require('../lib/assistant-conversation-focus');
 const {
-  ARK_MODEL,
   getApiKey,
+  getAssistantModel,
   fetchArkStreamResponse,
   createOpenAIStreamTransformer,
 } = require('../lib/ark-client');
+const {
+  getAssistantModelSettings,
+  setAssistantModelId,
+  listAssistantModels,
+} = require('../lib/assistant-model-store');
 
 const MAX_HISTORY = 20;
 
-function buildSystemPrompt() {
-  const model = ARK_MODEL || 'doubao-seed-2-0-mini-260428';
+function buildSystemPrompt(modelId) {
+  const model = modelId || getAssistantModel();
   return `你是「飞行助手」，海珠无人机管理平台的 AI 运维助手。
 
 【能力与边界】
@@ -35,10 +40,10 @@ function buildSystemPrompt() {
 格式：简洁 Markdown，禁止输出思考过程或 reasoning 标签。`;
 }
 
-function buildAssistantMessages({ history, prompt, imageDataUrl, context }) {
+function buildAssistantMessages({ history, prompt, imageDataUrl, context, modelId }) {
   const focus = deriveConversationFocus(history, prompt);
   const focusBlock = formatFocusForPrompt(focus);
-  const systemParts = [buildSystemPrompt(), buildAssistantContext(context)];
+  const systemParts = [buildSystemPrompt(modelId), buildAssistantContext(context)];
   if (focusBlock) systemParts.push(focusBlock);
 
   const messages = [
@@ -70,15 +75,53 @@ function buildAssistantMessages({ history, prompt, imageDataUrl, context }) {
   return messages;
 }
 
-function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enrichAssistantContext, auditLog }) {
-  app.get('/api/assistant/config', requireAssistant, (_req, res) => {
-    const hasApiKey = !!getApiKey();
-    res.json({
-      configured: hasApiKey && !!ARK_MODEL,
-      hasApiKey,
-      hasModel: !!ARK_MODEL,
-      model: ARK_MODEL,
-    });
+function buildAssistantConfigPayload(req) {
+  const hasApiKey = !!getApiKey();
+  const settings = getAssistantModelSettings();
+  const isAdmin = req?.user?.role === 'admin';
+  return {
+    configured: hasApiKey && !!settings.modelId,
+    hasApiKey,
+    hasModel: !!settings.modelId,
+    model: settings.modelId,
+    modelName: settings.model?.name || settings.modelId,
+    modelProvider: settings.model?.provider || '火山方舟',
+    defaultModelId: settings.defaultModelId,
+    updatedAt: settings.updatedAt,
+    updatedBy: settings.updatedBy,
+    canManageModel: isAdmin,
+    models: isAdmin ? listAssistantModels() : undefined,
+  };
+}
+
+function registerAssistantRoutes(app, {
+  requireAssistant,
+  requireAdmin,
+  updateTokenUsage,
+  enrichAssistantContext,
+  auditLog,
+}) {
+  app.get('/api/assistant/config', requireAssistant, (req, res) => {
+    res.json(buildAssistantConfigPayload(req));
+  });
+
+  app.put('/api/assistant/model', requireAdmin, (req, res) => {
+    const { modelId } = req.body || {};
+    try {
+      const settings = setAssistantModelId(modelId, req.user?.username);
+      if (auditLog) {
+        auditLog(req, {
+          action: 'assistant.model.update',
+          detail: { modelId: settings.modelId, modelName: settings.model?.name },
+        });
+      }
+      res.json({
+        ok: true,
+        ...buildAssistantConfigPayload(req),
+      });
+    } catch (e) {
+      res.status(400).json({ error: e.message || '模型切换失败' });
+    }
   });
 
   app.post('/api/assistant/chat', requireAssistant, async (req, res) => {
@@ -86,7 +129,9 @@ function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enri
     if (!apiKey) {
       return res.status(503).json({ error: '未配置 ARK_API_KEY，请在服务器 .env 中设置' });
     }
-    if (!ARK_MODEL) {
+
+    const modelId = getAssistantModel();
+    if (!modelId) {
       return res.status(503).json({ error: '未配置 ARK_MODEL' });
     }
 
@@ -108,6 +153,7 @@ function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enri
       prompt: text || '请描述这张图片与当前监控场景的关系，并给出建议。',
       imageDataUrl,
       context: enrichAssistantContext ? enrichAssistantContext(context || {}, req) : context || {},
+      modelId,
     });
 
     if (auditLog) {
@@ -118,13 +164,14 @@ function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enri
           promptLength: text.length,
           hasImage: !!imageBase64,
           historyCount: (history || []).length,
+          modelId,
         },
       });
     }
 
     try {
       const upstream = await fetchArkStreamResponse({
-        model: ARK_MODEL,
+        model: modelId,
         messages,
         webSearch: 'auto',
       });
@@ -147,7 +194,7 @@ function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enri
 
       const reader = upstream.body.getReader();
       const decoder = new TextDecoder();
-      const transformer = createOpenAIStreamTransformer(ARK_MODEL);
+      const transformer = createOpenAIStreamTransformer(modelId);
 
       const pump = async () => {
         while (true) {
@@ -160,7 +207,7 @@ function registerAssistantRoutes(app, { requireAssistant, updateTokenUsage, enri
 
         const lastUsage = transformer.getLastUsage();
         if (updateTokenUsage && lastUsage) {
-          updateTokenUsage(ARK_MODEL, lastUsage);
+          updateTokenUsage(modelId, lastUsage);
         }
         res.end();
       };

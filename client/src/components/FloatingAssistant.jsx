@@ -100,6 +100,7 @@ function AssistantIdleBubble({ text, visible, panelOpen }) {
 export default function FloatingAssistant({ context }) {
   const [open, setOpen] = useState(false)
   const [configured, setConfigured] = useState(null)
+  const [assistantModelName, setAssistantModelName] = useState('')
   const [messages, setMessages] = useState(() => loadAssistantMessages())
   const [readCursor, setReadCursor] = useState(() => loadReadCursor(loadAssistantMessages().length))
   const [input, setInput] = useState('')
@@ -141,7 +142,10 @@ export default function FloatingAssistant({ context }) {
     apiFetch('/api/assistant/config')
       .then((r) => r.json())
       .then((d) => {
-        if (!cancelled) setConfigured(!!d.configured)
+        if (!cancelled) {
+          setConfigured(!!d.configured)
+          setAssistantModelName(d.modelName || d.model || '')
+        }
       })
       .catch(() => {
         if (!cancelled) setConfigured(false)
@@ -532,7 +536,9 @@ export default function FloatingAssistant({ context }) {
             </div>
             <div className="floating-assistant__header-text">
               <h2 className="floating-assistant__title">飞行助手</h2>
-              <p className="floating-assistant__subtitle">基于监控数据与飞行记录</p>
+              <p className="floating-assistant__subtitle">
+                {assistantModelName ? `火山方舟 · ${assistantModelName}` : '基于监控数据与飞行记录'}
+              </p>
             </div>
             <div className="floating-assistant__header-actions">
               <button

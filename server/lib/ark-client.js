@@ -13,6 +13,15 @@ function getApiKey() {
   return (process.env.ARK_API_KEY || '').trim();
 }
 
+function getAssistantModel() {
+  try {
+    const { getAssistantModelId } = require('./assistant-model-store');
+    return getAssistantModelId();
+  } catch {
+    return ARK_MODEL;
+  }
+}
+
 function normalizeUsage(usage) {
   if (!usage) return null;
   const total =
@@ -382,6 +391,7 @@ module.exports = {
   ARK_API_BASE,
   ARK_MODEL,
   getApiKey,
+  getAssistantModel,
   normalizeUsage,
   isRateLimitError,
   isExternalNetworkAvailable,

@@ -442,6 +442,7 @@ const AUDIT_ACTION_LABELS = {
   'auth.login_failed': '登录失败',
   'auth.logout': '退出登录',
   'ai.assistant.chat': 'AI 飞行助手对话',
+  'assistant.model.update': '切换飞行助手模型',
   'ai.image.generate': 'AI 文生图',
   'ai.image.edit': 'AI 图生图',
   'ai.image.download': 'AI 生图下载',
@@ -1318,6 +1319,7 @@ registerImageRoutes(app, {
 });
 registerAssistantRoutes(app, {
   requireAssistant: requirePermission('ai-assistant'),
+  requireAdmin,
   updateTokenUsage,
   auditLog,
   enrichAssistantContext: (ctx, req) => {
@@ -1336,9 +1338,11 @@ registerAssistantRoutes(app, {
 });
 
 const arkKey = (process.env.ARK_API_KEY || '').trim();
-const arkModel = (process.env.ARK_MODEL || 'doubao-seed-2-0-mini-260428').trim();
+const { getAssistantModelSettings } = require('./lib/assistant-model-store');
+const assistantModelSettings = getAssistantModelSettings();
+const arkModel = assistantModelSettings.modelId;
 const alertAiOn = process.env.ALERT_AI_ENABLED !== '0' && !!arkKey;
-console.log(`[Assistant] Ark: key=${arkKey ? '已配置' : '未配置'}, model=${arkModel || '(空)'}`);
+console.log(`[Assistant] Ark: key=${arkKey ? '已配置' : '未配置'}, model=${arkModel || '(空)'} (${assistantModelSettings.model?.name || '默认'})`);
 console.log(`[AlertAI] 告警多模态分析: ${alertAiOn ? '已启用' : '未启用'}`);
 console.log(`[Ark] 联网搜索: ${process.env.ARK_WEB_SEARCH || 'auto'}（有外网时自动开启）`);
 
