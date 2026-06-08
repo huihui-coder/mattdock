@@ -3,6 +3,7 @@ const {
   getFlightStatsSnapshotFromHistory,
   getFlightRecordsForAssistant,
 } = require('./flight-records-for-assistant');
+const { enrichSelectedDeviceFromSnapshots } = require('./device-status-for-assistant');
 
 function buildMonitorStats(devices) {
   const list = devices || [];
@@ -101,6 +102,8 @@ function enrichAssistantContextWithScope(ctx, {
   return {
     ...scopedClient,
     stats: buildMonitorStats(devices),
+    deviceSnapshots: devices,
+    selectedDevice: enrichSelectedDeviceFromSnapshots(devices, scopedClient.selectedDevice),
     flightStats,
     flightRecords,
     flightRanking: flightStats.ranking,

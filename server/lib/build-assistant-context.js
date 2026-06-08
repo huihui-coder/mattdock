@@ -4,6 +4,7 @@ const {
   formatFlightRankingForAssistant,
   formatFlightStatsForAssistant,
 } = require('./flight-records-for-assistant');
+const { formatDevicesForAssistant } = require('./device-status-for-assistant');
 
 function buildAssistantContext(context = {}) {
   const lines = ['【平台参考数据（仅供回答相关问题时引用，勿整段复述）】'];
@@ -20,6 +21,7 @@ function buildAssistantContext(context = {}) {
     scopeRegionLabel,
     scopeDeviceCount,
     scopeLeafRegions,
+    deviceSnapshots,
   } = context;
 
   if (scopeRegionLabel) {
@@ -38,11 +40,19 @@ function buildAssistantContext(context = {}) {
   if (selectedDevice) {
     const d = selectedDevice;
     lines.push(
-      `当前关注设备：${d.name || d.deviceId}（${d.deviceId}）状态=${d.status || 'unknown'}`,
+      `当前关注设备：${d.name || d.deviceId}（${d.deviceId}）状态=${d.statusText || d.status || 'unknown'}`,
     );
+    if (d.regionName) lines.push(`  区域 ${d.regionName}`);
+    if (d.rainfall != null) lines.push(`  降雨 ${d.rainfall}`);
+    if (d.networkQuality) lines.push(`  网络 ${d.networkQuality}`);
+    if (d.droneInDock) lines.push(`  无人机 ${d.droneInDock}`);
+    if (d.subDeviceOnline) lines.push(`  子设备 ${d.subDeviceOnline}`);
+    if (d.modeCode) lines.push(`  工作模式 ${d.modeCode}`);
     if (d.windSpeed != null) lines.push(`  风速 ${d.windSpeed} m/s`);
     if (d.battery != null) lines.push(`  电量 ${d.battery}%`);
   }
+
+  lines.push(formatDevicesForAssistant(deviceSnapshots));
 
   const list = Array.isArray(alerts) ? alerts.slice(0, 12) : [];
   if (list.length) {

@@ -1,5 +1,11 @@
 import { useState, useRef } from 'react'
-import { X, User, Camera, Lock, Loader2 } from 'lucide-react'
+import { X, User, Camera, Lock, Loader2, Bot, Check } from 'lucide-react'
+import {
+  ASSISTANT_SKINS,
+  loadAssistantSkin,
+  saveAssistantSkin,
+} from '../lib/assistant-skin'
+import CodeNoNoSprite from './CodeNoNoSprite'
 
 function getToken() { return localStorage.getItem('auth_token') || '' }
 function apiFetch(url, opts = {}) {
@@ -20,6 +26,15 @@ export default function UserProfile({ user, onClose, onUserUpdate }) {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [pwdForm, setPwdForm] = useState({ oldPassword: '', newPassword: '', confirmPassword: '' })
+  const [assistantSkin, setAssistantSkin] = useState(() => loadAssistantSkin())
+
+  const handleSkinSelect = (skinId) => {
+    if (skinId === assistantSkin) return
+    const next = saveAssistantSkin(skinId)
+    setAssistantSkin(next)
+    setError('')
+    setSuccess(`已切换为「${ASSISTANT_SKINS[next]?.name || next}」`)
+  }
 
   const handleAvatarChange = async (e) => {
     const file = e.target.files?.[0]
@@ -91,7 +106,7 @@ export default function UserProfile({ user, onClose, onUserUpdate }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
-        className="ui-card w-full max-w-md overflow-hidden shadow-dji-sm"
+        className="ui-card w-full max-w-lg overflow-hidden shadow-dji-sm"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-dji-border">
@@ -126,6 +141,63 @@ export default function UserProfile({ user, onClose, onUserUpdate }) {
               <div className="text-sm text-dji-muted">{user?.role === 'admin' ? '管理员' : '普通账号'}</div>
             </div>
           </div>
+
+          <section className="space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-dji-ink">
+              <Bot size={15} className="text-dji-subtle" />
+              AI 助手形象
+            </div>
+            <p className="text-xs text-dji-muted leading-relaxed">
+              切换后悬浮按钮与对话中的助手外观会立即更新，偏好保存在本机浏览器。
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {Object.values(ASSISTANT_SKINS).map((skin) => {
+                const active = assistantSkin === skin.id
+                return (
+                  <button
+                    key={skin.id}
+                    type="button"
+                    onClick={() => handleSkinSelect(skin.id)}
+                    className={`profile-assistant-skin cursor-pointer text-left transition-colors duration-200 ${
+                      active ? 'profile-assistant-skin--active' : ''
+                    }`}
+                    aria-pressed={active}
+                  >
+                    <div className="profile-assistant-skin__preview">
+                      {skin.id === 'codenono' ? (
+                        <CodeNoNoSprite state="idle" className="is-profile" alt="" animate={false} />
+                      ) : (
+                        <img src={skin.preview} alt="" className="profile-assistant-skin__img" draggable={false} />
+                      )}
+                    </div>
+                    <div className="profile-assistant-skin__body">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-dji-black text-sm">{skin.name}</span>
+                        {active && (
+                          <span className="inline-flex items-center gap-0.5 text-[11px] text-blue-600 font-medium">
+                            <Check size={12} aria-hidden />
+                            使用中
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-dji-muted mt-1 leading-snug">{skin.description}</p>
+                      {skin.sourceUrl && (
+                        <a
+                          href={skin.sourceUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-block text-[11px] text-blue-600 hover:underline mt-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          开源项目
+                        </a>
+                      )}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          </section>
 
           <form onSubmit={handlePasswordSubmit} className="space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-dji-ink">

@@ -1320,6 +1320,60 @@ body {
   }
 }
 
+.floating-assistant__codenono {
+  display: inline-block;
+  flex-shrink: 0;
+  background-repeat: no-repeat;
+  image-rendering: auto;
+}
+
+.floating-assistant__fab-media--codenono {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.floating-assistant__header-mascot .floating-assistant__codenono {
+  transform: translateY(0.125rem);
+}
+
+.profile-assistant-skin {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.875rem;
+  background: #fff;
+  overflow: hidden;
+}
+
+.profile-assistant-skin:hover {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.profile-assistant-skin--active {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
+  background: #eff6ff;
+}
+
+.profile-assistant-skin__preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 5.5rem;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.profile-assistant-skin__img {
+  width: 4rem;
+  height: 4rem;
+  object-fit: contain;
+}
+
+.profile-assistant-skin__body {
+  padding: 0.75rem 0.875rem 0.875rem;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .floating-assistant__idle-bubble-anchor {
     animation: none;
