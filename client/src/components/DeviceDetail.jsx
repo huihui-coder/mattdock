@@ -2,6 +2,7 @@ import { X, Thermometer, Droplets, Battery, Signal, Wind, CloudRain, MapPin, Act
 import LiveStreamPlayer, { isDockSharedOutAirport } from './LiveStreamPlayer'
 import { isDockSeriesAirport } from './SupplementLightControl'
 import RegionLabel from './RegionLabel'
+import { deviceStreamQueryParams } from '../lib/scope-query'
 
 export default function DeviceDetail({ device, onClose }) {
   const getMetricStatusColor = (status) => {
@@ -88,6 +89,7 @@ export default function DeviceDetail({ device, onClose }) {
     if (/^1581/i.test(id)) return 'drone'
     return 'airport'
   })()
+  const { regionId: streamRegionId, mqttProfileId: streamMqttProfileId } = deviceStreamQueryParams(device)
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -174,7 +176,8 @@ export default function DeviceDetail({ device, onClose }) {
         <div className="p-4 border-b border-gray-200">
           <LiveStreamPlayer
             deviceId={device.deviceId}
-            regionId={device.regionId}
+            regionId={streamRegionId}
+            mqttProfileId={streamMqttProfileId}
             deviceType={deviceType}
             deviceName={device.deviceName || device.deviceId}
             dock3SharedOut={isDockSharedOutAirport(deviceType, device.deviceId)}

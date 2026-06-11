@@ -46,6 +46,7 @@ const { buildRegionTree, countUsersByRegion } = require('./lib/region-tree');
 const { MQTTManager } = require('./lib/mqtt-manager');
 const {
   buildStreamUrl,
+  resolveStreamConnectivityKey,
   sanitizeConnectivityForApi,
   writeRegionConnectivity,
 } = require('./lib/region-connectivity');
@@ -1247,21 +1248,70 @@ app.put('/api/regions/:regionId/connectivity', requireAdmin, (req, res) => {
 app.get('/api/stream/url', requireLogin, attachRegionalProcessor, (req, res) => {
   const deviceId = String(req.query.deviceId || '').trim();
   const suffix = String(req.query.suffix || '_out').trim();
-  let regionId = String(req.query.regionId || '').trim();
+  const regionIdParam = String(req.query.regionId || '').trim();
+  const mqttProfileIdParam = String(req.query.mqttProfileId || '').trim();
   if (!deviceId) return res.status(400).json({ error: '缺少 deviceId' });
-  if (!regionId) regionId = regionRuntime.resolveRegionIdForDevice(deviceId);
-  if (!regionId) {
+
+  let streamKey = resolveStreamConnectivityKey({
+    regionId: regionIdParam,
+    mqttProfileId: mqttProfileIdParam,
+  });
+  let mappedRegionId = regionIdParam || null;
+  let mqttProfileId = mqttProfileIdParam || null;
+  let unmapped = false;
+
+  if (!streamKey) {
+    mappedRegionId = regionRuntime.resolveRegionIdForDevice(deviceId) || null;
+    if (mappedRegionId) {
+      streamKey = mappedRegionId;
+    } else {
+      const device = regionRuntime.findDeviceInScope(
+        deviceId,
+        req.visibleProcessors,
+        { unmappedOnly: true },
+      );
+      if (device) {
+        streamKey = resolveStreamConnectivityKey({
+          mqttProfileId: device.mqttProfileId,
+          mqttConnectionRegionId: device.mqttConnectionRegionId,
+        });
+        mqttProfileId = device.mqttProfileId || mqttProfileId;
+        unmapped = true;
+      }
+    }
+  } else if (!mappedRegionId) {
+    unmapped = true;
+  }
+
+  if (!streamKey) {
     if (!isAdminUser(req.user)) {
       return res.status(403).json({ error: '无权访问该设备推流' });
     }
-    regionId = regionRuntime.getUnmappedSinkRegionId();
+    streamKey = regionRuntime.getUnmappedSinkRegionId();
+    unmapped = true;
   }
-  if (!req.visibleRegionIds.includes(regionId)) {
+
+  if (unmapped) {
+    if (!isAdminUser(req.user)) {
+      return res.status(403).json({ error: '无权访问该设备推流' });
+    }
+    const inScope = regionRuntime.findDeviceInScope(
+      deviceId,
+      req.visibleProcessors,
+      { unmappedOnly: true, mqttSourceRegionId: mqttProfileId || null },
+    );
+    if (!inScope && !regionRuntime.getProcessorForDevice(deviceId)?.getDeviceState(deviceId)) {
+      return res.status(403).json({ error: '无权访问该设备推流' });
+    }
+  } else if (!req.visibleRegionIds.includes(streamKey)) {
     return res.status(403).json({ error: '无权访问该区域推流' });
   }
+
   res.json({
-    url: buildStreamUrl(regionId, deviceId, suffix),
-    regionId,
+    url: buildStreamUrl(streamKey, deviceId, suffix),
+    regionId: mappedRegionId,
+    mqttProfileId,
+    streamKey,
     deviceId,
     suffix,
   });

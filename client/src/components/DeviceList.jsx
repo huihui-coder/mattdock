@@ -2,12 +2,9 @@ import { useMemo, useState } from 'react'
 import { Cpu, Thermometer, Battery, Wind, CloudRain, MapPin, AlertTriangle, Package, X, Home, MonitorPlay, Radio, Unplug } from 'lucide-react'
 import RegionLabel from './RegionLabel'
 import { deviceScopeKey } from '../lib/scope-query'
+import { FACILITY_ICONS, getFacilityIconMeta } from '../lib/airport-icon'
 
-/** 机场设备列：机巢 / 单兵遥控器 */
-const FACILITY_ICON = {
-  airport: { src: '/images/无人机库,机巢.svg', label: '机场机巢' },
-  remote: { src: '/images/无人机遥控器.svg', label: '单兵遥控器' },
-}
+const FACILITY_ICON = FACILITY_ICONS
 
 /** 无人机列：单兵机 / 机场绑定机 */
 const DRONE_ICON = {
@@ -16,11 +13,17 @@ const DRONE_ICON = {
   virtual: { src: '/images/机场无人机.svg', label: '机场无人机' },
 }
 
-function DeviceListIcon({ src, label, status, getStatusDot }) {
+function DeviceListIcon({ src, label, status, getStatusDot, imgClass = '' }) {
+  const isSwap = imgClass.includes('device-list-icon__img--swap')
   return (
     <div className="relative shrink-0" title={label}>
-      <div className="w-9 h-9 rounded-lg bg-white border border-slate-200/90 shadow-sm flex items-center justify-center p-1.5 transition-colors duration-200">
-        <img src={src} alt="" className="w-full h-full object-contain text-slate-700" aria-hidden />
+      <div className={`w-9 h-9 rounded-lg bg-white border border-slate-200/90 shadow-sm flex items-center justify-center transition-colors duration-200 ${isSwap ? 'p-0.5 overflow-visible' : 'p-1'}`}>
+        <img
+          src={src}
+          alt=""
+          className={`w-full h-full object-contain text-slate-700 ${imgClass}`.trim()}
+          aria-hidden
+        />
       </div>
       <span
         className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-white ${getStatusDot(status)}`}
@@ -31,9 +34,17 @@ function DeviceListIcon({ src, label, status, getStatusDot }) {
   )
 }
 
-function DeviceFacilityIcon({ deviceType, status, getStatusDot }) {
-  const meta = deviceType === 'remote' ? FACILITY_ICON.remote : FACILITY_ICON.airport
-  return <DeviceListIcon src={meta.src} label={meta.label} status={status} getStatusDot={getStatusDot} />
+function DeviceFacilityIcon({ device, status, getStatusDot }) {
+  const meta = getFacilityIconMeta(device)
+  return (
+    <DeviceListIcon
+      src={meta.src}
+      label={meta.label}
+      status={status}
+      getStatusDot={getStatusDot}
+      imgClass={meta.imgClass || ''}
+    />
+  )
 }
 
 function DeviceDroneIcon({ deviceType, status, getStatusDot }) {
@@ -291,7 +302,7 @@ export default function DeviceList({
                 <div className="flex items-start gap-2.5 min-w-0">
                   {showFacilityIcons && (device.deviceType === 'airport' || device.deviceType === 'remote') ? (
                     <DeviceFacilityIcon
-                      deviceType={device.deviceType}
+                      device={device}
                       status={device.status}
                       getStatusDot={getStatusDot}
                     />

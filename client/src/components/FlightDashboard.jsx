@@ -503,21 +503,21 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
                 全部
               </button>
               {mqttSources.map((src) => (
-                <button
+              <button
                   key={src.id}
-                  type="button"
+                type="button"
                   role="tab"
                   aria-selected={mqttTab === src.id}
                   onClick={() => setMqttTab(src.id)}
                   className={`ui-tab whitespace-nowrap cursor-pointer ${mqttTab === src.id ? 'ui-tab-active !bg-amber-600 !shadow-amber-600/25' : 'ui-tab-inactive'}`}
                 >
                   {src.name}
-                </button>
+              </button>
               ))}
-            </div>
-          </div>
-        </div>
-      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
       {/* 筛选栏 */}
       <div className="ui-card px-4 py-3">
@@ -536,7 +536,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
             >
               {DEVICE_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
             </select>
-          </div>
+            </div>
 
           <div className="flex items-center gap-2 shrink-0">
             {applied.deviceType === 'airport' && (
@@ -606,15 +606,15 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
                     }`}
                   >
                     {tab.label}
-                  </button>
+                    </button>
                 ))}
               </div>
             </div>
             <div className="px-2 pb-3 pt-1">
               <p className="text-xs font-medium text-slate-500 px-2 pt-2 pb-1">飞行数据概览</p>
               <FlightTrendChart daily={daily} chartMetric={chartMetric} loading={summaryLoading} />
-            </div>
-          </section>
+          </div>
+        </section>
 
           <section className="ui-card overflow-hidden flex-1 flex flex-col min-h-0">
             <div className="px-4 py-3 border-b border-slate-100 shrink-0 flex items-center gap-3">
@@ -628,7 +628,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
               >
                 <Download size={12} />
                 导出
-              </button>
+          </button>
             </div>
             <RankingTable
               rows={sortedRanking}
@@ -663,36 +663,36 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
               </div>
               <p className="text-sm font-medium text-slate-700">当前时间范围内暂无飞行记录</p>
               <p className="text-xs text-slate-400 mt-1">可调整上方时间范围或设备类型</p>
-            </div>
-          ) : (
-            <>
+          </div>
+        ) : (
+          <>
               <div className="overflow-x-auto flex-1">
-                <table className="w-full text-sm">
+              <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-white z-[1]">
                     <tr className="text-xs text-slate-400 border-b border-slate-100">
                       <th className="px-4 py-2.5 text-left font-medium w-20">状态</th>
                       <th className="px-4 py-2.5 text-left font-medium">设备</th>
                       {showMqttColumn && <th className="px-4 py-2.5 text-left font-medium">MQTT</th>}
                       {showRegionColumn && <th className="px-4 py-2.5 text-left font-medium">区域</th>}
-                      <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">起飞时间</th>
-                      <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">里程</th>
-                      <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">时长</th>
-                    </tr>
-                  </thead>
+                    <th className="px-4 py-2.5 text-left font-medium whitespace-nowrap">起飞时间</th>
+                    <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">里程</th>
+                    <th className="px-4 py-2.5 text-right font-medium whitespace-nowrap">时长</th>
+                  </tr>
+                </thead>
                   <tbody className="divide-y divide-slate-50">
                     {recordsLoading && records.length === 0 ? (
                       Array.from({ length: 8 }).map((_, i) => (
-                        <tr key={`sk-${i}`} className="animate-pulse">
+                      <tr key={`sk-${i}`} className="animate-pulse">
                           <td className="px-4 py-3"><div className="h-4 w-14 bg-slate-100 rounded" /></td>
                           <td className="px-4 py-3"><div className="h-4 w-36 bg-slate-100 rounded" /></td>
                           <td className="px-4 py-3"><div className="h-4 w-20 bg-slate-100 rounded" /></td>
                           <td className="px-4 py-3"><div className="h-4 w-14 bg-slate-100 rounded ml-auto" /></td>
                           <td className="px-4 py-3"><div className="h-4 w-16 bg-slate-100 rounded ml-auto" /></td>
-                        </tr>
-                      ))
+                      </tr>
+                    ))
                     ) : records.map((r, i) => (
                       <tr key={r.id || `${r.deviceId}-${r.startTime}-${i}`} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="px-4 py-2.5"><StatusBadge record={r} /></td>
+                      <td className="px-4 py-2.5"><StatusBadge record={r} /></td>
                         <td className="px-4 py-2.5 font-medium text-slate-800 max-w-[200px] truncate" title={getRecordDeviceName(r)}>
                           {getRecordDeviceName(r)}
                         </td>
@@ -713,10 +713,10 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
                         <td className="px-4 py-2.5 text-slate-500 tabular-nums whitespace-nowrap">{formatTime(r.startTime)}</td>
                         <td className="px-4 py-2.5 text-right text-slate-700 tabular-nums whitespace-nowrap">{formatMileage(r.totalMileage || 0)}</td>
                         <td className="px-4 py-2.5 text-right text-slate-700 font-mono tabular-nums whitespace-nowrap">{formatDuration(r.totalDuration || 0)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
               </div>
               <ListPagination
                 total={recordsTotal}
@@ -730,7 +730,7 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
             </>
           )}
         </section>
-      </div>
+            </div>
 
       {rankingOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setRankingOpen(false)}>
@@ -746,18 +746,18 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
               >
                 <Download size={12} />
                 导出
-              </button>
+                  </button>
               <button type="button" onClick={() => setRankingOpen(false)}
                 className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer">
                 <X size={18} />
-              </button>
+                  </button>
             </div>
             <div className="overflow-y-auto flex-1">
               <RankingTable rows={sortedRanking} />
             </div>
-          </div>
-        </div>
-      )}
+                </div>
+              </div>
+            )}
     </div>
   )
 }

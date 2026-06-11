@@ -59,6 +59,7 @@ export default function LiveStreamPlayer({
   deviceType,
   deviceName = '',
   regionId = '',
+  mqttProfileId = '',
   dock3SharedOut: dock3SharedOutProp,
   supplementLightState,
   showSupplementLight: showSupplementLightProp,
@@ -129,11 +130,11 @@ export default function LiveStreamPlayer({
       return undefined
     }
     let cancelled = false
-    fetchStreamUrl(deviceId, streamSuffixKey, regionId)
+    fetchStreamUrl(deviceId, streamSuffixKey, regionId, mqttProfileId)
       .then((url) => { if (!cancelled) setStreamUrl(url) })
       .catch(() => { if (!cancelled) setStreamUrl('') })
     return () => { cancelled = true }
-  }, [deviceId, streamSuffixKey, regionId, reloadKey])
+  }, [deviceId, streamSuffixKey, regionId, mqttProfileId, reloadKey])
 
   useEffect(() => {
     if (!dock3SharedOut || !deviceId) return

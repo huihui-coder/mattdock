@@ -3,6 +3,7 @@ import flvjs from 'flv.js'
 import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, Maximize2, Boxes, Siren, Bell, PanelLeft, Keyboard, Filter, Search, Sparkles, Settings, Camera, Loader2, ChevronLeft, ChevronRight, Brain, Activity } from 'lucide-react'
 import LogoMark from './LogoMark'
 import { fetchStreamUrl } from '../lib/stream-url'
+import { deviceStreamQueryParams } from '../lib/scope-query'
 const CESIUM_TK = '9eb56d3fe1e23a9bf19af660b3a9e37c'
 const TEST_VIDEO_URL = '/api/proxy-video'
 
@@ -212,7 +213,7 @@ function FlvPlayer({ url, className = '', isMainStream = false }) {
 
 export default function VirtualCockpit({ device, onClose }) {
   const deviceId = device.deviceId
-  const regionId = device.regionId || ''
+  const { regionId, mqttProfileId } = deviceStreamQueryParams(device)
   // 'flight' | 'out' | 'in' | 'map'
   const [mainView, setMainView] = useState('flight')
   const [mapPanelView, setMapPanelView] = useState('map')
@@ -293,9 +294,9 @@ export default function VirtualCockpit({ device, onClose }) {
     if (!deviceId) return undefined
     let cancelled = false
     Promise.all([
-      fetchStreamUrl(deviceId, '_out', regionId),
-      fetchStreamUrl(deviceId, '_in', regionId),
-      fetchStreamUrl(deviceId, '_flight', regionId),
+      fetchStreamUrl(deviceId, '_out', regionId, mqttProfileId),
+      fetchStreamUrl(deviceId, '_in', regionId, mqttProfileId),
+      fetchStreamUrl(deviceId, '_flight', regionId, mqttProfileId),
     ])
       .then(([out, inUrl, flight]) => {
         if (!cancelled) setStreams({ out, in: inUrl, flight })
@@ -304,7 +305,7 @@ export default function VirtualCockpit({ device, onClose }) {
         if (!cancelled) setStreams({ out: '', in: '', flight: '' })
       })
     return () => { cancelled = true }
-  }, [deviceId, regionId])
+  }, [deviceId, regionId, mqttProfileId])
 
   const droneInDock = metrics.droneInDock?.value
   const droneBattery = metrics.droneBattery?.value

@@ -114,6 +114,15 @@ function resolveConnectivity(regionId) {
   };
 }
 
+/** 推流配置解析键：已映射区域用 regionId，无归属设备用 MQTT 配置池 id 或连接区域 id */
+function resolveStreamConnectivityKey({ regionId, mqttProfileId, mqttConnectionRegionId } = {}) {
+  const rid = String(regionId || '').trim();
+  if (rid) return rid;
+  const pid = String(mqttProfileId || '').trim();
+  if (pid) return pid;
+  return String(mqttConnectionRegionId || '').trim();
+}
+
 function buildStreamUrl(regionId, deviceId, suffix = '_out') {
   const { stream } = resolveConnectivity(regionId);
   const base = String(stream.baseUrl || '').replace(/\/$/, '');
@@ -263,6 +272,7 @@ module.exports = {
   readRegionConnectivityFile,
   hasRegionConnectivity,
   resolveConnectivity,
+  resolveStreamConnectivityKey,
   buildStreamUrl,
   writeRegionConnectivity,
   writeRegionBinding,

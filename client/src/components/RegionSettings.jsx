@@ -546,8 +546,8 @@ function RegionMqttBindingForm({ regionId, regionName, defaultRegionId, onSaved 
         <ChevronDown
           size={16}
           className={`text-dji-subtle shrink-0 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-          aria-hidden
-        />
+                aria-hidden
+              />
       </button>
 
       {expanded && (
@@ -624,7 +624,7 @@ function RegionMqttBindingForm({ regionId, regionName, defaultRegionId, onSaved 
               </div>
             </form>
           )}
-        </div>
+          </div>
       )}
     </section>
   )
@@ -813,7 +813,7 @@ function RegionAccountTable({
             </table>
           )}
         </PaginatedList>
-      </div>
+    </div>
     </>
   )
 }
@@ -1090,14 +1090,14 @@ export default function RegionSettings({
           </p>
         </div>
         {adminTab === 'orgs' && (
-          <button
-            type="button"
-            onClick={() => openAddChild(null)}
-            className="ui-btn-primary shrink-0 cursor-pointer"
-          >
-            <Plus size={14} aria-hidden />
-            新建顶级区域
-          </button>
+        <button
+          type="button"
+          onClick={() => openAddChild(null)}
+          className="ui-btn-primary shrink-0 cursor-pointer"
+        >
+          <Plus size={14} aria-hidden />
+          新建顶级区域
+        </button>
         )}
       </div>
 
@@ -1128,7 +1128,7 @@ export default function RegionSettings({
 
       {error && adminTab === 'orgs' && (
         <div className="mx-5 mt-4">
-          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
+        <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
         </div>
       )}
 
@@ -1222,8 +1222,8 @@ export default function RegionSettings({
             <div className="flex flex-col items-center justify-center py-20 text-center">
               <MapPin size={32} className="text-slate-300 mb-3" aria-hidden />
               <p className="text-sm text-dji-muted">请从左侧选择一个区域</p>
-            </div>
-          )}
+          </div>
+        )}
         </main>
       </div>
 

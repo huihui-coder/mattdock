@@ -4,12 +4,13 @@ function getToken() {
   return localStorage.getItem('auth_token') || ''
 }
 
-export async function fetchStreamUrl(deviceId, suffix = '_out', regionId = '') {
-  const key = `${regionId || 'auto'}:${deviceId}:${suffix}`
+export async function fetchStreamUrl(deviceId, suffix = '_out', regionId = '', mqttProfileId = '') {
+  const key = `${regionId || mqttProfileId || 'auto'}:${deviceId}:${suffix}`
   if (cache.has(key)) return cache.get(key)
 
   const params = new URLSearchParams({ deviceId, suffix })
   if (regionId) params.set('regionId', regionId)
+  if (mqttProfileId) params.set('mqttProfileId', mqttProfileId)
 
   const res = await fetch(`/api/stream/url?${params}`, {
     headers: { 'x-auth-token': getToken() },

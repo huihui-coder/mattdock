@@ -294,14 +294,14 @@ function BindingPairRow({
           checked={selected}
           onChange={() => onToggleSelect(rowId)}
           className="rounded border-slate-300 cursor-pointer"
-        />
-      </td>
+                />
+              </td>
       <td className="px-3 py-3 hidden lg:table-cell">
         <StackedCell primary={primaryModel} secondary={secondaryModel} />
-      </td>
+              </td>
       <td className="px-3 py-3">
         <StackedCell mono primary={primarySn} secondary={secondarySn || '—'} />
-      </td>
+              </td>
       <td className="px-3 py-3 min-w-[160px]">
         <StackedCell primary={primaryName} secondary={secondaryName || secondaryModel} />
       </td>
@@ -311,18 +311,18 @@ function BindingPairRow({
       <td className="px-3 py-3 hidden lg:table-cell">
         <span className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-slate-100 text-slate-600">
           {BINDING_LABELS[pair.bindingSource] || pair.bindingSource}
-        </span>
-      </td>
+                </span>
+              </td>
       <td className="px-3 py-3">
-        <div className="space-y-2">
+                <div className="space-y-2">
           <OnlineBadge online={primary?.online} statusText={primary?.statusText} />
           {pair.drone && (
             <div className="pl-3 border-l border-slate-200">
               <OnlineBadge online={pair.drone.online} statusText={pair.drone.statusText} />
-            </div>
-          )}
-        </div>
-      </td>
+                    </div>
+                  )}
+                </div>
+              </td>
       <td className="px-4 py-3">
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-0.5">
@@ -349,11 +349,11 @@ function BindingPairRow({
                   <Trash2 size={13} />
                 </button>
               )}
-            </div>
-          )}
-        </div>
-      </td>
-    </tr>
+                    </div>
+                  )}
+                </div>
+              </td>
+            </tr>
   )
 }
 
@@ -412,7 +412,7 @@ function SimpleDeviceRow({ device, selected, onToggleSelect, onEdit, onDelete, s
               <Trash2 size={14} />
             </button>
           )}
-        </div>
+    </div>
       </td>
     </tr>
   )
@@ -768,7 +768,7 @@ export default function DeviceManager({ scopeRegionId }) {
     <div className="space-y-4">
       {/* 页头 */}
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
-        <div>
+    <div>
           <h1 className="text-lg font-semibold text-slate-800 tracking-tight">
             {unmappedScope ? '无归属设备' : '设备管理'}
           </h1>
@@ -776,19 +776,19 @@ export default function DeviceManager({ scopeRegionId }) {
             {unmappedScope
               ? '未归属任何组织的设备，按 MQTT 连接池配置分类（组织为空）'
               : '统一管理自动机场、机库无人机、单兵与遥控器设备映射'}
-          </p>
-        </div>
+            </p>
+          </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
+              <input
               value={draftSearch}
               onChange={(e) => setDraftSearch(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
               placeholder="搜索 SN / 名称"
               className="ui-input !pl-9 !py-2 text-sm w-full lg:w-56"
-            />
-          </div>
+              />
+            </div>
           <button type="button" onClick={openAdd} className="ui-btn-primary !py-2 cursor-pointer">
             <Plus size={15} />
             添加映射
@@ -818,8 +818,8 @@ export default function DeviceManager({ scopeRegionId }) {
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-dji-muted shrink-0">MQTT 连接</p>
             <div className="ui-nav-bar w-full sm:w-auto overflow-x-auto" role="tablist" aria-label="MQTT 来源">
-              <button
-                type="button"
+            <button
+              type="button"
                 role="tab"
                 aria-selected={mqttTab === 'all'}
                 onClick={() => setMqttTab('all')}
@@ -829,7 +829,7 @@ export default function DeviceManager({ scopeRegionId }) {
                 <span className={`ml-1 tabular-nums ${mqttTab === 'all' ? 'text-white/85' : 'text-slate-400'}`}>
                   {allDevices.length}
                 </span>
-              </button>
+            </button>
               {mqttSources.map((src) => (
                 <button
                   key={src.id}
@@ -845,8 +845,8 @@ export default function DeviceManager({ scopeRegionId }) {
                   </span>
                 </button>
               ))}
-            </div>
           </div>
+        </div>
         </div>
       )}
 
@@ -901,9 +901,9 @@ export default function DeviceManager({ scopeRegionId }) {
           <div className="px-4 py-3 border-b border-slate-100 flex flex-wrap items-center gap-2">
             <div className="flex rounded-lg border border-slate-200 overflow-hidden">
               {ONLINE_TABS.map((tab) => (
-                <button
+            <button
                   key={tab.id}
-                  type="button"
+              type="button"
                   onClick={() => setOnlineTab(tab.id)}
                   className={`px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
                     onlineTab === tab.id ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'
@@ -913,8 +913,8 @@ export default function DeviceManager({ scopeRegionId }) {
                   <span className={`ml-1 tabular-nums ${onlineTab === tab.id ? 'text-blue-100' : 'text-slate-400'}`}>
                     ({tabCounts[tab.id]})
                   </span>
-                </button>
-              ))}
+            </button>
+          ))}
             </div>
             <button
               type="button"
@@ -929,7 +929,7 @@ export default function DeviceManager({ scopeRegionId }) {
               告警
               <span className={`ml-1 tabular-nums ${alertOnly ? 'text-amber-100' : 'text-slate-400'}`}>
                 ({tabCounts.alert})
-              </span>
+          </span>
             </button>
             <div className="flex-1" />
             <button
@@ -941,7 +941,7 @@ export default function DeviceManager({ scopeRegionId }) {
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
             </button>
-          </div>
+        </div>
 
           <div className="flex-1 overflow-x-auto">
             {loading && !allDevices.length ? (
@@ -999,8 +999,8 @@ export default function DeviceManager({ scopeRegionId }) {
                           onToggleSelect={toggleSelect}
                           onEditPrimary={() => openEditDevice(row.pair.airport, row.pair, 'airport')}
                           onEditSecondary={() => row.pair.drone && openEditDevice(row.pair.drone, row.pair, 'airport')}
-                          onDelete={removeOverride}
-                        />
+                  onDelete={removeOverride}
+                />
                       )
                     }
                     if (row.type === 'single_pair') {
@@ -1031,8 +1031,8 @@ export default function DeviceManager({ scopeRegionId }) {
                   })}
                 </tbody>
               </table>
-            )}
-          </div>
+                    )}
+                  </div>
 
           <ListPagination
             total={listRows.length}
@@ -1042,7 +1042,7 @@ export default function DeviceManager({ scopeRegionId }) {
             onPageSizeChange={(size) => { setPageSize(size); setPage(1) }}
             className="px-4 py-3 border-t border-slate-100 shrink-0"
           />
-        </section>
+              </section>
 
         {/* 右侧 */}
         <div className="xl:col-span-1 space-y-4">
@@ -1058,8 +1058,8 @@ export default function DeviceManager({ scopeRegionId }) {
                   className="text-xs text-blue-600 hover:text-blue-800 cursor-pointer transition-colors">
                   查看全部
                 </button>
-              )}
-            </div>
+            )}
+          </div>
             <div className="divide-y divide-slate-50">
               {alertDevices.length === 0 ? (
                 <p className="px-4 py-8 text-center text-xs text-slate-400">暂无告警设备</p>
@@ -1077,7 +1077,7 @@ export default function DeviceManager({ scopeRegionId }) {
                       <p className="text-xs text-amber-700 mt-0.5">
                         {d.source === 'unmapped' ? '未映射设备' : '状态异常'}
                       </p>
-                    </div>
+      </div>
                   </div>
                 </button>
               ))}

@@ -38,6 +38,13 @@ export function deviceMqttProfileKey(device) {
   return device?.mqttProfileId || device?.mqttSourceRegionId || ''
 }
 
+/** 推流 API 参数：已映射用 regionId，无归属用 mqttProfileId */
+export function deviceStreamQueryParams(device) {
+  if (!device) return { regionId: '', mqttProfileId: '' }
+  if (device.regionId) return { regionId: device.regionId, mqttProfileId: '' }
+  return { regionId: '', mqttProfileId: deviceMqttProfileKey(device) }
+}
+
 export function withScopeQuery(url, scopeRegionId) {
   if (isScopeAll(scopeRegionId)) return url
   const sep = url.includes('?') ? '&' : '?'

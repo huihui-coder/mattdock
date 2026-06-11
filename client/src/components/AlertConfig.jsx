@@ -96,16 +96,16 @@ function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerT
   if (alertType === 'lost') {
     return (
       <div className="px-4 py-4 space-y-3 bg-slate-50 border-t border-slate-100">
-        <div className="flex items-center gap-2">
-          <input
-            type="number" min="1" max="480"
+          <div className="flex items-center gap-2">
+            <input
+              type="number" min="1" max="480"
             className="ui-input w-24 !py-1.5"
-            value={cfg.thresholdMinutes || 30}
+              value={cfg.thresholdMinutes || 30}
             onChange={(e) => onUpdate(deviceId, 'thresholdMinutes', parseInt(e.target.value, 10) || 30)}
-          />
+            />
           <span className="text-xs text-slate-500">分钟后推送（无人机离巢超过阈值时）</span>
-        </div>
-        <div className="flex items-center gap-3">
+          </div>
+          <div className="flex items-center gap-3">
           <ToggleSwitch
             enabled={cfg.sendSnapshot !== false}
             onChange={(v) => onUpdate(deviceId, 'sendSnapshot', v)}
@@ -113,9 +113,9 @@ function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerT
             label="告警时发送监控截图"
           />
           <span className="text-xs text-slate-500">告警时发送监控截图（外部/内部/无人机画面）</span>
-        </div>
-        <AiAnalysisToggle deviceId={deviceId} cfg={cfg} onUpdate={onUpdate} />
-        <div>
+          </div>
+          <AiAnalysisToggle deviceId={deviceId} cfg={cfg} onUpdate={onUpdate} />
+          <div>
           <label className="text-xs font-medium text-slate-700">推送 Webhook（选填）</label>
           <select
             className="ui-input mt-1 !py-1.5 cursor-pointer"
@@ -127,13 +127,13 @@ function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerT
               <option key={p.id} value={p.id}>{p.name}（{TYPE_LABELS[p.type] || p.type}）</option>
             ))}
           </select>
-          <input
-            type="text"
+            <input
+              type="text"
             className="ui-input mt-2 !py-1.5"
             placeholder="或填写设备专属 URL（优先级高于上方选择）"
-            value={cfg.webhookUrl || ''}
+              value={cfg.webhookUrl || ''}
             onChange={(e) => onUpdate(deviceId, 'webhookUrl', e.target.value)}
-          />
+            />
         </div>
         <div className="pt-1">
           <button
@@ -152,32 +152,32 @@ function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerT
 
   return (
     <div className="px-4 py-4 space-y-3 bg-slate-50 border-t border-slate-100">
-      <div className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          id={`imm-${deviceId}`}
-          checked={cfg.offlineAlertImmediate !== false}
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id={`imm-${deviceId}`}
+              checked={cfg.offlineAlertImmediate !== false}
           onChange={(e) => onUpdate(deviceId, 'offlineAlertImmediate', e.target.checked)}
           className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/30"
-        />
+            />
         <label htmlFor={`imm-${deviceId}`} className="text-xs text-slate-500">离线后立即推送一次</label>
-      </div>
-      <div className="flex items-center gap-2">
-        <input
-          type="number" min="0" max="480"
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number" min="0" max="480"
           className="ui-input w-24 !py-1.5"
-          value={cfg.offlineRepeatMinutes || 0}
+              value={cfg.offlineRepeatMinutes || 0}
           onChange={(e) => onUpdate(deviceId, 'offlineRepeatMinutes', parseInt(e.target.value, 10) || 0)}
-        />
+            />
         <span className="text-xs text-slate-500">分钟循环提醒（0 = 不循环）</span>
-      </div>
-      <AiAnalysisToggle
-        deviceId={deviceId}
-        cfg={cfg}
-        onUpdate={onUpdate}
-        hint="告警后 AI 分析网络/市电稳定性，并结合历史记录推送结论"
-      />
-      <div>
+          </div>
+          <AiAnalysisToggle
+            deviceId={deviceId}
+            cfg={cfg}
+            onUpdate={onUpdate}
+            hint="告警后 AI 分析网络/市电稳定性，并结合历史记录推送结论"
+          />
+          <div>
         <label className="text-xs font-medium text-slate-700">推送 Webhook（选填）</label>
         <select
           className="ui-input mt-1 !py-1.5 cursor-pointer"
@@ -189,14 +189,14 @@ function DeviceAlertDetailPanel({ alertType, deviceId, cfg, onUpdate, onTriggerT
             <option key={p.id} value={p.id}>{p.name}（{TYPE_LABELS[p.type] || p.type}）</option>
           ))}
         </select>
-        <input
-          type="text"
+            <input
+              type="text"
           className="ui-input mt-2 !py-1.5"
           placeholder="或填写设备专属 URL（优先级高于上方选择）"
-          value={cfg.webhookUrl || ''}
+              value={cfg.webhookUrl || ''}
           onChange={(e) => onUpdate(deviceId, 'webhookUrl', e.target.value)}
-        />
-      </div>
+            />
+          </div>
     </div>
   )
 }
@@ -628,7 +628,7 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
                   为各组织选择 Webhook 配置；设备未单独指定时将继承此处设置。仍可直接填写 URL 作为兼容备用。
                 </p>
               </div>
-              <button
+          <button
                 type="button"
                 onClick={handleSave}
                 disabled={saving}
@@ -636,8 +636,8 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
               >
                 <Save size={14} />
                 {saving ? '保存中…' : '保存推送配置'}
-              </button>
-            </div>
+          </button>
+        </div>
             <div className="p-4 space-y-3">
           {(isMultiRegion ? leafRegions : (leafRegions.length ? leafRegions : [{ id: 'default', name: user?.regionName || '当前区域' }])).map((region) => {
             const rid = region.id
@@ -704,8 +704,8 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
                       </span>
                     </p>
                   </div>
-                  <div className="flex gap-2 shrink-0">
-                    <button
+          <div className="flex gap-2 shrink-0">
+            <button
                       type="button"
                       onClick={() => handleTest(isMultiRegion ? rid : null)}
                       disabled={testingRegion === (isMultiRegion ? rid : 'single') || !configured}
@@ -778,8 +778,8 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
               {saving ? '保存中…' : '保存配置'}
             </button>
           </div>
+          </div>
         </div>
-      </div>
 
       {/* 主列表：左侧分组 + 右侧表格 */}
       <div className="ui-card overflow-hidden flex flex-col min-h-[520px]">
@@ -894,9 +894,9 @@ export default function AlertConfig({ devices, user, scopeRegionId }) {
                               <td colSpan={7} className="p-0">
                                 <DeviceAlertDetailPanel
                                   alertType={alertType}
-                                  deviceId={deviceId}
+                deviceId={deviceId}
                                   cfg={cfg}
-                                  onUpdate={updateDevice}
+                onUpdate={updateDevice}
                                   onTriggerTest={handleTriggerLost}
                                   triggering={!!triggeringLost[deviceId]}
                                   webhookProfiles={webhookProfiles}
