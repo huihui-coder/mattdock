@@ -502,6 +502,9 @@ class DeviceProcessor {
     const envKey = `DEVICE_${deviceId}`;
     if (process.env[envKey]) return 'env';
     if (!this.registryFrozen && this.builtinDeviceNames[deviceId]) return 'builtin';
+    const state = this.deviceStates.get(deviceId);
+    const displayName = this.getDeviceName(deviceId, state?.gateway || null);
+    if (displayName && displayName !== deviceId) return 'learned';
     return 'unmapped';
   }
 
@@ -678,6 +681,12 @@ class DeviceProcessor {
   getDeviceName(deviceId, gateway = null) {
     // 优先直接映射
     if (this.deviceNames[deviceId]) return this.deviceNames[deviceId];
+    // 未显式映射的遥控器：绑定单兵无人机后自动命名为「无人机名称-遥控器」
+    if (this.isRemoteSn(deviceId)) {
+      const droneSn = this.resolveAllRemoteBindings()[deviceId]?.droneSn;
+      const remoteName = this.nameRemoteFromBoundDrone(deviceId, droneSn);
+      if (remoteName) return remoteName;
+    }
     // 无人机：用 gateway 对应的机场名拼接
     if (gateway && this.deviceNames[gateway]) {
       return `${this.deviceNames[gateway]}-无人机`;
@@ -1446,6 +1455,7 @@ class DeviceProcessor {
     return Array.from(this.deviceStates.entries()).map(([id, state]) => ({
       deviceId: id,
       ...state,
+      deviceName: this.getDeviceName(id, state.gateway || null),
       ...this.regionMeta(),
     }));
   }
@@ -1454,7 +1464,12 @@ class DeviceProcessor {
    * 获取单个设备状态
    */
   getDeviceState(deviceId) {
-    return this.deviceStates.get(deviceId);
+    const state = this.deviceStates.get(deviceId);
+    if (!state) return null;
+    return {
+      ...state,
+      deviceName: this.getDeviceName(deviceId, state.gateway || null),
+    };
   }
 
   /** 无归属设备：记录实际 MQTT 连接池来源（smartcity-prod / haizhu-local 等） */
@@ -1503,7 +1518,7 @@ class DeviceProcessor {
   buildRegistryRow(deviceId) {
     const state = this.deviceStates.get(deviceId);
     const category = this.inferDeviceCategory(deviceId);
-    const name = this.deviceNames[deviceId] || deviceId;
+    const name = this.getDeviceName(deviceId, state?.gateway || null);
     return {
       deviceId,
       name,
