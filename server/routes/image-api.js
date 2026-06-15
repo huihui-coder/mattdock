@@ -2,8 +2,9 @@ const multer = require('multer');
 const { ASPECT_RATIOS, resolveImageSize } = require('../lib/image-size');
 const { upstreamImageEdit, DEFAULT_EDIT_QUALITY, resolveUpstreamEditSize } = require('../lib/image-edit-upstream');
 const { normalizeEditImage } = require('../lib/normalize-edit-image');
+const { callArkCompletion, getApiKey: getArkApiKey, getAssistantModel } = require('../lib/ark-client');
 
-const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.xomodel.com').replace(/\/$/, '');
+const XOMODEL_API_BASE = (process.env.XOMODEL_API_URL || 'https://api.frimodel.com').replace(/\/$/, '');
 const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 
 function getImageModel(override) {
@@ -82,7 +83,41 @@ function pickUploadedImage(req) {
   );
 }
 
-function registerImageRoutes(app, { requireImageStudio, auditLog }) {
+function buildPolishSystemPrompt(language) {
+  if (language === 'en') {
+    return `You are an expert AI image prompt engineer. Rewrite the user's idea into one polished English prompt for text-to-image models (GPT Image style).
+
+Rules:
+- Output ONLY the final prompt text. No quotes, labels, explanation, or markdown.
+- Preserve the user's subject and intent; add concrete details: subject, environment, lighting, camera angle, composition, color mood, and style.
+- Use fluent descriptive English suitable for photorealistic or stylized generation as implied by the user.
+- Do not add watermarks or UI chrome unless the user asked.`;
+  }
+  return `你是 AI 绘画提示词专家。将用户的描述润色为一条完整的中文生图提示词。
+
+规则：
+- 只输出润色后的提示词正文，不要引号、不要标题、不要解释、不要 Markdown。
+- 保留用户主题与意图；补充画面细节：主体、环境、光线、镜头角度、构图、色调与风格。
+- 语言流畅自然，适合文生图模型理解。
+- 除非用户提到，不要添加水印或界面元素。`;
+}
+
+function stripPolishOutput(text) {
+  let s = String(text || '').trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"'))
+    || (s.startsWith('「') && s.endsWith('」'))
+    || (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  if (s.startsWith('```')) {
+    s = s.replace(/^```[\w]*\n?/, '').replace(/\n?```$/, '').trim();
+  }
+  return s;
+}
+
+function registerImageRoutes(app, { requireImageStudio, auditLog, updateTokenUsage }) {
   app.get('/api/image/config', requireImageStudio, (_req, res) => {
     const model = getImageModel();
     const hasApiKey = !!getApiKey();
@@ -97,6 +132,67 @@ function registerImageRoutes(app, { requireImageStudio, auditLog }) {
       counts: [1, 2, 3, 4],
       qualities: ['low', 'medium', 'high'],
     });
+  });
+
+  app.post('/api/image/polish-prompt', requireImageStudio, async (req, res) => {
+    const modelId = getAssistantModel();
+    if (!getArkApiKey()) {
+      return res.status(503).json({ error: '飞行助手未配置，请在服务器 .env 中设置 ARK_API_KEY' });
+    }
+    if (!modelId) {
+      return res.status(503).json({ error: '飞行助手未配置模型' });
+    }
+
+    const rawPrompt = String(req.body?.prompt || '').trim();
+    if (!rawPrompt) {
+      return res.status(400).json({ error: '请先输入提示词' });
+    }
+    const language = req.body?.language === 'en' ? 'en' : 'zh';
+    const isEdit = !!req.body?.isEdit;
+
+    if (auditLog) {
+      auditLog(req, {
+        action: 'ai.image.polish',
+        detail: {
+          language,
+          isEdit,
+          promptPreview: rawPrompt.slice(0, 80),
+          promptLength: rawPrompt.length,
+          modelId,
+        },
+      });
+    }
+
+    try {
+      const userTask = isEdit
+        ? `请润色以下图生图编辑提示词（${language === 'en' ? '输出英文' : '输出中文'}）：\n\n${rawPrompt}`
+        : `请润色以下文生图提示词（${language === 'en' ? '输出英文' : '输出中文'}）：\n\n${rawPrompt}`;
+
+      const polished = await callArkCompletion({
+        model: modelId,
+        webSearch: false,
+        onTokenUsage: updateTokenUsage
+          ? (usage) => updateTokenUsage(modelId, usage)
+          : undefined,
+        messages: [
+          { role: 'system', content: buildPolishSystemPrompt(language) },
+          { role: 'user', content: userTask },
+        ],
+      });
+
+      const text = stripPolishOutput(polished);
+      if (!text) {
+        return res.status(502).json({ error: '润色结果为空，请重试' });
+      }
+      res.json({
+        prompt: text,
+        language,
+        model: modelId,
+      });
+    } catch (e) {
+      console.error('[ImageAPI] 提示词润色失败:', e.message);
+      res.status(502).json({ error: e.message || 'AI 润色失败' });
+    }
   });
 
   app.post('/api/image/generate', requireImageStudio, async (req, res) => {

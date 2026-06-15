@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { AlertCircle, Trash2 } from 'lucide-react'
+import { AlertCircle, Trash2, Sparkles, Loader2 } from 'lucide-react'
 import {
   loadImageStudioTasks,
   saveImageStudioTasks,
@@ -321,13 +321,15 @@ export default function ImageStudio() {
   const [resolution, setResolution] = useState('1k')
   const [aspectRatio, setAspectRatio] = useState('1:1')
   const [count, setCount] = useState(1)
-  const [submitting, setSubmitting] = useState(false)
+  const [polishing, setPolishing] = useState(false)
+  const [polishMenuOpen, setPolishMenuOpen] = useState(false)
   const [formError, setFormError] = useState('')
   const [userInitial, setUserInitial] = useState('U')
   const [previewUrl, setPreviewUrl] = useState(null)
 
   const fileRef = useRef(null)
   const feedRef = useRef(null)
+  const polishMenuRef = useRef(null)
   const quality = 'standard'
 
   const refPreviews = useMemo(
@@ -395,8 +397,21 @@ export default function ImageStudio() {
   }, [])
 
   useEffect(() => {
+    if (!polishMenuOpen) return undefined
+    const onDocClick = (e) => {
+      if (polishMenuRef.current && !polishMenuRef.current.contains(e.target)) {
+        setPolishMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [polishMenuOpen])
+
+  const runningCount = tasks.filter((t) => t.status === 'RUNNING').length
+
+  useEffect(() => {
     scrollFeedToBottom()
-  }, [tasks.length, submitting, scrollFeedToBottom])
+  }, [tasks.length, runningCount, scrollFeedToBottom])
 
   useEffect(() => {
     const tid = setTimeout(() => {
@@ -406,7 +421,6 @@ export default function ImageStudio() {
     return () => clearTimeout(tid)
   }, [tasks])
 
-  const runningCount = tasks.filter((t) => t.status === 'RUNNING').length
   useEffect(() => {
     if (runningCount === 0) return undefined
     const id = setInterval(() => {
@@ -562,7 +576,7 @@ export default function ImageStudio() {
     }
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = (e) => {
     e?.preventDefault()
     if (!prompt.trim()) {
       setFormError('请输入提示词')
@@ -580,35 +594,21 @@ export default function ImageStudio() {
       model: modelName,
     }
 
-    setSubmitting(true)
     setFormError('')
-    try {
-      await runGeneration(params)
-      setPrompt('')
-    } catch (err) {
-      setFormError(err.message)
-    } finally {
-      setSubmitting(false)
-    }
+    setPrompt('')
+    runGeneration(params).catch((err) => setFormError(err.message))
   }
 
-  const handleRegenerate = async (task) => {
-    setSubmitting(true)
+  const handleRegenerate = (task) => {
     setFormError('')
-    try {
-      await runGeneration({
-        prompt: task.prompt,
-        refFiles: [],
-        resolution: task.resolution,
-        aspectRatio: task.aspectRatio,
-        count: task.count,
-        model: task.model,
-      })
-    } catch (err) {
-      setFormError(err.message)
-    } finally {
-      setSubmitting(false)
-    }
+    runGeneration({
+      prompt: task.prompt,
+      refFiles: [],
+      resolution: task.resolution,
+      aspectRatio: task.aspectRatio,
+      count: task.count,
+      model: task.model,
+    }).catch((err) => setFormError(err.message))
   }
 
   const handleEditInComposer = (task) => {
@@ -626,6 +626,40 @@ export default function ImageStudio() {
       await navigator.clipboard.writeText(text)
     } catch {
       /* ignore */
+    }
+  }
+
+  const handlePolish = async (language) => {
+    const raw = prompt.trim()
+    if (!raw) {
+      setFormError('请先输入提示词')
+      return
+    }
+    setPolishMenuOpen(false)
+    setPolishing(true)
+    setFormError('')
+    try {
+      const res = await apiFetch('/api/image/polish-prompt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: raw,
+          language,
+          isEdit: refFiles.length > 0,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(httpErrorMessage(res, data, 'AI 润色失败'))
+      }
+      if (!data.prompt?.trim()) {
+        throw new Error('润色结果为空')
+      }
+      setPrompt(data.prompt.trim())
+    } catch (err) {
+      setFormError(err.message || 'AI 润色失败')
+    } finally {
+      setPolishing(false)
     }
   }
 
@@ -753,6 +787,33 @@ export default function ImageStudio() {
                   placeholder="在这里输入提示词，回车换行。"
                   className="prompt-textarea"
                 />
+                <div className="prompt-polish-wrap" ref={polishMenuRef}>
+                  <button
+                    type="button"
+                    className="prompt-polish-btn"
+                    disabled={polishing || !prompt.trim()}
+                    title="使用飞行助手同款 AI 润色提示词"
+                    aria-expanded={polishMenuOpen}
+                    onClick={() => setPolishMenuOpen((v) => !v)}
+                  >
+                    {polishing ? (
+                      <Loader2 size={14} className="prompt-polish-spin" aria-hidden />
+                    ) : (
+                      <Sparkles size={14} aria-hidden />
+                    )}
+                    <span>{polishing ? '润色中…' : 'AI 润色'}</span>
+                  </button>
+                  {polishMenuOpen && !polishing && (
+                    <div className="prompt-polish-menu" role="menu">
+                      <button type="button" role="menuitem" onClick={() => handlePolish('zh')}>
+                        润色为中文
+                      </button>
+                      <button type="button" role="menuitem" onClick={() => handlePolish('en')}>
+                        润色为英文
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -790,11 +851,11 @@ export default function ImageStudio() {
               <button
                 type="submit"
                 className="generate-btn"
-                disabled={submitting || configured === false}
-                aria-busy={submitting}
+                disabled={configured === false}
+                aria-busy={runningCount > 0}
               >
                 <span className="generate-icon">✦</span>
-                <span>{submitting ? '生成中…' : '生成'}</span>
+                <span>{runningCount > 0 ? `生成 (${runningCount} 进行中)` : '生成'}</span>
               </button>
             </div>
             {formError && (

@@ -435,6 +435,7 @@ const CLIENT_AUDIT_ACTIONS = new Set([
   'flight.export.ranking',
   'ai.image.generate',
   'ai.image.edit',
+  'ai.image.polish',
   'ai.image.download',
 ]);
 
@@ -446,6 +447,7 @@ const AUDIT_ACTION_LABELS = {
   'assistant.model.update': '切换飞行助手模型',
   'ai.image.generate': 'AI 文生图',
   'ai.image.edit': 'AI 图生图',
+  'ai.image.polish': 'AI 生图提示词润色',
   'ai.image.download': 'AI 生图下载',
   'flight.export.records': '导出飞行记录',
   'flight.export.ranking': '导出设备排名',
@@ -1366,6 +1368,7 @@ setInterval(() => alertService.checkAirportOffline(), 60 * 1000);
 registerImageRoutes(app, {
   requireImageStudio: requirePermission('image-studio'),
   auditLog,
+  updateTokenUsage,
 });
 registerAssistantRoutes(app, {
   requireAssistant: requirePermission('ai-assistant'),

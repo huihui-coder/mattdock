@@ -242,7 +242,7 @@ body {
   background: #fff;
   border: 1px solid var(--color-border);
   border-radius: 0.65rem;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .image-studio .prompt-input-wrap {
@@ -251,6 +251,7 @@ body {
   gap: 0.5rem;
   padding: 0.5rem 0.65rem;
   min-height: 5.5rem;
+  position: relative;
 }
 
 .image-studio .prompt-upload {
@@ -320,6 +321,75 @@ body {
   min-height: 4.5rem;
   background: transparent;
   color: var(--color-ink);
+  padding-right: 5.5rem;
+}
+
+.image-studio .prompt-polish-wrap {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.45rem;
+  z-index: 5;
+}
+
+.image-studio .prompt-polish-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(124, 58, 237, 0.25);
+  background: rgba(255, 255, 255, 0.92);
+  color: #6d28d9;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.image-studio .prompt-polish-btn:hover:not(:disabled) {
+  background: #f5f3ff;
+  border-color: rgba(124, 58, 237, 0.45);
+}
+
+.image-studio .prompt-polish-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.image-studio .prompt-polish-spin {
+  animation: image-studio-pulse 0.8s linear infinite;
+}
+
+.image-studio .prompt-polish-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  min-width: 7.5rem;
+  padding: 0.25rem;
+  border-radius: 0.625rem;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  z-index: 10;
+}
+
+.image-studio .prompt-polish-menu button {
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.45rem;
+  font-size: 0.8125rem;
+  color: #334155;
+  cursor: pointer;
+}
+
+.image-studio .prompt-polish-menu button:hover {
+  background: #f8fafc;
+  color: #6d28d9;
 }
 
 .image-studio .composer-control-row {
