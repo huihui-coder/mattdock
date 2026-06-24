@@ -177,7 +177,7 @@ export default function Login({ onLogin }) {
       </div>
 
       <p className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 text-xs text-white/70 tracking-wide select-none">
-        v1.3.1 @2026
+        v1.3.2 @2026
       </p>
     </div>
   )
