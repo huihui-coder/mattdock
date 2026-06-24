@@ -5,6 +5,7 @@ import {
   saveImageStudioTasks,
   clearImageStudioTasks,
   buildStoredReferences,
+  dataUrlToFile,
 } from '../lib/image-studio-storage'
 import { logClientAudit } from '../lib/audit-client'
 
@@ -330,7 +331,18 @@ export default function ImageStudio() {
   const fileRef = useRef(null)
   const feedRef = useRef(null)
   const polishMenuRef = useRef(null)
+  const pendingResumeRef = useRef(
+    loadImageStudioTasks().filter((t) => t.status === 'RUNNING'),
+  )
   const quality = 'standard'
+
+  const updateTasks = useCallback((updater) => {
+    setTasks((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      saveImageStudioTasks(next)
+      return next
+    })
+  }, [])
 
   const refPreviews = useMemo(
     () => refFiles.map((f) => ({ file: f, url: URL.createObjectURL(f) })),
@@ -421,45 +433,7 @@ export default function ImageStudio() {
     return () => clearTimeout(tid)
   }, [tasks])
 
-  useEffect(() => {
-    if (runningCount === 0) return undefined
-    const id = setInterval(() => {
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.status === 'RUNNING'
-            ? { ...t, runtimeMs: Date.now() - new Date(t.startedAt).getTime() }
-            : t,
-        ),
-      )
-    }, 1000)
-    return () => clearInterval(id)
-  }, [runningCount])
-
-  const addRefFiles = useCallback((files) => {
-    const list = [...files].filter(acceptImageFile).slice(0, 3)
-    if (!list.length) return
-    setRefFiles((prev) => [...prev, ...list].slice(0, 3))
-    setAspectRatio('auto')
-    setFormError('')
-  }, [])
-
-  const removeRef = (index) => {
-    setRefFiles((prev) => {
-      const next = prev.filter((_, i) => i !== index)
-      if (next.length === 0) {
-        setAspectRatio((r) => (r === 'auto' ? '1:1' : r))
-      }
-      return next
-    })
-  }
-
-  const isEditMode = refFiles.length > 0
-
-  const aspectOptions = isEditMode
-    ? apiOptions.aspectRatios
-    : apiOptions.aspectRatios.filter((a) => a !== 'auto')
-
-  const runGeneration = async (params) => {
+  const runGeneration = useCallback(async (params, options = {}) => {
     const {
       prompt: taskPrompt,
       refFiles: refs,
@@ -468,42 +442,55 @@ export default function ImageStudio() {
       count: n,
       model: modelName,
     } = params
+    const { taskId: existingTaskId, startedAt: existingStartedAt } = options
+    const isResume = !!existingTaskId
 
-    const startedAt = new Date().toISOString()
-    const t0 = Date.now()
-    const taskId = newTaskId()
-    const refsSnapshot = (refs || []).map((f) => ({
-      url: URL.createObjectURL(f),
-      name: f.name,
-    }))
-    let storedRefs = refsSnapshot
-    if (refs?.length > 0) {
-      try {
-        storedRefs = await buildStoredReferences(refs)
-      } catch {
-        storedRefs = refsSnapshot
+    const startedAt = existingStartedAt || new Date().toISOString()
+    const t0 = existingStartedAt ? new Date(existingStartedAt).getTime() : Date.now()
+    const taskId = existingTaskId || newTaskId()
+
+    if (!isResume) {
+      const refsSnapshot = (refs || []).map((f) => ({
+        url: URL.createObjectURL(f),
+        name: f.name,
+      }))
+      let storedRefs = refsSnapshot
+      if (refs?.length > 0) {
+        try {
+          storedRefs = await buildStoredReferences(refs)
+        } catch {
+          storedRefs = refsSnapshot
+        }
       }
-    }
 
-    const pending = {
-      id: taskId,
-      status: 'RUNNING',
-      prompt: taskPrompt,
-      references: storedRefs,
-      model: modelName,
-      modelLabel: modelLabel(modelName),
-      resolution: res,
-      aspectRatio: ar,
-      count: n,
-      results: [],
-      startedAt,
-      finishedAt: null,
-      runtimeMs: null,
-      error: null,
-      isEdit: refs?.length > 0,
-    }
+      const pending = {
+        id: taskId,
+        status: 'RUNNING',
+        prompt: taskPrompt,
+        references: storedRefs,
+        model: modelName,
+        modelLabel: modelLabel(modelName),
+        resolution: res,
+        aspectRatio: ar,
+        count: n,
+        results: [],
+        startedAt,
+        finishedAt: null,
+        runtimeMs: null,
+        error: null,
+        isEdit: refs?.length > 0,
+      }
 
-    setTasks((prev) => [...prev, pending])
+      updateTasks((prev) => [...prev, pending])
+    } else {
+      updateTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId
+            ? { ...t, status: 'RUNNING', error: null, finishedAt: null, results: [] }
+            : t,
+        ),
+      )
+    }
 
     try {
       let resHttp
@@ -545,7 +532,7 @@ export default function ImageStudio() {
       const urls = pickImageUrls(data)
       if (!urls.length) throw new Error('响应中无图片数据')
 
-      setTasks((prev) =>
+      updateTasks((prev) =>
         prev.map((t) =>
           t.id === taskId
             ? {
@@ -559,7 +546,7 @@ export default function ImageStudio() {
         ),
       )
     } catch (err) {
-      setTasks((prev) =>
+      updateTasks((prev) =>
         prev.map((t) =>
           t.id === taskId
             ? {
@@ -574,7 +561,76 @@ export default function ImageStudio() {
       )
       throw err
     }
+  }, [quality, updateTasks])
+
+  const resumeGenerationForTask = useCallback(async (task) => {
+    let refs = []
+    if (task.isEdit && task.references?.length) {
+      const ref = task.references[0]
+      const file = await dataUrlToFile(ref.url, ref.name)
+      if (file) refs = [file]
+    }
+    await runGeneration(
+      {
+        prompt: task.prompt,
+        refFiles: refs,
+        resolution: task.resolution,
+        aspectRatio: task.aspectRatio,
+        count: task.count,
+        model: task.model,
+      },
+      { taskId: task.id, startedAt: task.startedAt },
+    )
+  }, [runGeneration])
+
+  useEffect(() => {
+    if (configured !== true || !pendingResumeRef.current.length) return
+    const toResume = pendingResumeRef.current
+    pendingResumeRef.current = []
+    toResume.forEach((task) => {
+      resumeGenerationForTask(task).catch((err) => {
+        setFormError(err.message)
+      })
+    })
+  }, [configured, resumeGenerationForTask])
+
+  useEffect(() => {
+    if (runningCount === 0) return undefined
+    const id = setInterval(() => {
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.status === 'RUNNING'
+            ? { ...t, runtimeMs: Date.now() - new Date(t.startedAt).getTime() }
+            : t,
+        ),
+      )
+    }, 1000)
+    return () => clearInterval(id)
+  }, [runningCount])
+
+  const addRefFiles = useCallback((files) => {
+    const list = [...files].filter(acceptImageFile).slice(0, 3)
+    if (!list.length) return
+    setRefFiles((prev) => [...prev, ...list].slice(0, 3))
+    setAspectRatio('auto')
+    setFormError('')
+  }, [])
+
+  const removeRef = (index) => {
+    setRefFiles((prev) => {
+      const next = prev.filter((_, i) => i !== index)
+      if (next.length === 0) {
+        setAspectRatio((r) => (r === 'auto' ? '1:1' : r))
+      }
+      return next
+    })
   }
+
+  const isEditMode = refFiles.length > 0
+
+  const aspectOptions = isEditMode
+    ? apiOptions.aspectRatios
+    : apiOptions.aspectRatios.filter((a) => a !== 'auto')
 
   const handleSubmit = (e) => {
     e?.preventDefault()
@@ -688,14 +744,12 @@ export default function ImageStudio() {
     setStorageNote('')
   }
 
-  const persistedCount = tasks.filter((t) => t.status !== 'RUNNING').length
-
   return (
     <div className="image-studio">
       <ImagePreviewModal url={previewUrl} onClose={closePreview} />
       <div className="image-studio-toolbar flex items-center justify-between gap-2 mb-2 shrink-0">
         <p className="text-xs text-slate-500 m-0">
-          记录保存在本浏览器（{persistedCount} 条）
+          记录保存在本浏览器（{tasks.length} 条，刷新后进行中任务会自动续跑）
           {storageNote && <span className="text-amber-600"> · {storageNote}</span>}
         </p>
         {tasks.length > 0 && (
@@ -729,7 +783,7 @@ export default function ImageStudio() {
               key={task.id}
               task={task}
               userInitial={userInitial}
-              onDelete={(id) => setTasks((prev) => prev.filter((t) => t.id !== id))}
+              onDelete={(id) => updateTasks((prev) => prev.filter((t) => t.id !== id))}
               onRegenerate={handleRegenerate}
               onEditInComposer={handleEditInComposer}
               onCopyPrompt={handleCopyPrompt}

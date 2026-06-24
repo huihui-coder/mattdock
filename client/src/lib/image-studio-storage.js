@@ -25,15 +25,12 @@ function stripForStorage(task) {
   }
 }
 
-/** 从 localStorage 恢复；刷新后无法续跑，进行中的任务标记为失败 */
+/** 从 localStorage 恢复；RUNNING 任务保留，由页面挂载后自动续跑 */
 function hydrateStoredTasks(list) {
   return list.map((task) => {
     if (task.status !== 'RUNNING') return task
     return {
       ...task,
-      status: 'FAILED',
-      error: '生成已中断（页面刷新），请重新生成',
-      finishedAt: new Date().toISOString(),
       runtimeMs: task.startedAt
         ? Date.now() - new Date(task.startedAt).getTime()
         : task.runtimeMs,
@@ -102,4 +99,18 @@ export async function buildStoredReferences(files) {
     })
   }
   return refs
+}
+
+/** 将持久化的 data URL 还原为 File，供刷新后续跑图生图 */
+export async function dataUrlToFile(dataUrl, filename = 'reference.png') {
+  if (!dataUrl || typeof dataUrl !== 'string') return null
+  if (dataUrl.startsWith('blob:')) return null
+  if (!dataUrl.startsWith('data:')) return null
+  try {
+    const res = await fetch(dataUrl)
+    const blob = await res.blob()
+    return new File([blob], filename || 'reference.png', { type: blob.type || 'image/png' })
+  } catch {
+    return null
+  }
 }

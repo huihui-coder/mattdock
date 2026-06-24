@@ -1,5 +1,5 @@
 const multer = require('multer');
-const { ASPECT_RATIOS, resolveImageSize } = require('../lib/image-size');
+const { ASPECT_RATIOS, resolveImageSize, resolveGenerateUpstreamParams } = require('../lib/image-size');
 const { upstreamImageEdit, DEFAULT_EDIT_QUALITY, resolveUpstreamEditSize } = require('../lib/image-edit-upstream');
 const { normalizeEditImage } = require('../lib/normalize-edit-image');
 const { callArkCompletion, getApiKey: getArkApiKey, getAssistantModel } = require('../lib/ark-client');
@@ -56,6 +56,13 @@ async function parseUpstreamResponse(resp) {
 
 function clampCount(n) {
   return Math.min(Math.max(Number(n) || 1, 1), 4);
+}
+
+function normalizeGenerateQuality(quality) {
+  const q = String(quality || 'medium').trim().toLowerCase();
+  if (['low', 'medium', 'high', 'auto'].includes(q)) return q;
+  if (q === 'standard') return 'medium';
+  return 'medium';
 }
 
 function logUpstreamModelError(kind, model, payload, data) {
@@ -209,7 +216,9 @@ function registerImageRoutes(app, { requireImageStudio, auditLog, updateTokenUsa
     if (!prompt?.trim()) {
       return res.status(400).json({ error: '请输入提示词 prompt' });
     }
-    const size = sizeOverride || resolveImageSize(resolution, aspectRatio);
+    const sizeParams = sizeOverride
+      ? { size: String(sizeOverride).trim(), resolution, mode: 'pixel', pixelSize: String(sizeOverride).trim() }
+      : resolveGenerateUpstreamParams(resolution, aspectRatio);
     const count = clampCount(n);
     if (auditLog) {
       auditLog(req, {
@@ -221,6 +230,9 @@ function registerImageRoutes(app, { requireImageStudio, auditLog, updateTokenUsa
           resolution,
           aspectRatio,
           model,
+          sizeMode: sizeParams.mode,
+          upstreamSize: sizeParams.size,
+          pixelSize: sizeParams.pixelSize,
         },
       });
     }
@@ -229,8 +241,20 @@ function registerImageRoutes(app, { requireImageStudio, auditLog, updateTokenUsa
         model,
         prompt: prompt.trim(),
         n: count,
-        size,
+        size: sizeParams.size,
+        quality: normalizeGenerateQuality(quality),
       };
+      if (sizeParams.mode === 'aspect') {
+        body.resolution = sizeParams.resolution;
+      }
+      console.log('[ImageAPI] 文生图 upstream', {
+        model,
+        sizeMode: sizeParams.mode,
+        size: body.size,
+        resolution: body.resolution,
+        pixelSize: sizeParams.pixelSize,
+        quality: body.quality,
+      });
       const resp = await fetch(`${XOMODEL_API_BASE}/v1/images/generations`, {
         method: 'POST',
         headers: {
@@ -244,7 +268,19 @@ function registerImageRoutes(app, { requireImageStudio, auditLog, updateTokenUsa
         logUpstreamModelError('文生图', model, body, data);
         return res.status(status).json(data);
       }
-      res.json({ ...data, meta: { model, size, resolution, aspectRatio, n: count, quality } });
+      res.json({
+        ...data,
+        meta: {
+          model,
+          size: sizeParams.pixelSize || sizeParams.size,
+          resolution,
+          aspectRatio,
+          n: count,
+          quality: body.quality,
+          sizeMode: sizeParams.mode,
+          upstreamSize: sizeParams.size,
+        },
+      });
     } catch (e) {
       console.error('[ImageAPI] 文生图失败:', e.message);
       res.status(502).json({ error: e.message || '上游请求失败' });
