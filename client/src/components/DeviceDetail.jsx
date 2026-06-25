@@ -1,6 +1,5 @@
 import { X, Thermometer, Droplets, Battery, Signal, Wind, CloudRain, MapPin, Activity, Clock, Wifi, Plane, HardDrive, Zap, Shield, Sun, Compass, Database } from 'lucide-react'
 import LiveStreamPlayer, { isDockSharedOutAirport } from './LiveStreamPlayer'
-import { isDockSeriesAirport } from './SupplementLightControl'
 import RegionLabel from './RegionLabel'
 import { deviceStreamQueryParams } from '../lib/scope-query'
 
@@ -55,10 +54,6 @@ export default function DeviceDetail({ device, onClose }) {
   // 从原始数据提取更多详细信息（优先用服务端合并后的 osdSnapshot）
   const raw = device.raw || {}
   const rawData = device.osdSnapshot || raw.data || raw
-  const supplementLightState =
-    device.supplementLightState ?? rawData.supplement_light_state
-  const liveCameraPosition = device.liveCameraPosition
-
   // 格式化字节大小
   const formatBytes = (bytes) => {
     if (!bytes) return '0 B'
@@ -181,9 +176,6 @@ export default function DeviceDetail({ device, onClose }) {
             deviceType={deviceType}
             deviceName={device.deviceName || device.deviceId}
             dock3SharedOut={isDockSharedOutAirport(deviceType, device.deviceId)}
-            supplementLightState={supplementLightState}
-            showSupplementLight={isDockSeriesAirport(deviceType, device.deviceId)}
-            liveCameraPosition={liveCameraPosition}
           />
         </div>
 
@@ -424,18 +416,6 @@ export default function DeviceDetail({ device, onClose }) {
               <span className="text-gray-500 text-xs">舱盖状态</span>
               <p className="font-medium">{rawData.cover_state === 0 ? '关闭' : '打开'}</p>
             </div>
-            <div className="bg-gray-50 p-3 rounded-lg">
-              <span className="text-gray-500 text-xs">补光灯</span>
-              <p className="font-medium">
-                {supplementLightState === 1 ? '开启' : supplementLightState === 0 ? '关闭' : '未知'}
-              </p>
-            </div>
-            {liveCameraPosition === 0 || liveCameraPosition === 1 ? (
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <span className="text-gray-500 text-xs">当前推流相机</span>
-                <p className="font-medium">{liveCameraPosition === 0 ? '舱内推流' : '舱外推流'}</p>
-              </div>
-            ) : null}
             <div className="bg-gray-50 p-3 rounded-lg">
               <span className="text-gray-500 text-xs">急停状态</span>
               <p className="font-medium">{rawData.emergency_stop_state === 0 ? '正常' : '已急停'}</p>

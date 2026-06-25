@@ -1,6 +1,5 @@
 const mqtt = require('mqtt');
 const { newMqttIds } = require('./lib/live-camera-service');
-const { setLiveCameraPosition } = require('./lib/dock-live-state-store');
 const fs = require('fs');
 const path = require('path');
 
@@ -143,7 +142,7 @@ class MQTTService {
         if (deviceId && !this.regionRuntime.shouldProcessOnRegionConnection(deviceId, this.regionId)) {
           return;
         }
-        // 处理 OSD / state（Dock 分片属性需合并，如 supplement_light_state、live_status）
+        // 处理 OSD / state（Dock 分片属性需合并）
         const processedData = this.regionRuntime.processMqttMessage(topic, data, this.regionId);
         if (!processedData) return;
 
@@ -200,34 +199,6 @@ class MQTTService {
 
   handleServicesReply(topic, data) {
     const tid = data?.tid;
-    const parts = topic.split('/');
-    const gatewaySn = parts[2];
-    const method = data?.method;
-
-    // 任意来源的 live_camera_change 应答（含司空）——记录当前推流相机
-    if (method === 'live_camera_change') {
-      const pos =
-        data?.data?.output?.camera_position ??
-        data?.data?.camera_position ??
-        (tid && this.pendingServices.has(tid) ? this.pendingServices.get(tid).requestData?.camera_position : undefined);
-      const normalized = pos === 0 || pos === 1 ? pos : null;
-      if (normalized !== null && gatewaySn) {
-        setLiveCameraPosition(gatewaySn, normalized, 'services_reply');
-        const proc = this.regionRuntime.getProcessorForDevice(gatewaySn);
-        const updated = proc?.patchDockControlState(gatewaySn, {
-          liveCameraPosition: normalized,
-        });
-        if (updated && this.wsService) {
-          this.wsService.broadcast({
-            type: 'device_data',
-            topic: `thing/product/${gatewaySn}/osd`,
-            raw: { data: updated.osdSnapshot || {} },
-            processed: { ...updated, regionId: proc?.regionId },
-            timestamp: new Date().toISOString(),
-          });
-        }
-      }
-    }
 
     if (!tid || !this.pendingServices.has(tid)) return;
 
@@ -241,16 +212,6 @@ class MQTTService {
       return;
     }
     pending.resolve(data);
-
-    if (this.wsService && method === 'live_camera_change') {
-      this.wsService.broadcast({
-        type: 'live_camera_change_reply',
-        deviceId: gatewaySn,
-        method,
-        result,
-        timestamp: new Date().toISOString(),
-      });
-    }
   }
 
   /**
@@ -284,9 +245,7 @@ class MQTTService {
     });
   }
 
-  /**
-   * 下发 DJI services（如 live_camera_change）
-   */
+  /** 下发 DJI services 并等待 services_reply */
   invokeService(gatewaySn, method, data, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       if (!this.client || !this.connected) {

@@ -21,20 +21,7 @@ const {
   mergeFlightRecords,
   paginateRecords,
 } = require('./lib/flight-query');
-const {
-  isDockSharedOutAirport,
-  resolveVideoId,
-  METHOD_LIVE_CAMERA_CHANGE,
-} = require('./lib/live-camera-service');
-const {
-  isDockSeriesAirport,
-  SUPPLEMENT_LIGHT_ACTIONS,
-  METHOD_SUPPLEMENT_LIGHT_OPEN,
-  METHOD_SUPPLEMENT_LIGHT_CLOSE,
-  logSupplementLightControl,
-} = require('./lib/dock-service');
 const { getJobSecret } = require('./lib/lost-alert-mqtt-bridge');
-const { getLiveCameraPosition } = require('./lib/dock-live-state-store');
 const { appendAuditEntry, loadAuditLogsQuery, getAuditStats, getActionCategory } = require('./lib/audit-log-store');
 const {
   RegionRuntime,
@@ -1344,27 +1331,6 @@ app.post('/api/internal/lost-alert/service', requireLostAlertJobSecret, async (r
       return res.status(503).json({ error: 'MQTT 未连接' });
     }
     await mqttService.publishService(deviceId, method, data ?? null);
-    if (method === METHOD_SUPPLEMENT_LIGHT_OPEN || method === METHOD_SUPPLEMENT_LIGHT_CLOSE) {
-      const proc = processorForDevice(deviceId);
-      logSupplementLightControl(
-        deviceId,
-        method === METHOD_SUPPLEMENT_LIGHT_OPEN ? 'open' : 'close',
-        'lost_alert',
-        { regionId: proc?.regionId, method, note: '内部 lost-alert 任务下发 MQTT' },
-      );
-    }
-    if (method === METHOD_LIVE_CAMERA_CHANGE && data?.camera_position !== undefined) {
-      processorForDevice(deviceId)?.patchDockControlState(deviceId, {
-        liveCameraPosition: data.camera_position,
-        source: 'lost_alert',
-      });
-    }
-    if (method === METHOD_SUPPLEMENT_LIGHT_OPEN) {
-      processorForDevice(deviceId)?.patchDockControlState(deviceId, { supplementLightState: 1, source: 'lost_alert' });
-    }
-    if (method === METHOD_SUPPLEMENT_LIGHT_CLOSE) {
-      processorForDevice(deviceId)?.patchDockControlState(deviceId, { supplementLightState: 0, source: 'lost_alert' });
-    }
     res.json({ ok: true });
   } catch (e) {
     res.status(502).json({ error: e.message });
@@ -1568,140 +1534,6 @@ app.post('/api/thresholds', (req, res) => {
 // 获取当前阈值配置
 app.get('/api/thresholds', (req, res) => {
   res.json(regionRuntime.getDefaultProcessor().thresholds);
-});
-
-// Dock 系列直播相机切换（舱内/舱外共用 _out 流）
-app.post('/api/live/camera-change', requirePermission('monitor'), async (req, res) => {
-  const { deviceId, cameraPosition, videoId } = req.body || {};
-  const gatewaySn = String(deviceId || '').trim();
-  const pos = Number(cameraPosition);
-
-  if (!gatewaySn) {
-    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
-  }
-  if (pos !== 0 && pos !== 1) {
-    return res.status(400).json({ error: 'camera_position 须为 0（舱内）或 1（舱外）' });
-  }
-
-  if (gatewaySn.startsWith('NEST')) {
-    return res.status(400).json({
-      error: '换电系列机场使用 _in/_out 独立推流，不支持 MQTT 切换',
-    });
-  }
-
-  const proc = processorForDevice(gatewaySn) || processorFor(req);
-
-  const resolvedVideoId = resolveVideoId(gatewaySn, videoId);
-  try {
-    const reply = await mqttService.invokeService(gatewaySn, METHOD_LIVE_CAMERA_CHANGE, {
-      camera_position: pos,
-      video_id: resolvedVideoId,
-    });
-    const updated = proc.patchDockControlState(gatewaySn, {
-      liveCameraPosition: pos,
-      source: 'api',
-    });
-    if (updated && wsService) {
-      wsService.broadcast({
-        type: 'device_data',
-        topic: `thing/product/${gatewaySn}/osd`,
-        raw: { data: updated.osdSnapshot || {} },
-        processed: { ...updated, regionId: proc.regionId },
-        timestamp: new Date().toISOString(),
-      });
-    }
-    res.json({
-      ok: true,
-      deviceId: gatewaySn,
-      camera_position: pos,
-      camera_label: pos === 0 ? '舱内' : '舱外',
-      video_id: resolvedVideoId,
-      reply: reply?.data,
-    });
-  } catch (e) {
-    console.error('[Live] camera-change 失败:', e.message);
-    res.status(502).json({ error: e.message || '直播相机切换失败' });
-  }
-});
-
-app.get('/api/live/dock3-config/:deviceId', requireLogin, attachRegionalProcessor, (req, res) => {
-  const gatewaySn = req.params.deviceId;
-  const state = req.processor.getDeviceState(gatewaySn);
-  const dockSharedOut = isDockSharedOutAirport(state || { deviceId: gatewaySn, deviceType: 'airport' });
-  const liveCameraPosition =
-    state?.liveCameraPosition ?? getLiveCameraPosition(gatewaySn) ?? null;
-  res.json({
-    deviceId: gatewaySn,
-    dockSharedOut,
-    dock3SharedOut: dockSharedOut,
-    videoId: dockSharedOut ? resolveVideoId(gatewaySn) : null,
-    liveCameraPosition,
-    liveCameraLabel:
-      liveCameraPosition === 0 ? '舱内推流' : liveCameraPosition === 1 ? '舱外推流' : null,
-  });
-});
-
-// Dock 系列机场补光灯开关
-app.post('/api/dock/supplement-light', requirePermission('monitor'), async (req, res) => {
-  const { deviceId, action } = req.body || {};
-  const gatewaySn = String(deviceId || '').trim();
-  const act = String(action || '').toLowerCase();
-
-  if (!gatewaySn) {
-    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
-  }
-  const method = SUPPLEMENT_LIGHT_ACTIONS[act];
-  if (!method) {
-    return res.status(400).json({ error: 'action 须为 open 或 close' });
-  }
-
-  if (gatewaySn.startsWith('NEST')) {
-    return res.status(400).json({ error: '换电系列机场不支持补光灯 MQTT 控制' });
-  }
-
-  const proc = processorForDevice(gatewaySn) || processorFor(req);
-
-  try {
-    logSupplementLightControl(gatewaySn, act, 'manual', {
-      operator: req.user?.username,
-      regionId: proc?.regionId,
-      method,
-      note: '用户从监控页下发 MQTT',
-    });
-    const reply = await mqttService.invokeService(gatewaySn, method, null);
-    const status = reply?.data?.output?.status;
-    const lightState = act === 'open' ? 1 : 0;
-    const updated = proc.patchDockControlState(gatewaySn, {
-      supplementLightState: lightState,
-      source: 'manual',
-    });
-    if (updated && wsService) {
-      wsService.broadcast({
-        type: 'device_data',
-        topic: `thing/product/${gatewaySn}/osd`,
-        raw: { data: updated.osdSnapshot || {} },
-        processed: { ...updated, regionId: proc.regionId },
-        timestamp: new Date().toISOString(),
-      });
-    }
-    res.json({
-      ok: true,
-      deviceId: gatewaySn,
-      action: act,
-      method,
-      status,
-      reply: reply?.data,
-    });
-  } catch (e) {
-    logSupplementLightControl(gatewaySn, act, 'manual', {
-      operator: req.user?.username,
-      regionId: proc?.regionId,
-      method,
-      note: `下发失败: ${e.message}`,
-    });
-    console.error('[Dock] supplement-light 失败:', e.message);
-    res.status(502).json({ error: e.message || '补光灯控制失败' });
-  }
 });
 
 // 手动重连MQTT

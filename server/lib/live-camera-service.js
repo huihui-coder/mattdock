@@ -25,5 +25,4 @@ module.exports = {
   isDock3SharedOutAirport,
   resolveVideoId,
   newMqttIds,
-  METHOD_LIVE_CAMERA_CHANGE: 'live_camera_change',
 };

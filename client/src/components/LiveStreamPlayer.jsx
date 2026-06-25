@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import flvjs from 'flv.js'
-import { Video, VideoOff, RefreshCw, Loader2, Plane } from 'lucide-react'
-import SupplementLightControl, { isDockSeriesAirport } from './SupplementLightControl'
+import { Video, VideoOff, RefreshCw, Plane } from 'lucide-react'
 import { fetchStreamUrl } from '../lib/stream-url'
 
-const DOCK_CAMERA_OPTIONS = [
-  { position: 0, label: '舱内推流' },
-  { position: 1, label: '舱外推流' },
-]
-
-function getToken() {
-  return localStorage.getItem('auth_token') || ''
-}
+const NON_DOCK_TYPES = new Set(['drone', 'single', 'remote', 'airport_drone'])
 
 export function isDockSharedOutAirport(deviceType, deviceId) {
-  return isDockSeriesAirport(deviceType, deviceId)
+  const id = String(deviceId || '').trim()
+  if (!id || id.startsWith('NEST')) return false
+  const type = String(deviceType || '').toLowerCase()
+  if (NON_DOCK_TYPES.has(type)) return false
+  return true
 }
 
 /** @deprecated 与 isDockSharedOutAirport 相同，覆盖 Dock / Dock2 / Dock3 */
@@ -24,36 +20,6 @@ function suffixToKey(suffix) {
   return String(suffix || '_out').replace(/\.live\.flv$/, '') || '_out'
 }
 
-function Dock3CameraSwitcher({ cameraPosition, switching, onSelect }) {
-  return (
-    <div
-      className="flex flex-col rounded-sm overflow-hidden border border-white/20 shadow-lg min-w-[108px]"
-      role="group"
-      aria-label="机场相机推流切换"
-    >
-      {DOCK_CAMERA_OPTIONS.map((opt) => {
-        const active = cameraPosition === opt.position
-        return (
-          <button
-            key={opt.position}
-            type="button"
-            disabled={switching}
-            onClick={() => onSelect(opt.position)}
-            className={`px-3 py-2.5 text-sm font-medium text-center transition-colors duration-200 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed border-b border-white/10 last:border-b-0 ${
-              active
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-900/90 text-gray-200 hover:bg-gray-800/95'
-            }`}
-            aria-pressed={active}
-          >
-            {opt.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
 export default function LiveStreamPlayer({
   deviceId,
   deviceType,
@@ -61,28 +27,17 @@ export default function LiveStreamPlayer({
   regionId = '',
   mqttProfileId = '',
   dock3SharedOut: dock3SharedOutProp,
-  supplementLightState,
-  showSupplementLight: showSupplementLightProp,
-  liveCameraPosition: liveCameraPositionProp,
 }) {
   const videoRef = useRef(null)
   const flvPlayerRef = useRef(null)
   const [playSource, setPlaySource] = useState('dock')
-  const [localCameraPosition, setLocalCameraPosition] = useState(null)
   const [currentStream, setCurrentStream] = useState('out')
   const [reloadKey, setReloadKey] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
-  const [cameraSwitching, setCameraSwitching] = useState(false)
-  const [cameraHint, setCameraHint] = useState('')
-  const [dock3VideoId, setDock3VideoId] = useState(null)
-  const [configCameraPosition, setConfigCameraPosition] = useState(null)
 
   const dock3SharedOut =
     dock3SharedOutProp ?? isDock3SharedOutAirport(deviceType, deviceId)
-
-  const showSupplementLight =
-    showSupplementLightProp ?? isDockSeriesAirport(deviceType, deviceId)
 
   const dockOutLabel = useMemo(
     () => (deviceId ? `${deviceId}_out.live.flv` : ''),
@@ -91,27 +46,6 @@ export default function LiveStreamPlayer({
 
   const isDock3View = dock3SharedOut && playSource === 'dock'
 
-  const osdCameraPosition =
-    liveCameraPositionProp === 0 || liveCameraPositionProp === 1
-      ? liveCameraPositionProp
-      : null
-  const cameraPositionRaw = localCameraPosition ?? osdCameraPosition ?? configCameraPosition
-  const cameraPosition =
-    cameraPositionRaw === 0 || cameraPositionRaw === 1 ? cameraPositionRaw : null
-
-  useEffect(() => {
-    if (liveCameraPositionProp === 0 || liveCameraPositionProp === 1) {
-      setConfigCameraPosition(liveCameraPositionProp)
-    }
-  }, [liveCameraPositionProp])
-
-  useEffect(() => {
-    if (localCameraPosition !== null && osdCameraPosition === localCameraPosition) {
-      setLocalCameraPosition(null)
-    }
-  }, [liveCameraPositionProp, localCameraPosition, osdCameraPosition])
-
-  /** 仅「机场画面↔无人机」或手动刷新时变；舱内/舱外切换绝不改 URL */
   const streamSuffix = useMemo(() => {
     if (deviceType !== 'airport') return '_flight.live.flv'
     if (dock3SharedOut) {
@@ -136,66 +70,10 @@ export default function LiveStreamPlayer({
     return () => { cancelled = true }
   }, [deviceId, streamSuffixKey, regionId, mqttProfileId, reloadKey])
 
-  useEffect(() => {
-    if (!dock3SharedOut || !deviceId) return
-    fetch(`/api/live/dock3-config/${encodeURIComponent(deviceId)}`, {
-      headers: { 'x-auth-token': getToken() },
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.videoId) setDock3VideoId(data.videoId)
-        if (data.liveCameraPosition === 0 || data.liveCameraPosition === 1) {
-          setConfigCameraPosition(data.liveCameraPosition)
-        }
-      })
-      .catch(() => {})
-  }, [deviceId, dock3SharedOut])
-
-  const requestCameraChange = useCallback(
-    async (position) => {
-      const res = await fetch('/api/live/camera-change', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-auth-token': getToken(),
-        },
-        body: JSON.stringify({
-          deviceId,
-          cameraPosition: position,
-          videoId: dock3VideoId || undefined,
-        }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || `切换失败 ${res.status}`)
-      return data
-    },
-    [deviceId, dock3VideoId],
-  )
-
-  const switchDockCamera = useCallback(
-    async (position) => {
-      if (cameraPosition !== null && position === cameraPosition) return
-      setCameraSwitching(true)
-      setCameraHint('')
-      try {
-        await requestCameraChange(position)
-        setLocalCameraPosition(position)
-        setCameraHint(position === 0 ? '已切换至舱内推流' : '已切换至舱外推流')
-        // 推流地址始终是 _out，不 reload 播放器
-      } catch (e) {
-        setCameraHint(e.message || '相机切换失败')
-      } finally {
-        setCameraSwitching(false)
-      }
-    },
-    [cameraPosition, requestCameraChange],
-  )
-
   const selectPlaySource = useCallback(
     (source) => {
       if (!dock3SharedOut) return
       setPlaySource(source)
-      setCameraHint('')
       setReloadKey((k) => k + 1)
     },
     [dock3SharedOut],
@@ -300,9 +178,7 @@ export default function LiveStreamPlayer({
   }
 
   const statusLabel = isDock3View
-    ? cameraPosition === 0 || cameraPosition === 1
-      ? DOCK_CAMERA_OPTIONS.find((o) => o.position === cameraPosition)?.label
-      : '未知'
+    ? '机场画面'
     : { out: '外部监控', in: '内部监控', flight: '无人机画面' }[currentStream]
 
   return (
@@ -363,37 +239,17 @@ export default function LiveStreamPlayer({
       <div className="relative aspect-video bg-gray-900">
         <video ref={videoRef} className="w-full h-full" muted autoPlay playsInline />
 
-        {showSupplementLight && deviceType === 'airport' && !(dock3SharedOut && playSource === 'flight') && (
-          <div className="absolute top-3 left-3 z-20">
-            <SupplementLightControl
-              deviceId={deviceId}
-              supplementLightState={supplementLightState}
-            />
-          </div>
-        )}
-
         {isDock3View && (
-          <div className="absolute top-3 right-3 z-20 flex flex-col items-end gap-2">
+          <div className="absolute top-3 right-3 z-20">
             <button
               type="button"
               onClick={handleRetry}
-              disabled={cameraSwitching}
-              className="p-2 rounded bg-gray-900/85 text-white border border-white/15 hover:bg-gray-800 transition-colors cursor-pointer disabled:opacity-50"
-              title="刷新画面（仍使用 _out 地址）"
+              className="p-2 rounded bg-gray-900/85 text-white border border-white/15 hover:bg-gray-800 transition-colors cursor-pointer"
+              title="刷新画面"
               aria-label="刷新画面"
             >
-              <RefreshCw size={18} className={cameraSwitching ? 'animate-spin' : ''} />
+              <RefreshCw size={18} />
             </button>
-            <Dock3CameraSwitcher
-              cameraPosition={cameraPosition}
-              switching={cameraSwitching}
-              onSelect={switchDockCamera}
-            />
-            {cameraSwitching && (
-              <span className="text-xs text-amber-200 bg-black/70 px-2 py-1 rounded">
-                切换相机中…
-              </span>
-            )}
           </div>
         )}
 
@@ -425,9 +281,9 @@ export default function LiveStreamPlayer({
           <span className="text-gray-400">
             {isDock3View ? (
               <>
-                推流地址固定 <span className="text-gray-300 font-mono text-xs">{dockOutLabel}</span>
+                推流地址 <span className="text-gray-300 font-mono text-xs">{dockOutLabel}</span>
                 <span className="mx-1">·</span>
-                当前相机 <span className="text-gray-300">{statusLabel}</span>
+                当前: <span className="text-gray-300">{statusLabel}</span>
               </>
             ) : (
               <>当前: {statusLabel}</>
@@ -435,9 +291,6 @@ export default function LiveStreamPlayer({
           </span>
           <span className="text-gray-500 text-xs font-mono shrink-0">{deviceId}</span>
         </div>
-        {cameraHint && (
-          <p className="text-amber-400/90 text-xs">{cameraHint}</p>
-        )}
       </div>
     </div>
   )

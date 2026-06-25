@@ -1,11 +1,9 @@
 const fs = require('fs');
 const path = require('path');
-const { mergeOsdSnapshot, buildDockTelemetry } = require('./lib/dock-osd');
-const { getLiveCameraPosition, setLiveCameraPosition } = require('./lib/dock-live-state-store');
+const { mergeOsdSnapshot } = require('./lib/dock-osd');
 
 const { getRegionDeviceRegistryPath, getRegionFlightHistoryPath } = require('./lib/region-store');
 const { isValidCompletedFlight, MAX_FLIGHT_MILEAGE_M, trimFlightHistoryByRetention, getFlightHistoryRetentionDays } = require('./lib/flight-query');
-const { logSupplementLightControl } = require('./lib/dock-service');
 
 const DEVICE_CATEGORY_LABELS = {
   airport: '自动机场',
@@ -1197,39 +1195,9 @@ class DeviceProcessor {
 
     // 合并状态
     let osdSnapshot = prevState?.osdSnapshot || {};
-    let supplementLightState = prevState?.supplementLightState ?? null;
-    let liveCameraPosition = prevState?.liveCameraPosition ?? null;
 
     if (result.deviceType === 'airport') {
       osdSnapshot = mergeOsdSnapshot(osdSnapshot, payload);
-      const prevSupplementLightState = supplementLightState;
-      const telemetry = buildDockTelemetry(osdSnapshot, deviceId, {
-        supplementLightState,
-        liveCameraPosition,
-      });
-      supplementLightState = telemetry.supplementLightState;
-      liveCameraPosition = telemetry.liveCameraPosition;
-      if (
-        prevSupplementLightState !== null
-        && supplementLightState !== null
-        && prevSupplementLightState !== supplementLightState
-      ) {
-        logSupplementLightControl(
-          deviceId,
-          supplementLightState === 1 ? 'open' : 'close',
-          'osd_telemetry',
-          {
-            regionId: this.regionId,
-            prevState: prevSupplementLightState,
-            nextState: supplementLightState,
-            note: '设备上报状态变化',
-          },
-        );
-      }
-      if (liveCameraPosition === null) {
-        const stored = getLiveCameraPosition(deviceId);
-        if (stored !== null) liveCameraPosition = stored;
-      }
     }
 
     const mergedResult = {
@@ -1248,8 +1216,6 @@ class DeviceProcessor {
       flightSession: session || null,
       boundDroneSn: result.boundDroneSn || prevState?.boundDroneSn || null,
       osdSnapshot: result.deviceType === 'airport' ? osdSnapshot : prevState?.osdSnapshot || null,
-      supplementLightState,
-      liveCameraPosition,
       ...this.regionMeta(),
     };
 
@@ -1508,52 +1474,6 @@ class DeviceProcessor {
     const state = this.deviceStates.get(deviceId);
     if (!state || !mqttConnectionRegionId) return;
     state.mqttConnectionRegionId = mqttConnectionRegionId;
-  }
-
-  /** 控制指令成功后写入 Dock 状态（OSD 延迟时 UI 仍可识别） */
-  patchDockControlState(deviceId, patch = {}) {
-    const state = this.deviceStates.get(deviceId);
-    if (!state || state.deviceType !== 'airport') return null;
-
-    const osdSnapshot = { ...(state.osdSnapshot || {}) };
-    let liveCameraPosition = state.liveCameraPosition ?? null;
-    let supplementLightState = state.supplementLightState ?? null;
-
-    if (patch.liveCameraPosition === 0 || patch.liveCameraPosition === 1) {
-      osdSnapshot.camera_position = patch.liveCameraPosition;
-      liveCameraPosition = patch.liveCameraPosition;
-      setLiveCameraPosition(deviceId, patch.liveCameraPosition, patch.source || 'control');
-    }
-    if (patch.supplementLightState === 0 || patch.supplementLightState === 1) {
-      const prevLight = supplementLightState;
-      osdSnapshot.supplement_light_state = patch.supplementLightState;
-      supplementLightState = patch.supplementLightState;
-      if (prevLight !== patch.supplementLightState) {
-        const patchSource = patch.source === 'manual' ? 'manual'
-          : patch.source === 'lost_alert' || patch.source === 'lost_alert_snap' ? patch.source
-            : 'control_patch';
-        logSupplementLightControl(
-          deviceId,
-          patch.supplementLightState === 1 ? 'open' : 'close',
-          patchSource,
-          {
-            regionId: this.regionId,
-            prevState: prevLight,
-            nextState: patch.supplementLightState,
-            note: '本地状态已同步',
-          },
-        );
-      }
-    }
-
-    const next = {
-      ...state,
-      osdSnapshot,
-      supplementLightState,
-      liveCameraPosition,
-    };
-    this.deviceStates.set(deviceId, next);
-    return next;
   }
 
   /**
