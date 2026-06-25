@@ -28,6 +28,35 @@ function matchesFlightTime(record, start, end) {
 }
 
 const MAX_FLIGHT_MILEAGE_M = 1_000_000; // 1000 km，超过视为异常数据
+const DEFAULT_FLIGHT_HISTORY_RETENTION_DAYS = 30;
+
+function getFlightHistoryRetentionDays() {
+  const raw = process.env.FLIGHT_HISTORY_RETENTION_DAYS;
+  if (raw === '0' || raw === 'false' || raw === 'none') return null;
+  const days = Number(raw);
+  if (!Number.isFinite(days) || days <= 0) return DEFAULT_FLIGHT_HISTORY_RETENTION_DAYS;
+  return days;
+}
+
+function getFlightHistoryRetentionMs() {
+  const days = getFlightHistoryRetentionDays();
+  return days == null ? null : days * 86400000;
+}
+
+function getFlightRecordTimeMs(record) {
+  const t = record?.endTime || record?.startTime;
+  const ms = t ? new Date(t).getTime() : NaN;
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/** 按保留天数裁剪飞行历史（默认近 30 天；FLIGHT_HISTORY_RETENTION_DAYS=0 表示不限制） */
+function trimFlightHistoryByRetention(history, nowMs = Date.now()) {
+  if (!Array.isArray(history)) return [];
+  const retentionMs = getFlightHistoryRetentionMs();
+  if (!retentionMs) return history;
+  const cutoff = nowMs - retentionMs;
+  return history.filter((r) => getFlightRecordTimeMs(r) >= cutoff);
+}
 
 function isValidCompletedFlight(record) {
   const mileage = record.totalMileage || 0;
@@ -112,6 +141,10 @@ function paginateRecords(records, page, limit) {
 
 module.exports = {
   MAX_FLIGHT_MILEAGE_M,
+  DEFAULT_FLIGHT_HISTORY_RETENTION_DAYS,
+  getFlightHistoryRetentionDays,
+  getFlightRecordTimeMs,
+  trimFlightHistoryByRetention,
   parseFlightTimeRange,
   matchesFlightType,
   matchesScopeDeviceType,

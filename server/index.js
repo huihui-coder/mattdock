@@ -1909,7 +1909,6 @@ app.post('/api/simulate-flight', requireLogin, attachRegionalProcessor, (req, re
     status: 'completed'
   };
   req.processor.flightHistory.push(record);
-  if (req.processor.flightHistory.length > 1000) req.processor.flightHistory.shift();
   req.processor.saveFlightHistory();
   req.processor.logFlight(`[模拟飞行] 写入虚拟记录 ${deviceName} duration=${durationSec}s mileage=${mileage}m`);
   res.json({ ok: true, record });

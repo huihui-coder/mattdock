@@ -536,6 +536,12 @@ export default function FlightDashboard({ onFlightViewChange, user, scopeRegionI
             >
               {DEVICE_OPTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
             </select>
+            <span
+              className="text-sm text-red-500 whitespace-nowrap select-none"
+              title="系统默认仅保留最近 30 天的飞行记录，更早的数据会自动清，请及时下载保存！"
+            >
+              飞行记录仅保留30天，请及时下载保存！
+            </span>
             </div>
 
           <div className="flex items-center gap-2 shrink-0">

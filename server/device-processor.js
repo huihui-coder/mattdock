@@ -4,7 +4,7 @@ const { mergeOsdSnapshot, buildDockTelemetry } = require('./lib/dock-osd');
 const { getLiveCameraPosition, setLiveCameraPosition } = require('./lib/dock-live-state-store');
 
 const { getRegionDeviceRegistryPath, getRegionFlightHistoryPath } = require('./lib/region-store');
-const { isValidCompletedFlight, MAX_FLIGHT_MILEAGE_M } = require('./lib/flight-query');
+const { isValidCompletedFlight, MAX_FLIGHT_MILEAGE_M, trimFlightHistoryByRetention, getFlightHistoryRetentionDays } = require('./lib/flight-query');
 
 const DEVICE_CATEGORY_LABELS = {
   airport: '自动机场',
@@ -271,9 +271,8 @@ class DeviceProcessor {
     for (const r of this.flightHistory) {
       if (!diskIds.has(r.id)) merged.push(r);
     }
-    if (merged.length > 1000) merged.splice(0, merged.length - 1000);
-    this.flightHistory = merged;
-    return merged;
+    this.flightHistory = trimFlightHistoryByRetention(merged);
+    return this.flightHistory;
   }
 
   // 查询接口调用：从磁盘同步最新记录到内存，避免进程内存落后于 flight-history.json
@@ -555,16 +554,30 @@ class DeviceProcessor {
       this.saveFlightHistory();
       this.logFlight('[飞行统计] 已修正历史记录中的单兵分类/设备名称');
     }
+    const beforePrune = this.flightHistory.length;
+    this.flightHistory = trimFlightHistoryByRetention(this.flightHistory);
+    if (this.flightHistory.length !== beforePrune) {
+      this.saveFlightHistory();
+      const days = getFlightHistoryRetentionDays();
+      this.logFlight(`[飞行统计] 启动裁剪：保留近 ${days} 天，${beforePrune} → ${this.flightHistory.length} 条`);
+    }
   }
 
   saveFlightHistory() {
+    const before = this.flightHistory.length;
+    this.flightHistory = trimFlightHistoryByRetention(this.flightHistory);
     try {
       // 原子写入：先写临时文件再重命名
       fs.mkdirSync(path.dirname(this.historyFile), { recursive: true });
       const tempFile = this.historyFile + '.tmp';
       fs.writeFileSync(tempFile, JSON.stringify(this.flightHistory, null, 2));
       fs.renameSync(tempFile, this.historyFile);
-      this.logFlight(`[飞行统计] 文件保存成功: ${this.flightHistory.length} 条记录`);
+      const days = getFlightHistoryRetentionDays();
+      const retentionNote = days == null ? '不限天数' : `近 ${days} 天`;
+      const prunedNote = before > this.flightHistory.length
+        ? `（裁剪 ${before - this.flightHistory.length} 条）`
+        : '';
+      this.logFlight(`[飞行统计] 文件保存成功: ${this.flightHistory.length} 条记录，${retentionNote}${prunedNote}`);
     } catch (e) {
       this.logFlight(`[飞行统计] 保存历史失败: ${e.message}`);
       console.error('[飞行统计] 保存历史异常:', e);
@@ -648,7 +661,6 @@ class DeviceProcessor {
     };
     if (isValidCompletedFlight(finalRecord)) {
       this.flightHistory.push(this.enrichFlightRecord(finalRecord));
-      if (this.flightHistory.length > 1000) this.flightHistory.shift();
       this.saveFlightHistory();
       this.logFlight(`[飞行统计] 已写入历史记录 ${session.deviceName || deviceId} reason=${reason} mileage=${finalRecord.totalMileage}m duration=${finalRecord.totalDuration}s`);
     } else if (finalRecord.totalDuration > 5 || finalRecord.totalMileage > 2) {
