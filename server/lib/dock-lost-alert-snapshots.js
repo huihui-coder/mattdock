@@ -5,7 +5,7 @@
  */
 const { captureStreamSnapshot, captureStreamSnapshots } = require('./stream-snapshot');
 const { resolveVideoId, METHOD_LIVE_CAMERA_CHANGE } = require('./live-camera-service');
-const { isDockSharedOutAirport, METHOD_SUPPLEMENT_LIGHT_OPEN, METHOD_SUPPLEMENT_LIGHT_CLOSE } = require('./dock-service');
+const { isDockSharedOutAirport, METHOD_SUPPLEMENT_LIGHT_OPEN, METHOD_SUPPLEMENT_LIGHT_CLOSE, logSupplementLightControl } = require('./dock-service');
 
 const POST_SWITCH_DELAY_MS = Number(process.env.DOCK_ALERT_SWITCH_DELAY_MS || 3000);
 const SNAPSHOT_TIMEOUT_MS = Number(process.env.DOCK_ALERT_SNAPSHOT_TIMEOUT_MS || 25000);
@@ -49,7 +49,7 @@ async function runDockLostSnapshotSequence(deviceId, mqttService, processor) {
   const patchLight = (on) => {
     processor?.patchDockControlState?.(deviceId, {
       supplementLightState: on ? 1 : 0,
-      source: 'lost_alert',
+      source: 'lost_alert_snap',
     });
   };
 
@@ -66,9 +66,13 @@ async function runDockLostSnapshotSequence(deviceId, mqttService, processor) {
 
   const setSupplementLight = async (open) => {
     const method = open ? METHOD_SUPPLEMENT_LIGHT_OPEN : METHOD_SUPPLEMENT_LIGHT_CLOSE;
+    logSupplementLightControl(deviceId, open ? 'open' : 'close', 'lost_alert_snap', {
+      regionId: processor?.regionId,
+      method,
+      note: '飞丢告警 Dock 截图流程下发 MQTT',
+    });
     await publish(method, null);
     patchLight(open);
-    console.log(`[DockLostSnap] ${deviceId} 已下发补光灯${open ? '打开' : '关闭'}`);
     await sleep(1000);
   };
 

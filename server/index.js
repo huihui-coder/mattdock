@@ -31,6 +31,7 @@ const {
   SUPPLEMENT_LIGHT_ACTIONS,
   METHOD_SUPPLEMENT_LIGHT_OPEN,
   METHOD_SUPPLEMENT_LIGHT_CLOSE,
+  logSupplementLightControl,
 } = require('./lib/dock-service');
 const { getJobSecret } = require('./lib/lost-alert-mqtt-bridge');
 const { getLiveCameraPosition } = require('./lib/dock-live-state-store');
@@ -1343,6 +1344,15 @@ app.post('/api/internal/lost-alert/service', requireLostAlertJobSecret, async (r
       return res.status(503).json({ error: 'MQTT 未连接' });
     }
     await mqttService.publishService(deviceId, method, data ?? null);
+    if (method === METHOD_SUPPLEMENT_LIGHT_OPEN || method === METHOD_SUPPLEMENT_LIGHT_CLOSE) {
+      const proc = processorForDevice(deviceId);
+      logSupplementLightControl(
+        deviceId,
+        method === METHOD_SUPPLEMENT_LIGHT_OPEN ? 'open' : 'close',
+        'lost_alert',
+        { regionId: proc?.regionId, method, note: '内部 lost-alert 任务下发 MQTT' },
+      );
+    }
     if (method === METHOD_LIVE_CAMERA_CHANGE && data?.camera_position !== undefined) {
       processorForDevice(deviceId)?.patchDockControlState(deviceId, {
         liveCameraPosition: data.camera_position,
@@ -1652,10 +1662,19 @@ app.post('/api/dock/supplement-light', requirePermission('monitor'), async (req,
   const proc = processorForDevice(gatewaySn) || processorFor(req);
 
   try {
+    logSupplementLightControl(gatewaySn, act, 'manual', {
+      operator: req.user?.username,
+      regionId: proc?.regionId,
+      method,
+      note: '用户从监控页下发 MQTT',
+    });
     const reply = await mqttService.invokeService(gatewaySn, method, null);
     const status = reply?.data?.output?.status;
     const lightState = act === 'open' ? 1 : 0;
-    const updated = proc.patchDockControlState(gatewaySn, { supplementLightState: lightState });
+    const updated = proc.patchDockControlState(gatewaySn, {
+      supplementLightState: lightState,
+      source: 'manual',
+    });
     if (updated && wsService) {
       wsService.broadcast({
         type: 'device_data',
@@ -1674,6 +1693,12 @@ app.post('/api/dock/supplement-light', requirePermission('monitor'), async (req,
       reply: reply?.data,
     });
   } catch (e) {
+    logSupplementLightControl(gatewaySn, act, 'manual', {
+      operator: req.user?.username,
+      regionId: proc?.regionId,
+      method,
+      note: `下发失败: ${e.message}`,
+    });
     console.error('[Dock] supplement-light 失败:', e.message);
     res.status(502).json({ error: e.message || '补光灯控制失败' });
   }
