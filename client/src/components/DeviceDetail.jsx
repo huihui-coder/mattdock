@@ -52,8 +52,7 @@ export default function DeviceDetail({ device, onClose }) {
   const isWindSpeed = (type) => type === 'windSpeed'
 
   // 从原始数据提取更多详细信息（优先用服务端合并后的 osdSnapshot）
-  const raw = device.raw || {}
-  const rawData = device.osdSnapshot || raw.data || raw
+  const rawData = device.osdSnapshot || {}
   // 格式化字节大小
   const formatBytes = (bytes) => {
     if (!bytes) return '0 B'
@@ -472,12 +471,12 @@ export default function DeviceDetail({ device, onClose }) {
         <div className="p-4">
           <details className="group">
             <summary className="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2 hover:text-gray-900">
-              <Database size={16} /> 原始JSON数据
+              <Database size={16} /> OSD 快照数据
               <span className="text-xs text-gray-400 group-open:hidden">点击展开</span>
               <span className="text-xs text-gray-400 hidden group-open:inline">点击收起</span>
             </summary>
             <pre className="mt-3 bg-gray-900 text-green-400 p-4 rounded-lg text-xs overflow-x-auto max-h-80 font-mono">
-              {JSON.stringify(device.raw, null, 2)}
+              {JSON.stringify(device.osdSnapshot || {}, null, 2)}
             </pre>
           </details>
         </div>

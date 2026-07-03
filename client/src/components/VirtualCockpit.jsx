@@ -311,7 +311,7 @@ export default function VirtualCockpit({ device, onClose }) {
   const droneBattery = metrics.droneBattery?.value
   const windSpeed = metrics.windSpeed?.value
   const envTemp = metrics.environmentTemp?.value
-  const subDeviceOnline = device.raw?.sub_devices?.[0]?.device_online_status ?? null
+  const subDeviceOnline = device.osdSnapshot?.sub_device?.device_online_status ?? null
 
   const swapWithMain = (panel, view) => {
     const previousMainView = mainView

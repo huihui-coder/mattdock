@@ -1,5 +1,6 @@
 const mqtt = require('mqtt');
 const { newMqttIds } = require('./lib/live-camera-service');
+const { toWsDevicePayload } = require('./lib/ws-device-payload');
 const fs = require('fs');
 const path = require('path');
 
@@ -157,15 +158,13 @@ class MQTTService {
             : {};
           this.wsService.broadcast({
             type: 'device_data',
-            topic: topic,
-            raw: data,
-            processed: {
+            processed: toWsDevicePayload({
               ...processedData,
               regionId,
               regionName: regionId ? (processedData.regionName || regionName) : null,
               ...unmappedMeta,
-            },
-            timestamp: new Date().toISOString()
+            }),
+            timestamp: new Date().toISOString(),
           });
         }
 

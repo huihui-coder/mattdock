@@ -22,6 +22,7 @@ const {
   paginateRecords,
 } = require('./lib/flight-query');
 const { getJobSecret } = require('./lib/lost-alert-mqtt-bridge');
+const { toWsDevicePayload } = require('./lib/ws-device-payload');
 const { appendAuditEntry, loadAuditLogsQuery, getAuditStats, getActionCategory } = require('./lib/audit-log-store');
 const {
   RegionRuntime,
@@ -1504,7 +1505,7 @@ app.get('/api/devices', requireLogin, attachRegionalProcessor, (req, res) => {
   );
   res.json({
     count: devices.length,
-    devices,
+    devices: devices.map(toWsDevicePayload),
     regionId: req.regionId,
     visibleRegionIds: req.visibleRegionIds,
   });
@@ -1514,7 +1515,7 @@ app.get('/api/devices', requireLogin, attachRegionalProcessor, (req, res) => {
 app.get('/api/devices/:deviceId', requireLogin, attachRegionalProcessor, (req, res) => {
   const device = regionRuntime.findDeviceInScope(req.params.deviceId, req.visibleProcessors, collectScopeOptions(req));
   if (device) {
-    res.json(device);
+    res.json(toWsDevicePayload(device));
   } else {
     res.status(404).json({ error: '设备未找到' });
   }

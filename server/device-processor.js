@@ -126,6 +126,7 @@ class DeviceProcessor {
     // 运行时飞行会话缓存 (deviceId -> sessionData)
     this.activeSessions = new Map();
     this.staleFlightTimer = setInterval(() => this.closeStaleFlightSessions(), 30 * 1000);
+    this.deviceStateEvictTimer = setInterval(() => this.evictStaleDeviceStates(), 5 * 60 * 1000);
     
     // 加载历史数据
     this.flightHistory = this.loadFlightHistory();
@@ -1467,6 +1468,24 @@ class DeviceProcessor {
       ...state,
       deviceName: this.getDeviceName(deviceId, state.gateway || null),
     };
+  }
+
+  /** 淘汰长期无上报的设备缓存，避免 deviceStates 只增不减 */
+  evictStaleDeviceStates() {
+    const ttlMs = Number(process.env.DEVICE_STATE_TTL_MS || 45 * 60 * 1000);
+    const now = Date.now();
+    let removed = 0;
+    for (const [deviceId, state] of this.deviceStates.entries()) {
+      if (this.activeSessions.has(deviceId)) continue;
+      if (state.flightSession) continue;
+      const last = state.lastSeen ? new Date(state.lastSeen).getTime() : 0;
+      if (!last || now - last < ttlMs) continue;
+      this.deviceStates.delete(deviceId);
+      removed += 1;
+    }
+    if (removed > 0) {
+      console.log(`[DeviceProcessor:${this.regionId}] 淘汰 ${removed} 个过期设备缓存`);
+    }
   }
 
   /** 无归属设备：记录实际 MQTT 连接池来源（smartcity-prod / haizhu-local 等） */

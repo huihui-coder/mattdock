@@ -274,8 +274,6 @@ function App() {
             ...processed,
             regionId: processed.unmapped ? null : (processed.regionId ?? prevDevice?.regionId ?? null),
             regionName: processed.unmapped ? null : (processed.regionName || prevDevice?.regionName),
-            raw: data.raw,
-            topic: data.topic,
           }
           if (index >= 0) {
             const updated = [...prev]
