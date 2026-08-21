@@ -23,7 +23,16 @@ const {
 } = require('./lib/flight-query');
 const { getJobSecret } = require('./lib/lost-alert-mqtt-bridge');
 const { toWsDevicePayload } = require('./lib/ws-device-payload');
+const { getAiInfo, patchSelectedIndex, patchIdentifyOn, patchSpotlightTrack } = require('./lib/drc-ai-store');
+const { getDrcStatus, isDrcConnected } = require('./lib/drc-status-store');
 const { appendAuditEntry, loadAuditLogsQuery, getAuditStats, getActionCategory } = require('./lib/audit-log-store');
+const {
+  createCaptcha,
+  consumeCaptcha,
+  assertIpNotLocked,
+  recordLoginFailure,
+  clearLoginFailures,
+} = require('./lib/login-guard');
 const {
   RegionRuntime,
   collectAlertConfigDeviceIds,
@@ -282,6 +291,19 @@ function processorForDevice(deviceId) {
   return regionRuntime.getProcessorForDevice(deviceId);
 }
 
+/** 机场 SN 作为 DRC gateway_sn；无人机则取其 gateway */
+function resolveGatewaySn(deviceId) {
+  const id = String(deviceId || '').trim();
+  if (!id) return '';
+  const state = processorForDevice(id)?.getDeviceState(id)
+    || regionRuntime?.getDeviceState?.(id);
+  if (state?.deviceType === 'airport') return id;
+  if (state?.gateway) return String(state.gateway).trim();
+  // 非 1581 前缀按机场 SN 处理
+  if (!/^1581/i.test(id)) return id;
+  return id;
+}
+
 const SCOPE_UNMAPPED = '__unmapped__';
 
 function resolveRegionalScope(user, scopeRegionIdRaw) {
@@ -526,22 +548,64 @@ if (IS_PROD) {
   app.use(express.static(path.join(__dirname, '../client/dist')));
 }
 
-// 登录接口
+// 登录验证码（SVG，一次性）
+app.get('/api/captcha', (req, res) => {
+  try {
+    const ipLock = assertIpNotLocked(getClientIp(req));
+    if (!ipLock.ok) {
+      return res.status(429).json({ error: ipLock.error });
+    }
+    res.json(createCaptcha());
+  } catch (e) {
+    console.error('[Auth] 验证码生成失败:', e.message);
+    res.status(500).json({ error: '验证码生成失败' });
+  }
+});
+
+// 登录接口（必须带 captchaId + captchaCode）
 app.post('/api/login', (req, res) => {
   try {
-    const { username, password } = req.body || {};
+    const ip = getClientIp(req);
+    const ipLock = assertIpNotLocked(ip);
+    if (!ipLock.ok) {
+      auditLog(req, {
+        action: 'auth.login_failed',
+        status: 'denied',
+        detail: { username: req.body?.username || '(空)', reason: 'ip_locked' },
+      });
+      return res.status(429).json({ error: ipLock.error });
+    }
+
+    const { username, password, captchaId, captchaCode } = req.body || {};
+    const captcha = consumeCaptcha(captchaId, captchaCode);
+    if (!captcha.ok) {
+      recordLoginFailure(ip);
+      auditLog(req, {
+        action: 'auth.login_failed',
+        status: 'denied',
+        detail: { username: username || '(空)', reason: 'captcha' },
+      });
+      return res.status(400).json({ error: captcha.error, captchaRequired: true });
+    }
+
     const user = readUsers().find((u) => u.username === username);
     if (user && verifyPassword(password, user.passwordHash)) {
+      clearLoginFailures(ip);
       const token = signToken(user);
       auditLog(req, { action: 'auth.login', actor: sanitizeUser(user) });
       return res.json({ token, user: sanitizeUser(user), expiresIn: TOKEN_TTL_MS });
     }
+
+    const fail = recordLoginFailure(ip);
     auditLog(req, {
       action: 'auth.login_failed',
       status: 'denied',
       detail: { username: username || '(空)' },
     });
-    return res.status(401).json({ error: '用户名或密码错误' });
+    if (!fail.ok) {
+      return res.status(429).json({ error: fail.error });
+    }
+    return res.status(401).json({ error: '用户名或密码错误', captchaRequired: true });
   } catch (e) {
     console.error('[Auth] 登录失败:', e.message);
     return res.status(500).json({ error: '登录服务异常，请稍后重试' });
@@ -1535,6 +1599,303 @@ app.post('/api/thresholds', (req, res) => {
 // 获取当前阈值配置
 app.get('/api/thresholds', (req, res) => {
   res.json(regionRuntime.getDefaultProcessor().thresholds);
+});
+
+// Dock3 机载 AI：查询模型列表（来自 drc_ai_info_push）+ DRC 状态
+app.get('/api/drc/ai-info/:deviceId', requirePermission('monitor'), (req, res) => {
+  const gatewaySn = resolveGatewaySn(req.params.deviceId);
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  const info = getAiInfo(gatewaySn);
+  const drcStatus = getDrcStatus(gatewaySn);
+  const connected = isDrcConnected(gatewaySn);
+  res.json({
+    deviceId: req.params.deviceId,
+    gatewaySn,
+    info: info || {
+      gatewaySn,
+      models: [],
+      selectedIndex: null,
+      updatedAt: null,
+    },
+    drcStatus: drcStatus || {
+      gatewaySn,
+      drcState: null,
+      drcStateText: '未知',
+      updatedAt: null,
+    },
+    drcConnected: connected,
+    hint: info?.models?.length
+      ? null
+      : (connected
+        ? 'DRC 已连接，等待设备上报 drc_ai_info_push（ai_model_list）'
+        : '尚未收到模型列表。请先进入 DRC（drc_mode_enter），待 drc_status_notify=2 后设备会上报 ai_model_list'),
+  });
+});
+
+// 进入 DRC / 指令飞行模式（drc_mode_enter）
+app.post('/api/drc/mode-enter', requirePermission('monitor'), async (req, res) => {
+  const { deviceId } = req.body || {};
+  const gatewaySn = resolveGatewaySn(deviceId);
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  try {
+    const result = await mqttService.enterDrcMode(gatewaySn);
+    res.json({
+      ok: true,
+      gatewaySn,
+      method: 'drc_mode_enter',
+      mqttBroker: result.mqttBroker,
+      reply: result.reply?.data ?? result.reply,
+      drcStatus: getDrcStatus(gatewaySn),
+      hint: '已下发进入 DRC。请等待 events/drc_status_notify=2（已连接），随后应收到 ai_model_list',
+    });
+  } catch (e) {
+    console.error('[DRC] mode-enter 失败:', e.message);
+    res.status(502).json({
+      error: e.message || '进入 DRC 失败',
+      hint: '请确认 MQTT 可达、机场在线；若使用独立 DRC broker，配置 DRC_MQTT_ADDRESS 等环境变量',
+    });
+  }
+});
+
+// 退出 DRC
+app.post('/api/drc/mode-exit', requirePermission('monitor'), async (req, res) => {
+  const { deviceId } = req.body || {};
+  const gatewaySn = resolveGatewaySn(deviceId);
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  try {
+    const result = await mqttService.exitDrcMode(gatewaySn);
+    res.json({
+      ok: true,
+      gatewaySn,
+      method: 'drc_mode_exit',
+      reply: result.reply?.data ?? result.reply,
+      drcStatus: getDrcStatus(gatewaySn),
+    });
+  } catch (e) {
+    console.error('[DRC] mode-exit 失败:', e.message);
+    res.status(502).json({ error: e.message || '退出 DRC 失败' });
+  }
+});
+
+// DRC 初始状态订阅（drc_initial_state_subscribe）；需 DRC 已连接
+app.post('/api/drc/initial-state-subscribe', requirePermission('monitor'), async (req, res) => {
+  const { deviceId } = req.body || {};
+  const gatewaySn = resolveGatewaySn(deviceId);
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  try {
+    const reply = await mqttService.subscribeDrcInitialState(gatewaySn);
+    res.json({
+      ok: true,
+      gatewaySn,
+      method: 'drc_initial_state_subscribe',
+      reply: reply?.data ?? reply,
+      hint: '需 DRC 已连接（drc_status_notify=2）。成功后设备会推送初始状态/后续 AI 等信息',
+    });
+  } catch (e) {
+    console.error('[DRC] initial-state-subscribe 失败:', e.message);
+    res.status(502).json({
+      error: e.message || '初始状态订阅失败',
+      hint: '请先 mode-enter 且状态为已连接；本指令不能替代 drc_mode_enter',
+    });
+  }
+});
+
+// Dock3 机载 AI：模型选择（drc_ai_model_select）
+// 官方：thing/product/{gateway_sn}/drc/down · method=drc_ai_model_select · data.index
+app.post('/api/drc/ai-model-select', requirePermission('monitor'), async (req, res) => {
+  const { deviceId, index } = req.body || {};
+  const gatewaySn = resolveGatewaySn(deviceId);
+  const modelIndex = Number(index);
+
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  if (!Number.isInteger(modelIndex) || modelIndex < 0) {
+    return res.status(400).json({ error: 'index 须为 >=0 的整数（依据 drc_ai_info_push）' });
+  }
+
+  try {
+    const reply = await mqttService.invokeDrc(
+      gatewaySn,
+      'drc_ai_model_select',
+      { index: modelIndex },
+      8000,
+    );
+    const info = patchSelectedIndex(gatewaySn, modelIndex);
+    if (wsService && info) {
+      wsService.broadcast({
+        type: 'drc_ai_info',
+        deviceId: gatewaySn,
+        gatewaySn,
+        info,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.json({
+      ok: true,
+      gatewaySn,
+      index: modelIndex,
+      method: 'drc_ai_model_select',
+      timedOut: !!reply?.timedOut,
+      reply: reply?.data ?? reply,
+      info,
+    });
+  } catch (e) {
+    console.error('[DRC] ai-model-select 失败:', e.message);
+    res.status(502).json({
+      error: e.message || '机载 AI 模型选择失败',
+      hint: '请确认 DRC 已连接（drc_status_notify=2），且 index 来自 drc_ai_info_push',
+    });
+  }
+});
+
+// Dock3 机载 AI：识别开关（drc_ai_identify_set）
+// 官方：thing/product/{gateway_sn}/drc/down · method=drc_ai_identify_set · data.on 0|1
+app.post('/api/drc/ai-identify-set', requirePermission('monitor'), async (req, res) => {
+  const { deviceId, on } = req.body || {};
+  const gatewaySn = resolveGatewaySn(deviceId);
+  const onVal = Number(on);
+
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  if (onVal !== 0 && onVal !== 1) {
+    return res.status(400).json({ error: 'on 须为 0（关）或 1（开）' });
+  }
+
+  try {
+    const reply = await mqttService.invokeDrc(
+      gatewaySn,
+      'drc_ai_identify_set',
+      { on: onVal },
+      8000,
+    );
+    const info = patchIdentifyOn(gatewaySn, onVal);
+    if (wsService && info) {
+      wsService.broadcast({
+        type: 'drc_ai_info',
+        deviceId: gatewaySn,
+        gatewaySn,
+        info,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.json({
+      ok: true,
+      gatewaySn,
+      on: onVal,
+      method: 'drc_ai_identify_set',
+      timedOut: !!reply?.timedOut,
+      reply: reply?.data ?? reply,
+      info,
+    });
+  } catch (e) {
+    console.error('[DRC] ai-identify-set 失败:', e.message);
+    res.status(502).json({
+      error: e.message || '机载 AI 识别开关失败',
+      hint: '请确认 DRC 已连接（drc_status_notify=2）',
+    });
+  }
+});
+
+// Dock3 机载 AI：目标跟随（drc_ai_spotlight_zoom_track）
+// 官方：data.target_index 依据直播流 SEI 推送的目标 id
+app.post('/api/drc/ai-spotlight-track', requirePermission('monitor'), async (req, res) => {
+  const { deviceId, targetIndex } = req.body || {};
+  const gatewaySn = resolveGatewaySn(deviceId);
+  const idx = Number(targetIndex);
+
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+  if (!Number.isInteger(idx) || idx < 0) {
+    return res.status(400).json({ error: 'targetIndex 须为 >=0 的整数（来自直播 SEI 目标 id）' });
+  }
+
+  try {
+    const reply = await mqttService.invokeDrc(
+      gatewaySn,
+      'drc_ai_spotlight_zoom_track',
+      { target_index: idx },
+      8000,
+    );
+    const info = patchSpotlightTrack(gatewaySn, { tracking: true, targetIndex: idx });
+    if (wsService && info) {
+      wsService.broadcast({
+        type: 'drc_ai_info',
+        deviceId: gatewaySn,
+        gatewaySn,
+        info,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.json({
+      ok: true,
+      gatewaySn,
+      targetIndex: idx,
+      method: 'drc_ai_spotlight_zoom_track',
+      timedOut: !!reply?.timedOut,
+      reply: reply?.data ?? reply,
+      info,
+    });
+  } catch (e) {
+    console.error('[DRC] ai-spotlight-track 失败:', e.message);
+    res.status(502).json({
+      error: e.message || '目标跟随失败',
+      hint: '请确认已开 AI 识别、DRC 已连接，且 targetIndex 来自当前画面 SEI',
+    });
+  }
+});
+
+// Dock3 机载 AI：停止目标跟随（drc_ai_spotlight_zoom_stop）
+app.post('/api/drc/ai-spotlight-stop', requirePermission('monitor'), async (req, res) => {
+  const { deviceId } = req.body || {};
+  const gatewaySn = resolveGatewaySn(deviceId);
+
+  if (!gatewaySn) {
+    return res.status(400).json({ error: '缺少 deviceId（机场 gateway_sn）' });
+  }
+
+  try {
+    const reply = await mqttService.invokeDrc(
+      gatewaySn,
+      'drc_ai_spotlight_zoom_stop',
+      {},
+      8000,
+    );
+    const info = patchSpotlightTrack(gatewaySn, { tracking: false, targetIndex: null });
+    if (wsService && info) {
+      wsService.broadcast({
+        type: 'drc_ai_info',
+        deviceId: gatewaySn,
+        gatewaySn,
+        info,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.json({
+      ok: true,
+      gatewaySn,
+      method: 'drc_ai_spotlight_zoom_stop',
+      timedOut: !!reply?.timedOut,
+      reply: reply?.data ?? reply,
+      info,
+    });
+  } catch (e) {
+    console.error('[DRC] ai-spotlight-stop 失败:', e.message);
+    res.status(502).json({
+      error: e.message || '停止跟随失败',
+      hint: '请确认 DRC 已连接（drc_status_notify=2）',
+    });
+  }
 });
 
 // 手动重连MQTT

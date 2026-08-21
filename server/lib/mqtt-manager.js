@@ -156,6 +156,61 @@ class MQTTManager {
     return service.publishService(deviceId, method, data);
   }
 
+  invokeDrc(deviceId, method, data, timeoutMs) {
+    const service = this.getForDevice(deviceId);
+    if (!service) throw new Error('该区域 MQTT 未配置或未连接');
+    if (!service.isConnected()) {
+      const regionId = this.regionRuntime.resolveRegionIdForDevice(deviceId);
+      const key = regionId ? getMqttConnectionKey(regionId) : 'default';
+      throw new Error(`MQTT 未连接（${key}）`);
+    }
+    return service.invokeDrc(deviceId, method, data, timeoutMs);
+  }
+
+  publishDrc(deviceId, method, data) {
+    const service = this.getForDevice(deviceId);
+    if (!service) throw new Error('该区域 MQTT 未配置或未连接');
+    if (!service.isConnected()) {
+      const regionId = this.regionRuntime.resolveRegionIdForDevice(deviceId);
+      const key = regionId ? getMqttConnectionKey(regionId) : 'default';
+      throw new Error(`MQTT 未连接（${key}）`);
+    }
+    return service.publishDrc(deviceId, method, data);
+  }
+
+  enterDrcMode(deviceId, options) {
+    const service = this.getForDevice(deviceId);
+    if (!service) throw new Error('该区域 MQTT 未配置或未连接');
+    if (!service.isConnected()) {
+      const regionId = this.regionRuntime.resolveRegionIdForDevice(deviceId);
+      const key = regionId ? getMqttConnectionKey(regionId) : 'default';
+      throw new Error(`MQTT 未连接（${key}）`);
+    }
+    return service.enterDrcMode(deviceId, options);
+  }
+
+  exitDrcMode(deviceId, timeoutMs) {
+    const service = this.getForDevice(deviceId);
+    if (!service) throw new Error('该区域 MQTT 未配置或未连接');
+    if (!service.isConnected()) {
+      const regionId = this.regionRuntime.resolveRegionIdForDevice(deviceId);
+      const key = regionId ? getMqttConnectionKey(regionId) : 'default';
+      throw new Error(`MQTT 未连接（${key}）`);
+    }
+    return service.exitDrcMode(deviceId, timeoutMs);
+  }
+
+  subscribeDrcInitialState(deviceId, timeoutMs) {
+    const service = this.getForDevice(deviceId);
+    if (!service) throw new Error('该区域 MQTT 未配置或未连接');
+    if (!service.isConnected()) {
+      const regionId = this.regionRuntime.resolveRegionIdForDevice(deviceId);
+      const key = regionId ? getMqttConnectionKey(regionId) : 'default';
+      throw new Error(`MQTT 未连接（${key}）`);
+    }
+    return service.subscribeDrcInitialState(deviceId, timeoutMs);
+  }
+
   _notifyStatusChange() {
     if (!this.wsService) return;
     const status = this.getStatus();

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Lock, User, Eye, EyeOff } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Lock, User, Eye, EyeOff, RefreshCw } from 'lucide-react'
 import LogoMark from './LogoMark'
 
 /** 生成视频后放到 client/public/videos/ 下，文件名保持一致即可 */
@@ -68,10 +68,36 @@ function LoginBackground() {
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [captchaCode, setCaptchaCode] = useState('')
+  const [captchaId, setCaptchaId] = useState('')
+  const [captchaImage, setCaptchaImage] = useState('')
+  const [captchaLoading, setCaptchaLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [rememberMe, setRememberMe] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const refreshCaptcha = useCallback(async () => {
+    setCaptchaLoading(true)
+    setCaptchaCode('')
+    try {
+      const res = await fetch('/api/captcha', { cache: 'no-store' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || '验证码加载失败')
+      setCaptchaId(data.captchaId || '')
+      setCaptchaImage(data.image || '')
+    } catch (err) {
+      setCaptchaId('')
+      setCaptchaImage('')
+      setError(err.message || '验证码加载失败')
+    } finally {
+      setCaptchaLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshCaptcha()
+  }, [refreshCaptcha])
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -81,7 +107,7 @@ export default function Login({ onLogin }) {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username, password, captchaId, captchaCode })
       })
       const text = await res.text()
       let data = {}
@@ -90,7 +116,10 @@ export default function Login({ onLogin }) {
       } catch {
         throw new Error(res.ok ? '登录响应异常' : `登录失败 (${res.status})，请确认后端已启动在 3001 端口`)
       }
-      if (!res.ok) throw new Error(data.error || `登录失败 (${res.status})`)
+      if (!res.ok) {
+        await refreshCaptcha()
+        throw new Error(data.error || `登录失败 (${res.status})`)
+      }
       localStorage.setItem('auth_token', data.token)
       localStorage.setItem('auth_user', JSON.stringify(data.user))
       onLogin(data.token, data.user)
@@ -145,6 +174,34 @@ export default function Login({ onLogin }) {
             </button>
           </div>
 
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="验证码"
+              autoComplete="off"
+              inputMode="text"
+              maxLength={6}
+              className="flex-1 min-w-0 px-4 py-3 bg-white/60 border border-slate-200 rounded-xl text-sm text-slate-700 tracking-widest uppercase placeholder:text-slate-400/80 placeholder:tracking-normal placeholder:normal-case focus:outline-none focus:border-blue-500/80 focus:ring-2 focus:ring-blue-500/10 transition-all duration-200"
+              value={captchaCode}
+              onChange={e => setCaptchaCode(e.target.value)}
+              required
+            />
+            <button
+              type="button"
+              onClick={refreshCaptcha}
+              disabled={captchaLoading}
+              className="shrink-0 h-[46px] w-[128px] rounded-xl border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center hover:border-blue-300 transition-colors cursor-pointer disabled:opacity-60"
+              title="点击刷新验证码"
+              aria-label="刷新验证码"
+            >
+              {captchaImage ? (
+                <img src={captchaImage} alt="验证码" className="h-full w-full object-cover" draggable={false} />
+              ) : (
+                <RefreshCw size={16} className={`text-slate-400 ${captchaLoading ? 'animate-spin' : ''}`} />
+              )}
+            </button>
+          </div>
+
           {error && (
             <p className="text-xs text-red-600 bg-red-50/80 backdrop-blur-sm border border-red-200/50 rounded-xl px-3 py-2.5" role="alert">
               {error}
@@ -153,7 +210,7 @@ export default function Login({ onLogin }) {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !captchaId}
             className="w-full py-3 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white rounded-xl font-medium text-sm transition-all duration-200 shadow-[0_4px_12px_rgba(59,130,246,0.35)] active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40"
           >
             {loading ? '登录中...' : '登录'}

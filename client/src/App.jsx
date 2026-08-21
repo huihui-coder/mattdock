@@ -309,6 +309,12 @@ function App() {
           return merged.slice(0, MAX_ALERTS * 2)
         })
         break
+      case 'drc_ai_info':
+        window.dispatchEvent(new CustomEvent('drc_ai_info', { detail: data }))
+        break
+      case 'drc_status':
+        window.dispatchEvent(new CustomEvent('drc_status', { detail: data }))
+        break
       case 'health_alert':
         if (!isInActiveScope(data.regionId)) break
         // 存储健康告警，按设备ID分组，限制数量

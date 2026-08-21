@@ -1,11 +1,35 @@
 import { useState, useEffect, useRef } from 'react'
 import flvjs from 'flv.js'
-import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, Maximize2, Boxes, Siren, Bell, PanelLeft, Keyboard, Filter, Search, Sparkles, Settings, Camera, Loader2, ChevronLeft, ChevronRight, Brain, Activity } from 'lucide-react'
+import { X, Signal, Battery, Satellite, Wind, Thermometer, Home, MapPin, Wifi, Maximize2, Boxes, Siren, Bell, PanelLeft, Keyboard, Filter, Search, Sparkles, Settings, Camera, Loader2, ChevronLeft, ChevronRight, Brain, Activity, ScanEye } from 'lucide-react'
 import LogoMark from './LogoMark'
 import { fetchStreamUrl } from '../lib/stream-url'
 import { deviceStreamQueryParams } from '../lib/scope-query'
+import { attachFlvSeiTap } from '../lib/flv-sei-tap'
 const CESIUM_TK = '9eb56d3fe1e23a9bf19af660b3a9e37c'
 const TEST_VIDEO_URL = '/api/proxy-video'
+
+/** 机载 AI 模型：仅使用 drc_ai_info_push 上报的列表（无固定人/车/船兜底） */
+function normalizeDockAiModels(info) {
+  const list = Array.isArray(info?.models) ? info.models : []
+  return list
+    .map((m, i) => {
+      const index = Number.isFinite(Number(m.index)) ? Number(m.index) : i
+      const name = String(m.signedName || m.name || `模型 ${index}`).trim()
+      if (!name) return null
+      return { index, name }
+    })
+    .filter(Boolean)
+}
+
+function getAuthToken() {
+  return localStorage.getItem('auth_token') || ''
+}
+
+function resolveDockGatewaySn(device) {
+  if (!device) return ''
+  if (device.deviceType === 'airport') return device.deviceId
+  return device.gateway || device.deviceId || ''
+}
 
 function CesiumMap({ lat, lng, label, alertMode = false }) {
   const containerRef = useRef(null)
@@ -118,34 +142,93 @@ function CesiumMap({ lat, lng, label, alertMode = false }) {
   return <div ref={containerRef} className="w-full h-full" />
 }
 
-function FlvPlayer({ url, className = '', isMainStream = false }) {
+function getObjectContainRect(video, boxW, boxH) {
+  const vw = video?.videoWidth || 0
+  const vh = video?.videoHeight || 0
+  if (!vw || !vh || !boxW || !boxH) return null
+  const scale = Math.min(boxW / vw, boxH / vh)
+  const w = vw * scale
+  const h = vh * scale
+  return {
+    left: (boxW - w) / 2,
+    top: (boxH - h) / 2,
+    width: w,
+    height: h,
+  }
+}
+
+/** 万分比中心框 → canvas 像素矩形 */
+function targetToCanvasRect(t, content) {
+  const x1 = ((t.cx - t.w / 2) / 10000) * content.width + content.left
+  const y1 = ((t.cy - t.h / 2) / 10000) * content.height + content.top
+  const x2 = ((t.cx + t.w / 2) / 10000) * content.width + content.left
+  const y2 = ((t.cy + t.h / 2) / 10000) * content.height + content.top
+  return {
+    x: Math.min(x1, x2),
+    y: Math.min(y1, y2),
+    w: Math.abs(x2 - x1),
+    h: Math.abs(y2 - y1),
+  }
+}
+
+function FlvPlayer({ url, className = '', isMainStream = false, seiEnabled = false, onAiTargets, onSeiStatus }) {
   const videoRef = useRef(null)
   const playerRef = useRef(null)
+  const seiDetachRef = useRef(null)
+  const onAiTargetsRef = useRef(onAiTargets)
+  const onSeiStatusRef = useRef(onSeiStatus)
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
   const timeoutRef = useRef(null)
   const hasDataRef = useRef(false)
 
   useEffect(() => {
-    if (!url || !videoRef.current) return
+    onAiTargetsRef.current = onAiTargets
+  }, [onAiTargets])
+
+  useEffect(() => {
+    onSeiStatusRef.current = onSeiStatus
+  }, [onSeiStatus])
+
+  useEffect(() => {
+    if (!url || !videoRef.current) return undefined
     setError(false)
     setLoading(true)
     hasDataRef.current = false
 
+    if (seiDetachRef.current) {
+      seiDetachRef.current()
+      seiDetachRef.current = null
+    }
     if (playerRef.current) { playerRef.current.destroy(); playerRef.current = null }
 
-    if (!flvjs.isSupported()) { setError(true); return }
+    if (!flvjs.isSupported()) { setError(true); return undefined }
 
-    const player = flvjs.createPlayer({ type: 'flv', url, isLive: true, hasAudio: false, cors: true })
+    // enableWorker 必须为 false，才能挂钩 demuxer 抽 SEI
+    const player = flvjs.createPlayer(
+      { type: 'flv', url, isLive: true, hasAudio: false, cors: true },
+      { enableWorker: false },
+    )
     player.attachMediaElement(videoRef.current)
     player.load()
     player.play().catch(() => {})
 
-    // 3秒超时检测
+    if (seiEnabled) {
+      seiDetachRef.current = attachFlvSeiTap(
+        player,
+        (targets) => { onAiTargetsRef.current?.(targets) },
+        (status) => { onSeiStatusRef.current?.(status) },
+      )
+    }
+
     timeoutRef.current = setTimeout(() => {
       if (!hasDataRef.current) {
         console.log('FLV 3秒超时，切换到本地视频')
         setError(true)
+        if (seiDetachRef.current) {
+          seiDetachRef.current()
+          seiDetachRef.current = null
+        }
         if (playerRef.current) { playerRef.current.destroy(); playerRef.current = null }
       }
     }, 3000)
@@ -173,9 +256,13 @@ function FlvPlayer({ url, className = '', isMainStream = false }) {
 
     return () => {
       clearTimeout(timeoutRef.current)
+      if (seiDetachRef.current) {
+        seiDetachRef.current()
+        seiDetachRef.current = null
+      }
       if (playerRef.current) { playerRef.current.destroy(); playerRef.current = null }
     }
-  }, [url])
+  }, [url, seiEnabled])
 
   return (
     <div className={`relative bg-black flex items-center justify-center overflow-hidden ${className}`}>
@@ -223,6 +310,40 @@ export default function VirtualCockpit({ device, onClose }) {
   const [showVirtualKeyboard, setShowVirtualKeyboard] = useState(true)
   const [showAiAlertPanel, setShowAiAlertPanel] = useState(false)
   const [showAiSearch, setShowAiSearch] = useState(false)
+  const [showDockAiPanel, setShowDockAiPanel] = useState(false)
+  const [dockAiInfo, setDockAiInfo] = useState(null)
+  const [dockAiBusy, setDockAiBusy] = useState(false)
+  const [dockAiHint, setDockAiHint] = useState('')
+  const [dockAiTargetCount, setDockAiTargetCount] = useState(0)
+  const [dockSeiStatus, setDockSeiStatus] = useState(null)
+  const [dockTracking, setDockTracking] = useState(false)
+  const [dockTrackIndex, setDockTrackIndex] = useState(null)
+  const [dockDrcStatus, setDockDrcStatus] = useState(null)
+  const [dockDrcConnected, setDockDrcConnected] = useState(false)
+  const dockAiTargetsRef = useRef([])
+  const dockTrackIndexRef = useRef(null)
+  const dockAiCanvasRef = useRef(null)
+
+  const handleDockAiTargets = (targets) => {
+    const list = Array.isArray(targets) ? targets : []
+    dockAiTargetsRef.current = list
+    setDockAiTargetCount((n) => (n === list.length ? n : list.length))
+  }
+
+  const handleDockSeiStatus = (status) => {
+    setDockSeiStatus(status || null)
+  }
+
+  const syncDockTrackState = (info) => {
+    if (!info) return
+    const tracking = !!info.spotlightTracking
+    const idx = Number.isInteger(Number(info.spotlightTargetIndex))
+      ? Number(info.spotlightTargetIndex)
+      : null
+    setDockTracking(tracking)
+    setDockTrackIndex(tracking ? idx : null)
+    dockTrackIndexRef.current = tracking ? idx : null
+  }
   const [customStreamUrl, setCustomStreamUrl] = useState('')
   const [customStreamInput, setCustomStreamInput] = useState('')
   // AI搜索标签（多模态提示词）
@@ -289,6 +410,400 @@ export default function VirtualCockpit({ device, onClose }) {
   const canvasRef = useRef(null)
   const detailCanvasRef = useRef(null)
   const metrics = device.metrics || {}
+  const dockGatewaySn = resolveDockGatewaySn(device)
+  const dockAiModels = normalizeDockAiModels(dockAiInfo)
+  const dockIdentifyOn = Number(dockAiInfo?.identifyOn) === 1
+  const dockSelectedIndex = Number.isInteger(Number(dockAiInfo?.selectedIndex))
+    ? Number(dockAiInfo.selectedIndex)
+    : null
+  // 机场绑定无人机是否开机/在线（OSD sub_device.device_online_status）
+  const dockDroneOnline =
+    Number(device?.osdSnapshot?.sub_device?.device_online_status) === 1
+    || Number(metrics?.subDeviceOnline?.value) === 1
+  const dockAiDisabledReason = dockDroneOnline ? '' : '绑定无人机未开机，AI识别不可用'
+
+  // 识别关时清空框；开时按 SEI 目标叠画（object-contain 对齐）
+  useEffect(() => {
+    if (!dockIdentifyOn) {
+      dockAiTargetsRef.current = []
+      setDockAiTargetCount(0)
+      // 关识别时若仍在跟随，下发停止
+      if (dockTracking && dockGatewaySn) {
+        fetch('/api/drc/ai-spotlight-stop', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-auth-token': getAuthToken(),
+          },
+          body: JSON.stringify({ deviceId: dockGatewaySn }),
+        }).catch(() => {})
+      }
+      setDockTracking(false)
+      setDockTrackIndex(null)
+      dockTrackIndexRef.current = null
+      const canvas = dockAiCanvasRef.current
+      if (canvas) {
+        const ctx = canvas.getContext('2d')
+        ctx?.clearRect(0, 0, canvas.width, canvas.height)
+      }
+    }
+  }, [dockIdentifyOn])
+
+  useEffect(() => {
+    const canvas = dockAiCanvasRef.current
+    if (!canvas || mainView !== 'flight' || !dockIdentifyOn) return undefined
+
+    let raf = 0
+    const paint = () => {
+      const parent = canvas.parentElement
+      if (!parent) return
+      const cw = parent.clientWidth
+      const ch = parent.clientHeight
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw
+        canvas.height = ch
+      }
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.clearRect(0, 0, cw, ch)
+
+      const targets = dockAiTargetsRef.current
+      if (!targets.length) return
+
+      const video = parent.querySelector('video[data-main-stream="true"]')
+        || parent.querySelector('video')
+      const content = getObjectContainRect(video, cw, ch)
+      if (!content) return
+
+      const trackIdx = dockTrackIndexRef.current
+      for (const t of targets) {
+        const r = targetToCanvasRect(t, content)
+        if (r.w < 2 || r.h < 2) continue
+        const isTrack = trackIdx != null && Number(t.targetIndex) === Number(trackIdx)
+        ctx.strokeStyle = isTrack ? '#f59e0b' : '#22c55e'
+        ctx.lineWidth = isTrack ? 3 : 2
+        ctx.strokeRect(r.x, r.y, r.w, r.h)
+
+        const distM = Number.isFinite(t.distanceMm) ? (t.distanceMm / 1000).toFixed(1) : null
+        const base = distM ? `${t.label} ${distM}m` : t.label
+        const label = isTrack ? `跟随 · ${base}` : base
+        ctx.font = '12px sans-serif'
+        const tw = ctx.measureText(label).width + 8
+        const ty = Math.max(14, r.y - 2)
+        ctx.fillStyle = isTrack ? 'rgba(245,158,11,0.95)' : 'rgba(34,197,94,0.9)'
+        ctx.fillRect(r.x, ty - 14, tw, 16)
+        ctx.fillStyle = '#fff'
+        ctx.fillText(label, r.x + 4, ty - 2)
+      }
+    }
+
+    const loop = () => {
+      paint()
+      raf = requestAnimationFrame(loop)
+    }
+    raf = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(raf)
+  }, [dockIdentifyOn, mainView])
+
+  const refreshDockAiInfo = async () => {
+    if (!dockGatewaySn) return
+    try {
+      const res = await fetch(`/api/drc/ai-info/${encodeURIComponent(dockGatewaySn)}`, {
+        headers: { 'x-auth-token': getAuthToken() },
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `加载失败 ${res.status}`)
+      setDockAiInfo(data.info || null)
+      syncDockTrackState(data.info)
+      if (data.drcStatus) setDockDrcStatus(data.drcStatus)
+      setDockDrcConnected(!!data.drcConnected)
+      if (data.hint) setDockAiHint(data.hint)
+      else if (!data.info?.models?.length) setDockAiHint('')
+      else setDockAiHint('')
+    } catch (e) {
+      setDockAiHint(e.message || '加载机载 AI 状态失败')
+    }
+  }
+
+  const enterDockDrc = async () => {
+    if (!dockGatewaySn || dockAiBusy) return
+    setDockAiBusy(true)
+    setDockAiHint('')
+    try {
+      const res = await fetch('/api/drc/mode-enter', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': getAuthToken(),
+        },
+        body: JSON.stringify({ deviceId: dockGatewaySn }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || data.hint || `进入 DRC 失败 ${res.status}`)
+      if (data.drcStatus) setDockDrcStatus(data.drcStatus)
+      setDockAiHint(data.hint || '已下发进入 DRC，等待 status=已连接…')
+      // 进入后稍等再拉一次模型列表
+      setTimeout(() => { refreshDockAiInfo() }, 2000)
+    } catch (e) {
+      setDockAiHint(e.message || '进入 DRC 失败')
+    } finally {
+      setDockAiBusy(false)
+    }
+  }
+
+  const exitDockDrc = async () => {
+    if (!dockGatewaySn || dockAiBusy) return
+    setDockAiBusy(true)
+    setDockAiHint('')
+    try {
+      const res = await fetch('/api/drc/mode-exit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': getAuthToken(),
+        },
+        body: JSON.stringify({ deviceId: dockGatewaySn }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || `退出 DRC 失败 ${res.status}`)
+      if (data.drcStatus) {
+        setDockDrcStatus(data.drcStatus)
+        setDockDrcConnected(Number(data.drcStatus.drcState) === 2)
+      } else {
+        setDockDrcConnected(false)
+      }
+      setDockAiHint('已退出 DRC')
+    } catch (e) {
+      setDockAiHint(e.message || '退出 DRC 失败')
+    } finally {
+      setDockAiBusy(false)
+    }
+  }
+
+  const setDockIdentify = async (on) => {
+    if (!dockGatewaySn || dockAiBusy) return
+    if (on && !dockDroneOnline) {
+      setDockAiHint(dockAiDisabledReason || '绑定无人机未开机，无法开启 AI 识别')
+      return
+    }
+    setDockAiBusy(true)
+    setDockAiHint('')
+    try {
+      const res = await fetch('/api/drc/ai-identify-set', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': getAuthToken(),
+        },
+        body: JSON.stringify({ deviceId: dockGatewaySn, on: on ? 1 : 0 }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || data.hint || `操作失败 ${res.status}`)
+      if (data.info) {
+        setDockAiInfo(data.info)
+        syncDockTrackState(data.info)
+      }
+      setDockAiHint(on ? '已开启 AI 识别 · 点击检测框可跟随目标' : '已关闭 AI 识别')
+    } catch (e) {
+      setDockAiHint(e.message || '识别开关下发失败')
+    } finally {
+      setDockAiBusy(false)
+    }
+  }
+
+  const selectDockAiModel = async (index) => {
+    if (!dockGatewaySn || dockAiBusy) return
+    if (!dockDroneOnline) {
+      setDockAiHint(dockAiDisabledReason || '绑定无人机未开机')
+      return
+    }
+    if (!dockIdentifyOn) {
+      setDockAiHint('请先打开 AI 识别开关')
+      return
+    }
+    const prevInfo = dockAiInfo
+    setDockAiInfo((prev) => ({
+      ...(prev || { gatewaySn: dockGatewaySn, models: dockAiModels }),
+      selectedIndex: index,
+      updatedAt: new Date().toISOString(),
+    }))
+    setDockAiBusy(true)
+    setDockAiHint('')
+    try {
+      const res = await fetch('/api/drc/ai-model-select', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': getAuthToken(),
+        },
+        body: JSON.stringify({ deviceId: dockGatewaySn, index }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || data.hint || `选择失败 ${res.status}`)
+      if (data.info) {
+        setDockAiInfo(data.info)
+        syncDockTrackState(data.info)
+      }
+      const name = dockAiModels.find((m) => m.index === index)?.name || `模型 ${index}`
+      const timeoutNote = data.reply?.timedOut || data.timedOut ? '（设备未回包，已按已下发处理）' : ''
+      setDockAiHint(`已选择模型：${name}${timeoutNote}`)
+    } catch (e) {
+      setDockAiInfo(prevInfo)
+      setDockAiHint(e.message || '模型选择下发失败')
+    } finally {
+      setDockAiBusy(false)
+    }
+  }
+
+  const startDockSpotlightTrack = async (targetIndex) => {
+    if (!dockGatewaySn || dockAiBusy) return
+    if (!dockDroneOnline) {
+      setDockAiHint(dockAiDisabledReason || '绑定无人机未开机')
+      return
+    }
+    if (!dockIdentifyOn) {
+      setDockAiHint('请先打开 AI 识别开关')
+      return
+    }
+    const idx = Number(targetIndex)
+    if (!Number.isInteger(idx) || idx < 0) {
+      setDockAiHint('无效目标 index')
+      return
+    }
+    setDockAiBusy(true)
+    setDockAiHint('')
+    // 乐观：先高亮
+    setDockTracking(true)
+    setDockTrackIndex(idx)
+    dockTrackIndexRef.current = idx
+    try {
+      const res = await fetch('/api/drc/ai-spotlight-track', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': getAuthToken(),
+        },
+        body: JSON.stringify({ deviceId: dockGatewaySn, targetIndex: idx }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || data.hint || `跟随失败 ${res.status}`)
+      if (data.info) {
+        setDockAiInfo(data.info)
+        syncDockTrackState(data.info)
+      }
+      const t = dockAiTargetsRef.current.find((x) => Number(x.targetIndex) === idx)
+      const timeoutNote = data.timedOut ? '（设备未回包，已按已下发处理）' : ''
+      setDockAiHint(`已跟随目标 #${idx}${t ? `（${t.label}）` : ''}${timeoutNote}`)
+    } catch (e) {
+      setDockTracking(false)
+      setDockTrackIndex(null)
+      dockTrackIndexRef.current = null
+      setDockAiHint(e.message || '目标跟随下发失败')
+    } finally {
+      setDockAiBusy(false)
+    }
+  }
+
+  const stopDockSpotlightTrack = async () => {
+    if (!dockGatewaySn || dockAiBusy) return
+    setDockAiBusy(true)
+    setDockAiHint('')
+    try {
+      const res = await fetch('/api/drc/ai-spotlight-stop', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-auth-token': getAuthToken(),
+        },
+        body: JSON.stringify({ deviceId: dockGatewaySn }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || data.hint || `停止失败 ${res.status}`)
+      if (data.info) {
+        setDockAiInfo(data.info)
+        syncDockTrackState(data.info)
+      } else {
+        setDockTracking(false)
+        setDockTrackIndex(null)
+        dockTrackIndexRef.current = null
+      }
+      setDockAiHint('已停止目标跟随')
+    } catch (e) {
+      setDockAiHint(e.message || '停止跟随下发失败')
+    } finally {
+      setDockAiBusy(false)
+    }
+  }
+
+  const onDockAiCanvasClick = (e) => {
+    if (!dockDroneOnline || !dockIdentifyOn || dockAiBusy || mainView !== 'flight') return
+    const canvas = dockAiCanvasRef.current
+    if (!canvas) return
+    const parent = canvas.parentElement
+    if (!parent) return
+    const rect = canvas.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const video = parent.querySelector('video[data-main-stream="true"]')
+      || parent.querySelector('video')
+    const content = getObjectContainRect(video, canvas.clientWidth, canvas.clientHeight)
+    if (!content) return
+
+    const targets = dockAiTargetsRef.current
+    // 后画的在上层，从后往前命中
+    for (let i = targets.length - 1; i >= 0; i--) {
+      const t = targets[i]
+      const r = targetToCanvasRect(t, content)
+      if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+        startDockSpotlightTrack(t.targetIndex)
+        return
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (!showDockAiPanel) return undefined
+    refreshDockAiInfo()
+    const timer = setInterval(refreshDockAiInfo, 3000)
+    return () => clearInterval(timer)
+  }, [showDockAiPanel, dockGatewaySn])
+
+  // 实时接收 drc_ai_info_push → WS → 更新模型列表
+  useEffect(() => {
+    if (!dockGatewaySn) return undefined
+    const onPush = (ev) => {
+      const data = ev?.detail
+      const sn = String(data?.gatewaySn || data?.deviceId || '')
+      if (sn && sn !== String(dockGatewaySn)) return
+      if (data?.info) {
+        setDockAiInfo(data.info)
+        syncDockTrackState(data.info)
+        const n = Array.isArray(data.info.models) ? data.info.models.length : 0
+        if (n > 0) {
+          setDockAiHint(`已收到模型列表（drc_ai_info_push）共 ${n} 项`)
+        }
+      }
+    }
+    const onStatus = (ev) => {
+      const data = ev?.detail
+      const sn = String(data?.gatewaySn || data?.deviceId || '')
+      if (sn && sn !== String(dockGatewaySn)) return
+      if (data?.status) {
+        setDockDrcStatus(data.status)
+        setDockDrcConnected(Number(data.status.drcState) === 2)
+        if (Number(data.status.drcState) === 2) {
+          setDockAiHint('DRC 已连接，等待模型列表上报…')
+          refreshDockAiInfo()
+        }
+      }
+    }
+    window.addEventListener('drc_ai_info', onPush)
+    window.addEventListener('drc_status', onStatus)
+    return () => {
+      window.removeEventListener('drc_ai_info', onPush)
+      window.removeEventListener('drc_status', onStatus)
+    }
+  }, [dockGatewaySn])
 
   useEffect(() => {
     if (!deviceId) return undefined
@@ -327,8 +842,19 @@ export default function VirtualCockpit({ device, onClose }) {
   }
 
   const renderView = (view, className = 'w-full h-full', isMainStream = false) => {
+    // 主画面无人机流始终挂 SEI tap（避免开关识别时重建播放器）
+    const seiOn = isMainStream && view === 'flight'
     if (isMainStream && customStreamUrl) {
-      return <FlvPlayer url={customStreamUrl} className={className} isMainStream={true} />
+      return (
+        <FlvPlayer
+          url={customStreamUrl}
+          className={className}
+          isMainStream={true}
+          seiEnabled={seiOn}
+          onAiTargets={seiOn ? handleDockAiTargets : undefined}
+          onSeiStatus={seiOn ? handleDockSeiStatus : undefined}
+        />
+      )
     }
     if (view === 'map') {
       return (
@@ -337,7 +863,16 @@ export default function VirtualCockpit({ device, onClose }) {
         </div>
       )
     }
-    return <FlvPlayer url={streams[view]} className={className} isMainStream={isMainStream} />
+    return (
+      <FlvPlayer
+        url={streams[view]}
+        className={className}
+        isMainStream={isMainStream}
+        seiEnabled={seiOn}
+        onAiTargets={seiOn ? handleDockAiTargets : undefined}
+        onSeiStatus={seiOn ? handleDockSeiStatus : undefined}
+      />
+    )
   }
 
   useEffect(() => {
@@ -1185,41 +1720,291 @@ export default function VirtualCockpit({ device, onClose }) {
             {renderView(mainView, 'w-full h-full', true)}
             {mainView === 'flight' && (
               <>
-                <button
-                  onClick={() => {
-                    if (isAnalyzing) {
-                      // 正在分析时，点击关闭
-                      setIsAnalyzing(false)
-                      if (captureTimerRef.current) {
-                        clearInterval(captureTimerRef.current)
-                        captureTimerRef.current = null
+                {/* 侧边工具：AI检索 / AI识别 */}
+                <div className="absolute left-4 top-1/2 -translate-y-1/2 z-30 flex flex-col gap-4">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isAnalyzing) {
+                        setIsAnalyzing(false)
+                        if (captureTimerRef.current) {
+                          clearInterval(captureTimerRef.current)
+                          captureTimerRef.current = null
+                        }
+                      } else {
+                        setShowDockAiPanel(false)
+                        setShowAiSearch(true)
                       }
-                    } else {
-                      // 未分析时，打开弹窗
-                      setShowAiSearch(true)
-                    }
-                  }}
-                  className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col items-center gap-1 text-white group z-30"
-                  title={isAnalyzing ? '点击停止AI检索' : 'AI检索'}
-                >
-                  <div className={`relative w-14 h-14 rounded-lg border flex items-center justify-center shadow-lg transition-colors ${
-                    isAnalyzing 
-                      ? 'bg-red-600/80 border-red-400 animate-pulse' 
-                      : 'bg-[#0b376f] border-[#1177d8] group-hover:bg-[#0d4d99]'
-                  }`}>
-                    {isAnalyzing ? <Loader2 size={30} className="text-white animate-spin" /> : <Search size={30} className="text-cyan-300" />}
-                    {!isAnalyzing && <Sparkles size={13} className="absolute right-2 top-2 text-cyan-300" />}
+                    }}
+                    className="flex flex-col items-center gap-1 text-white group"
+                    title={isAnalyzing ? '点击停止AI检索' : 'AI检索'}
+                  >
+                    <div className={`relative w-14 h-14 rounded-lg border flex items-center justify-center shadow-lg transition-colors ${
+                      isAnalyzing
+                        ? 'bg-red-600/80 border-red-400 animate-pulse'
+                        : 'bg-[#0b376f] border-[#1177d8] group-hover:bg-[#0d4d99]'
+                    }`}>
+                      {isAnalyzing
+                        ? <Loader2 size={30} className="text-white animate-spin" />
+                        : <Search size={30} className="text-cyan-300" />}
+                      {!isAnalyzing && <Sparkles size={13} className="absolute right-2 top-2 text-cyan-300" />}
+                    </div>
+                    <span className={`text-base font-bold drop-shadow ${isAnalyzing ? 'text-red-300' : ''}`}>
+                      {isAnalyzing ? '检索中...' : 'AI检索'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAiSearch(false)
+                      setShowDockAiPanel((v) => !v)
+                    }}
+                    className={`flex flex-col items-center gap-1 text-white group ${
+                      !dockDroneOnline ? 'opacity-45' : ''
+                    }`}
+                    title={dockDroneOnline ? 'AI识别' : dockAiDisabledReason}
+                  >
+                    <div className={`relative w-14 h-14 rounded-lg border flex items-center justify-center shadow-lg transition-colors ${
+                      !dockDroneOnline
+                        ? 'bg-[#1a1a1a] border-gray-600'
+                        : (showDockAiPanel || dockIdentifyOn
+                          ? 'bg-emerald-700/90 border-emerald-400'
+                          : 'bg-[#0b376f] border-[#1177d8] group-hover:bg-[#0d4d99]')
+                    }`}>
+                      <ScanEye size={30} className={dockDroneOnline ? 'text-emerald-200' : 'text-gray-500'} />
+                      {dockIdentifyOn && dockDroneOnline && (
+                        <span className="absolute -right-1 -top-1 w-3 h-3 rounded-full bg-emerald-400 border border-black/40" />
+                      )}
+                    </div>
+                    <span className="text-base font-bold drop-shadow">AI识别</span>
+                  </button>
+                </div>
+
+                {/* AI识别浮窗 */}
+                {showDockAiPanel && (
+                  <div className="absolute left-24 top-1/2 -translate-y-1/2 z-40 w-[280px] bg-[#1a1a1a]/95 border border-white/15 rounded-lg shadow-2xl backdrop-blur-sm">
+                    <div className="h-10 px-3 flex items-center justify-between border-b border-white/10">
+                      <span className="text-sm font-medium text-white">AI识别</span>
+                      <button
+                        type="button"
+                        onClick={() => setShowDockAiPanel(false)}
+                        className="p-1 hover:bg-white/10 rounded text-gray-400 hover:text-white"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div className="p-3 space-y-4">
+                      {!dockDroneOnline && (
+                        <div className="rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-5 text-amber-200">
+                          绑定无人机未开机（未连接），AI识别开关已禁用。请先开机并确认飞行器已连接。
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs text-gray-400">DRC 链路</div>
+                            <div className={`text-sm mt-0.5 ${
+                              dockDrcConnected ? 'text-emerald-400' : 'text-gray-400'
+                            }`}>
+                              {dockDrcStatus?.drcStateText
+                                || (dockDrcConnected ? '已连接' : '未连接')}
+                              {dockDrcStatus?.drcState != null ? ` (${dockDrcStatus.drcState})` : ''}
+                            </div>
+                          </div>
+                          <div className="flex gap-1.5">
+                            {!dockDrcConnected ? (
+                              <button
+                                type="button"
+                                disabled={dockAiBusy || !dockDroneOnline}
+                                onClick={enterDockDrc}
+                                className="h-8 px-2.5 rounded text-xs font-medium bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-40"
+                              >
+                                进入 DRC
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={dockAiBusy}
+                                onClick={exitDockDrc}
+                                className="h-8 px-2.5 rounded text-xs font-medium bg-[#3a3a3a] hover:bg-[#444] text-gray-200 disabled:opacity-40"
+                              >
+                                退出
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-[10px] leading-4 text-gray-500">
+                          模型列表依赖 DRC 已连接（drc_status_notify=2）后设备上报 ai_model_list。
+                        </p>
+                      </div>
+
+                      <div>
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs text-gray-400">AI识别开关</div>
+                            <div className={`text-sm mt-0.5 ${
+                              !dockDroneOnline
+                                ? 'text-gray-600'
+                                : (dockIdentifyOn ? 'text-emerald-400' : 'text-gray-500')
+                            }`}>
+                              {!dockDroneOnline ? '不可用' : (dockIdentifyOn ? '开' : '关')}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            role="switch"
+                            aria-checked={dockIdentifyOn}
+                            aria-label="AI识别开关"
+                            disabled={dockAiBusy || !dockDroneOnline}
+                            onClick={() => setDockIdentify(!dockIdentifyOn)}
+                            className={`relative h-7 w-12 shrink-0 rounded-full transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed ${
+                              dockIdentifyOn && dockDroneOnline ? 'bg-emerald-500' : 'bg-[#3a3a3a]'
+                            }`}
+                          >
+                            <span
+                              className={`absolute top-0.5 left-0.5 h-6 w-6 rounded-full bg-white shadow transition-transform duration-200 ${
+                                dockIdentifyOn ? 'translate-x-5' : 'translate-x-0'
+                              }`}
+                            />
+                          </button>
+                        </div>
+                      </div>
+
+                      {dockIdentifyOn && (
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <div className="text-xs text-gray-400">AI模型</div>
+                            <div className="text-[10px] text-gray-500">来自 drc_ai_info_push</div>
+                          </div>
+                          {dockAiModels.length > 0 ? (
+                            <div className="grid grid-cols-1 gap-2">
+                              {dockAiModels.map((m) => {
+                                const active = dockSelectedIndex === m.index
+                                return (
+                                  <button
+                                    key={`${m.index}-${m.name}`}
+                                    type="button"
+                                    disabled={dockAiBusy || !dockDroneOnline}
+                                    onClick={() => selectDockAiModel(m.index)}
+                                    className={`min-h-9 px-2 py-1.5 rounded text-left text-sm font-medium transition-colors disabled:opacity-50 ${
+                                      active
+                                        ? 'bg-blue-600 text-white'
+                                        : 'bg-[#2a2a2a] text-gray-200 hover:bg-[#333]'
+                                    }`}
+                                  >
+                                    <span className="block truncate">{m.name}</span>
+                                    <span className={`block text-[10px] mt-0.5 ${active ? 'text-blue-100' : 'text-gray-500'}`}>
+                                      index={m.index}
+                                    </span>
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <div className="rounded border border-white/10 bg-black/30 px-2.5 py-2 text-[11px] leading-5 text-gray-400">
+                              尚未收到模型列表。订阅主题：
+                              <code className="text-gray-300">thing/product/{'{gateway_sn}'}/drc/up</code>
+                              ，method=
+                              <code className="text-gray-300">drc_ai_info_push</code>
+                              。需 DRC 已连接后设备主动上报
+                              <code className="text-gray-300">ai_model_list</code>
+                              。
+                            </div>
+                          )}
+                          {Array.isArray(dockAiInfo?.models) && dockAiInfo.models.length > 0 && (
+                            <div className="mt-2 max-h-24 overflow-auto rounded bg-black/40 px-2 py-1.5 text-[10px] leading-4 text-gray-500 font-mono">
+                              {dockAiInfo.models.map((m) => (
+                                <div key={`raw-${m.index}-${m.name || m.signedName}`}>
+                                  [{m.index}] {m.signedName || m.name}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {dockIdentifyOn && (
+                        <div className="space-y-2">
+                          <div className="text-xs text-gray-400">目标跟随</div>
+                          {dockTracking ? (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-sm text-amber-300">
+                                跟随中 #{dockTrackIndex ?? '—'}
+                              </span>
+                              <button
+                                type="button"
+                                disabled={dockAiBusy || !dockDroneOnline}
+                                onClick={stopDockSpotlightTrack}
+                                className="h-8 px-3 rounded text-xs font-medium bg-red-600/90 hover:bg-red-500 text-white disabled:opacity-50"
+                              >
+                                停止跟随
+                              </button>
+                            </div>
+                          ) : (
+                            <p className="text-[11px] leading-5 text-gray-500">
+                              点击画面中的检测框，机载云台将对准该目标持续跟随。
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {dockAiBusy && (
+                        <div className="flex items-center gap-2 text-xs text-amber-300">
+                          <Loader2 size={12} className="animate-spin" />
+                          下发中…
+                        </div>
+                      )}
+                      {dockAiHint && (
+                        <p className="text-[11px] leading-5 text-gray-400 break-words">{dockAiHint}</p>
+                      )}
+                      {dockIdentifyOn && (
+                        <p className="text-[11px] leading-5 text-gray-500">
+                          识别框来自直播 SEI。
+                          {dockSeiStatus
+                            ? ` 状态：${dockSeiStatus.hooked ? '已挂接' : '未挂接'} · SEI命中 ${dockSeiStatus.seiHit || 0} · ${dockSeiStatus.hint || ''}`
+                            : ' 等待播流挂接…'}
+                          {dockIdentifyOn && dockSeiStatus?.hooked && (dockSeiStatus.seiHit || 0) === 0
+                            ? ' 若长期无框：流媒体可能剥离了 SEI，需在推流/转封装侧保留 SEI。'
+                            : ''}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <span className={`text-base font-bold drop-shadow ${isAnalyzing ? 'text-red-300' : ''}`}>
-                    {isAnalyzing ? '检索中...' : 'AI检索'}
-                  </span>
-                </button>
-                {/* Canvas 覆盖层 - 绘制AI框选 */}
+                )}
+
+                {/* Canvas 覆盖层 - AI检索框选 */}
                 <canvas
                   ref={canvasRef}
                   className="absolute inset-0 w-full h-full z-20 pointer-events-none"
                   style={{ objectFit: 'contain' }}
                 />
+                {/* Canvas 覆盖层 - 机载 AI 识别框（SEI），可点击选中跟随 */}
+                <canvas
+                  ref={dockAiCanvasRef}
+                  onClick={onDockAiCanvasClick}
+                  className={`absolute inset-0 w-full h-full z-[21] ${
+                    dockIdentifyOn && dockDroneOnline ? 'pointer-events-auto cursor-crosshair' : 'pointer-events-none'
+                  }`}
+                />
+                {dockIdentifyOn && dockDroneOnline && (
+                  <div className={`absolute right-3 bottom-3 z-30 px-2 py-1 rounded bg-black/55 text-[11px] border ${
+                    dockTracking
+                      ? 'text-amber-300 border-amber-500/40'
+                      : 'text-emerald-300 border-emerald-500/30'
+                  }`}>
+                    {dockTracking
+                      ? `跟随中 · #${dockTrackIndex ?? '—'}`
+                      : (dockAiTargetCount > 0
+                        ? `机载识别 · ${dockAiTargetCount} 目标 · 点击框跟随`
+                        : (dockSeiStatus?.seiHit > 0
+                          ? '机载识别 · SEI有、暂无目标'
+                          : (dockSeiStatus?.hooked
+                            ? '机载识别 · 等待SEI（流内可能无SEI）'
+                            : '机载识别 · SEI挂接中…')))}
+                  </div>
+                )}
               </>
             )}
             </div>
